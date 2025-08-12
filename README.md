@@ -62,7 +62,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://api.exotel.com','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'http://my.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL'}"
       }
     }
   }
@@ -114,6 +114,8 @@ echo -n "your_api_key:your_api_secret" | base64
 - **YOUR_DLT_ENTITY**: DLT entity ID for SMS compliance (from Dashboard → DLT)
 - **YOUR_CALLER_ID**: Your registered caller ID (from Dashboard → Numbers)
 - **YOUR_ACCOUNT_SID**: Your Exotel account SID (from Dashboard → API Settings)
+- **YOUR_SUB_DOMAIN**: Your Exotel account SubDomain (from Dashboard → API Settings)
+- **YOUR_EXOTEL_DASHBOARD_BASE_URL**: Your Exotel Dashboard base url
 
 ## Usage
 
@@ -352,7 +354,7 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://api.exotel.com','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'http://my.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL'}"
       }
     }
   }

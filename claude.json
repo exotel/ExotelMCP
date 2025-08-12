@@ -1,6 +1,6 @@
 {
     "mcpServers": {
-      "exotel4": {
+      "exotel": {
         "command": "npx",
         "args": [
           "mcp-remote",
@@ -10,7 +10,7 @@
           "Authorization:${AUTH_HEADER}" 
         ],
         "env": {
-          "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://api.exotel.com','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'http://my.exotel.com'}"
+          "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://api.exotel.com','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'https://my.exotel.com'}"
         }
       }
     }
