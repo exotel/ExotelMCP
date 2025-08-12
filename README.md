@@ -52,7 +52,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
 ```json
 {
   "mcpServers": {
-    "exotelmcp": {
+    "exotel": {
       "command": "npx",
       "args": [
         "mcp-remote",
@@ -342,7 +342,7 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
 ```json
 {
   "mcpServers": {
-    "exotelmcp": {
+    "exotel": {
       "command": "npx",
       "args": [
         "mcp-remote",

@@ -4,7 +4,7 @@
         "command": "npx",
         "args": [
           "mcp-remote",
-          "http://localhost:8085/mcp",
+          "http://ec2-13-127-242-200.ap-south-1.compute.amazonaws.com:8080/mcp",
           "--allow-http",
           "--header",
           "Authorization:${AUTH_HEADER}" 
