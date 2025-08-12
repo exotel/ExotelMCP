@@ -1,0 +1,16 @@
+package com.example.mcp_api.dto;
+
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
+
+public record BulkSMSRequest(
+    @NotNull
+    @NotEmpty
+    List<String> toNumber,
+    
+    @NotNull
+    @NotEmpty
+    String message
+) {
+}
