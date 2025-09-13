@@ -56,8 +56,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://ec2-13-127-242-200.ap-south-1.compute.amazonaws.com:8080/mcp",
-         "--allow-http"  
+        "https://mcp.exotel.com/mcp",
         "--header",
         "Authorization:${AUTH_HEADER}"
       ],
