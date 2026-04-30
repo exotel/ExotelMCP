@@ -10,6 +10,7 @@ import com.example.mcp_api.service.ExotelService;
 import com.example.mcp_api.service.AudioPlayerService;
 import com.example.mcp_api.service.ClientAudioService;
 import com.example.mcp_api.service.QuickAudioService;
+import com.example.mcp_api.service.CqaService;
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -37,13 +38,14 @@ public class McpApiApplication implements WebMvcConfigurer {
 	}
 	
 	@Bean
-	public List<ToolCallback> tools(ExotelService exotelService, AudioPlayerService audioPlayerService, ClientAudioService clientAudioService, QuickAudioService quickAudioService) {
+	public List<ToolCallback> tools(ExotelService exotelService, AudioPlayerService audioPlayerService, ClientAudioService clientAudioService, QuickAudioService quickAudioService, CqaService cqaService) {
 		List<ToolCallback> tools = new ArrayList<>();
 
 		tools.addAll(List.of(ToolCallbacks.from(exotelService)));
 		// tools.addAll(List.of(ToolCallbacks.from(audioPlayerService))); // Server-side audio
 		// tools.addAll(List.of(ToolCallbacks.from(clientAudioService))); // Client-side audio
 		tools.addAll(List.of(ToolCallbacks.from(quickAudioService))); // Quick one-click audio
+		tools.addAll(List.of(ToolCallbacks.from(cqaService))); // Conversational Intelligence
 		return tools;
 	}
 	

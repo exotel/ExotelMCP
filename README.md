@@ -8,6 +8,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - ☎️ **Voice Calling**: Initiate voice calls, connect numbers, and integrate with call flows
 - 📊 **Status Tracking**: Real-time delivery status and callback management
 - 🎵 **Quick Audio Tools**: One-click audio playback, download, and web player access
+- 🔍 **Conversational Intelligence**: AI-powered quality analysis of 100% of conversations across voice and digital channels
 - 🔐 **Secure Authentication**: Token-based authentication system
 - 🤖 **Claude AI Integration**: Direct integration with Claude through MCP protocol
 
@@ -61,7 +62,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
       }
     }
   }
@@ -116,6 +117,14 @@ echo -n "your_api_key:your_api_secret" | base64
 - **YOUR_SUB_DOMAIN**: Your Exotel account SubDomain (from Dashboard → API Settings)
 - **YOUR_EXOTEL_DASHBOARD_BASE_URL**: Your Exotel Dashboard base url
 
+#### **Conversational Intelligence Credentials:**
+
+- **YOUR_CQA_API_KEY**: API key generated from the **Conversational Intelligence console**
+- **YOUR_CQA_ACCOUNT_ID**: Your account ID (visible in the Conversational Intelligence console)
+- **YOUR_CQA_HOST**: Host URL (default: `https://cqa-console.in.exotel.com`)
+
+> **Note**: Conversational Intelligence credentials are only required if you plan to use the quality analysis tools. SMS and Voice tools work independently.
+
 ## Usage
 
 Once configured, you can use Claude to interact with Exotel services using natural language commands. Simply describe what you want to do, and Claude will handle the API calls through the MCP server.
@@ -130,6 +139,13 @@ Once configured, you can use Claude to interact with Exotel services using natur
 - "Play audio from https://example.com/song.mp3"
 - "Open the audio player interface"
 - "Download audio from https://example.com/podcast.mp3"
+
+**Conversational Intelligence Commands:**
+- "Ingest this call recording for quality analysis: https://storage.example.com/call-001.wav"
+- "Check the status of interaction call-2026-04-01-001"
+- "Get the quality analysis results for analysis a1b2c3d4"
+- "Submit this CSV file for bulk ingestion: https://s3.example.com/calls.csv"
+- "Track the progress of ingestion job abc123"
 
 ## API Services
 
@@ -248,6 +264,60 @@ Get direct download links for any audio file.
 Download audio from https://example.com/song.mp3
 ```
 
+### Conversational Intelligence Services
+
+Exotel [Conversational Intelligence](https://exotel.com/products/conversation-quality-analysis/) analyzes 100% of customer conversations across voice and digital channels using AI, delivering real-time quality intelligence. The platform reviews thousands of conversations in minutes, maintaining over 90% accuracy in objective evaluations — replacing manual sampling with continuous, automated QA at scale.
+
+**API key**: Generate your API key from the **Conversational Intelligence console** and provide it as `cqa_api_key` in the MCP configuration.
+
+#### Ingest Single Interaction
+Submit a single call recording or transcript for quality analysis.
+
+**Example**:
+```
+Ingest interaction call-001 (voice channel) with audio at https://s3.example.com/call-001.wav in English
+```
+
+#### Ingest Batch
+Submit up to 100 interactions as a single batch job.
+
+**Example**:
+```
+Ingest a batch of 3 voice interactions for quality analysis
+```
+
+#### Ingest File
+Submit a CSV file containing multiple interactions for bulk analysis.
+
+**Example**:
+```
+Submit https://s3.example.com/calls.csv as a CSV file for quality analysis ingestion
+```
+
+#### Get Interaction Status
+Check the processing status of an ingested interaction.
+
+**Example**:
+```
+Check the status of interaction call-2026-04-01-001
+```
+
+#### Track Job
+Monitor the progress of a batch or file ingestion job.
+
+**Example**:
+```
+Track ingestion job d4f5a6b7-c8d9-4e0f-a1b2-c3d4e5f6a7b8
+```
+
+#### Get Analysis Results
+Retrieve the full quality scoring breakdown for a completed analysis.
+
+**Example**:
+```
+Get the quality analysis for analysis ID a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
 ## Authentication
 
 The Exotel MCP Server uses secure token-based authentication. All your Exotel credentials are configured in the Claude desktop configuration and are used to authenticate with Exotel's APIs.
@@ -347,18 +417,19 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://your-domain.com/mcp",
-        "--allow-http"  // remove this if your server running on https.
+        "https://mcp.exotel.com/mcp",
         "--header",
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
       }
     }
   }
 }
 ```
+
+> **Note**: If your server is running on plain HTTP during local development, add `"--allow-http"` to the `args` array before `"--header"`.
 
 ### Production Checklist
 
@@ -385,7 +456,7 @@ curl https://your-domain.com/mcp
 ```
 
 
-#### 3. Test with Claude
+#### 2. Test with Claude
 - Update Claude configuration with your domain
 - Restart Claude Desktop
 - Send test message: "Send a test SMS to +919999999999 using DltEntityId=XXXXXXX, From=EXOTEL,DltTemplateId=XXXXXXXXX"
@@ -447,6 +518,8 @@ curl https://your-domain.com/mcp
 ### Resources
 
 - **Exotel Documentation**: [https://developer.exotel.com/](https://developer.exotel.com/)
+- **Conversational Intelligence**: [https://exotel.com/products/conversation-quality-analysis/](https://exotel.com/products/conversation-quality-analysis/)
+- **Conversational Intelligence API Reference**: [https://docs.exotel.com/conversation-intelligence/api-reference-guide](https://docs.exotel.com/conversation-intelligence/api-reference-guide)
 - **DLT Information**: [https://www.trai.gov.in/](https://www.trai.gov.in/)
 - **Claude Desktop**: [https://claude.ai/](https://claude.ai/)
 - **Spring Boot Deployment**: [https://docs.spring.io/spring-boot/docs/current/reference/html/deployment.html](https://docs.spring.io/spring-boot/docs/current/reference/html/deployment.html)
