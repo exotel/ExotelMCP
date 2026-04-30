@@ -4,13 +4,12 @@
         "command": "npx",
         "args": [
           "mcp-remote",
-          "http://ec2-13-127-242-200.ap-south-1.compute.amazonaws.com:8080/mcp",
-          "--allow-http",
+          "https://mcp.exotel.com/mcp",
           "--header",
-          "Authorization:${AUTH_HEADER}" 
+          "Authorization:${AUTH_HEADER}"
         ],
         "env": {
-          "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://api.exotel.com','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'https://my.exotel.com'}"
+          "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://api.exotel.com','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'https://my.exotel.com','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
         }
       }
     }
