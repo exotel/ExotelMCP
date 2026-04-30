@@ -14,6 +14,7 @@ import org.springframework.ai.tool.annotation.Tool;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -33,6 +34,9 @@ public class StreamableHttpConfig {
     
     @Autowired
     private com.example.mcp_api.service.QuickAudioService quickAudioService;
+    
+    @Autowired
+    private com.example.mcp_api.service.CqaService cqaService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -174,7 +178,7 @@ public class StreamableHttpConfig {
         List<Map<String, Object>> tools = new ArrayList<>();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService};
+        Object[] services = {exotelService, quickAudioService, cqaService};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
@@ -250,13 +254,15 @@ public class StreamableHttpConfig {
             Map<String, Object> parameters = (Map<String, Object>) params;
             String toolName = (String) parameters.get("name");
             @SuppressWarnings("unchecked")
-            Map<String, Object> arguments = (Map<String, Object>) parameters.get("arguments");
+            Map<String, Object> arguments = parameters.get("arguments") != null
+                ? (Map<String, Object>) parameters.get("arguments")
+                : Collections.emptyMap();
             
             Object toolResult = null;
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService};
+            Object[] services = {exotelService, quickAudioService, cqaService};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();
@@ -522,6 +528,59 @@ public class StreamableHttpConfig {
                 createArgument("recipient_list", "Comma-separated list of phone numbers", true),
                 createArgument("sms_message", "The SMS message for the campaign", true),
                 createArgument("include_voice", "Whether to include voice calls (true/false)", false)
+            )
+        ));
+        
+        // ========== CONVERSATIONAL INTELLIGENCE PROMPTS ==========
+        
+        prompts.add(createPrompt(
+            "cqa_ingest_interaction",
+            "Ingest Interaction for Quality Analysis",
+            "Submit a call recording or transcript to Exotel Conversational Intelligence for AI-powered quality scoring",
+            List.of(
+                createArgument("external_interaction_id", "Your unique identifier for this interaction", true),
+                createArgument("channel_type", "Interaction channel: voice, chat, email, sms, whatsapp", true),
+                createArgument("audio_url", "URL to the audio recording", false),
+                createArgument("transcript_url", "URL to the transcript file", false),
+                createArgument("language", "Language code (e.g. en, hi)", false)
+            )
+        ));
+        
+        prompts.add(createPrompt(
+            "cqa_ingest_file",
+            "Bulk Ingest from File",
+            "Submit a CSV file containing multiple interactions for Conversational Intelligence analysis",
+            List.of(
+                createArgument("file_url", "URL to the CSV file (https, http, or s3)", true),
+                createArgument("format", "File format: csv", true),
+                createArgument("source", "Originating system identifier", false)
+            )
+        ));
+        
+        prompts.add(createPrompt(
+            "cqa_check_interaction",
+            "Check Interaction Status",
+            "Look up the processing status and details of an ingested Conversational Intelligence interaction",
+            List.of(
+                createArgument("interaction_id", "Platform-assigned UUID or your external_interaction_id", true)
+            )
+        ));
+        
+        prompts.add(createPrompt(
+            "cqa_get_analysis",
+            "Get Quality Analysis Results",
+            "Retrieve the full quality scoring breakdown for a completed Conversational Intelligence analysis",
+            List.of(
+                createArgument("analysis_id", "The analysis UUID from the interaction detail", true)
+            )
+        ));
+        
+        prompts.add(createPrompt(
+            "cqa_track_job",
+            "Track Batch/File Job",
+            "Check the progress of a Conversational Intelligence batch or file ingestion job",
+            List.of(
+                createArgument("job_id", "The job ID returned by batch or file ingest", true)
             )
         ));
         
@@ -842,6 +901,57 @@ public class StreamableHttpConfig {
                     "This will include SMS messaging{{#if include_voice}} followed by voice calls{{/if}} using the appropriate Exotel tools."
                 );
                 
+            // ========== CQA PROMPTS ==========
+            
+            case "cqa_ingest_interaction":
+                return createPromptResponse(
+                    "cqa_ingest_interaction",
+                    "Submit a call recording or transcript to Exotel Conversational Intelligence for AI-powered quality scoring",
+                    "Please ingest interaction {{external_interaction_id}} ({{channel_type}}) " +
+                    "{{#if audio_url}}with audio at {{audio_url}}{{/if}} " +
+                    "{{#if transcript_url}}with transcript at {{transcript_url}}{{/if}} " +
+                    "{{#if language}}in {{language}}{{/if}} into Conversational Intelligence for quality analysis",
+                    "I'll submit this interaction to Conversational Intelligence using the cqaIngestInteraction tool. " +
+                    "Once ingested, the platform will run it through the configured quality profiles and produce scores."
+                );
+                
+            case "cqa_ingest_file":
+                return createPromptResponse(
+                    "cqa_ingest_file",
+                    "Submit a CSV file for bulk Conversational Intelligence analysis",
+                    "Please ingest the {{format}} file at {{file_url}} " +
+                    "{{#if source}}from source '{{source}}'{{/if}} into Conversational Intelligence",
+                    "I'll submit the file for bulk ingestion using the cqaIngestFile tool. " +
+                    "The platform will process up to 100,000 rows asynchronously and return a job ID for tracking."
+                );
+                
+            case "cqa_check_interaction":
+                return createPromptResponse(
+                    "cqa_check_interaction",
+                    "Look up the processing status of a Conversational Intelligence interaction",
+                    "Please check the status of interaction {{interaction_id}} in Conversational Intelligence",
+                    "I'll retrieve the interaction details using the cqaGetInteraction tool. " +
+                    "This will show the current status (queued/processing/completed/failed) and any analyses."
+                );
+                
+            case "cqa_get_analysis":
+                return createPromptResponse(
+                    "cqa_get_analysis",
+                    "Retrieve the full quality analysis scoring breakdown from Conversational Intelligence",
+                    "Please get the quality analysis results for analysis ID {{analysis_id}}",
+                    "I'll retrieve the full scoring breakdown using the cqaGetAnalysis tool. " +
+                    "This includes categories, subcategories, individual KPI scores, AI justifications, and suggestions."
+                );
+                
+            case "cqa_track_job":
+                return createPromptResponse(
+                    "cqa_track_job",
+                    "Check the progress of a Conversational Intelligence batch or file ingestion job",
+                    "Please check the status of job {{job_id}} in Conversational Intelligence",
+                    "I'll track the job using the cqaTrackJob tool. " +
+                    "This will show the overall job status, accepted/rejected counts, and paginated interactions."
+                );
+                
             default:
                 return null;
         }
@@ -1122,6 +1232,60 @@ public class StreamableHttpConfig {
             )
         ));
         
+        // ========== CONVERSATIONAL INTELLIGENCE RESOURCES ==========
+        
+        resources.add(createResource(
+            "exotel://cqa/api/overview",
+            "conversational-intelligence-api-overview",
+            "Conversational Intelligence API Overview",
+            "Complete overview of Exotel Conversational Intelligence API: data import, analysis retrieval, authentication, and rate limits",
+            "text/markdown",
+            null,
+            Map.of(
+                "audience", List.of("assistant", "user"),
+                "priority", 0.9
+            )
+        ));
+        
+        resources.add(createResource(
+            "exotel://cqa/api/ingest",
+            "conversational-intelligence-ingest-api",
+            "Conversational Intelligence Data Import API",
+            "API documentation for ingesting interactions into Conversational Intelligence: single, batch, and file-based ingestion",
+            "text/markdown",
+            null,
+            Map.of(
+                "audience", List.of("assistant"),
+                "priority", 0.8
+            )
+        ));
+        
+        resources.add(createResource(
+            "exotel://cqa/api/analysis",
+            "conversational-intelligence-analysis-api",
+            "Conversational Intelligence Analysis API",
+            "API documentation for retrieving quality analysis results with category and KPI scoring breakdowns",
+            "text/markdown",
+            null,
+            Map.of(
+                "audience", List.of("assistant"),
+                "priority", 0.8
+            )
+        ));
+        
+        resources.add(createResource(
+            "exotel://cqa/schema/csv",
+            "conversational-intelligence-csv-schema",
+            "Conversational Intelligence CSV File Schema",
+            "CSV column specifications for bulk file ingestion including canonical column names and column mapping",
+            "text/markdown",
+            null,
+            Map.of(
+                "audience", List.of("assistant"),
+                "priority", 0.7
+            )
+        ));
+        
         Map<String, Object> result = Map.of("resources", resources);
         return Map.of(
             "jsonrpc", "2.0",
@@ -1249,6 +1413,42 @@ public class StreamableHttpConfig {
                     "💡 SMS API Usage Examples",
                     "text/markdown",
                     getSmsExamplesContent()
+                );
+                
+            case "exotel://cqa/api/overview":
+                return createTextResourceContent(
+                    uri,
+                    "conversational-intelligence-api-overview",
+                    "Conversational Intelligence API Overview",
+                    "text/markdown",
+                    getCqaApiOverviewContent()
+                );
+                
+            case "exotel://cqa/api/ingest":
+                return createTextResourceContent(
+                    uri,
+                    "conversational-intelligence-ingest-api",
+                    "Conversational Intelligence Data Import API",
+                    "text/markdown",
+                    getCqaIngestApiContent()
+                );
+                
+            case "exotel://cqa/api/analysis":
+                return createTextResourceContent(
+                    uri,
+                    "conversational-intelligence-analysis-api",
+                    "Conversational Intelligence Analysis API",
+                    "text/markdown",
+                    getCqaAnalysisApiContent()
+                );
+                
+            case "exotel://cqa/schema/csv":
+                return createTextResourceContent(
+                    uri,
+                    "conversational-intelligence-csv-schema",
+                    "Conversational Intelligence CSV File Schema",
+                    "text/markdown",
+                    getCqaCsvSchemaContent()
                 );
                 
             default:
@@ -1700,6 +1900,284 @@ curl -X POST \\
   }
 }
 ```
+""";
+    }
+    
+    // ========== CQA API CONTENT METHODS ==========
+    
+    private String getCqaApiOverviewContent() {
+        return """
+# Exotel Conversational Intelligence API Overview
+
+## What is Conversational Intelligence?
+Exotel Conversational Intelligence (formerly CQA) is an AI-powered platform that
+analyzes 100% of customer conversations across voice and digital channels to deliver
+real-time quality intelligence. Unlike traditional manual QA that relies on sampling,
+Conversational Intelligence reviews thousands of conversations in minutes — maintaining
+over 90% accuracy in objective evaluations.
+
+### Key Capabilities
+- **Continuous QA at Scale**: Reviews every conversation without sampling or added headcount
+- **Self-Service Configuration**: Create and update KPIs instantly as SOPs evolve; attach SOPs
+  directly to Quality Profiles for enhanced AI accuracy
+- **Multi-Channel & Multilingual**: Works across voice, chat, email, SMS, and WhatsApp with
+  consistent quality standards across regions and languages
+- **Proactive Compliance Monitoring**: Flags deviations and risk patterns early to reduce
+  regulatory exposure
+- **Platform Agnostic**: Integrates with existing contact center stacks without ecosystem lock-in
+- **Automated SOP Evaluation**: Evaluates conversations against defined KPIs and scripts
+- **Upsell Opportunity Detection**: Identifies sales and cross-sell opportunities from
+  conversation patterns
+
+Learn more: https://exotel.com/products/conversation-quality-analysis/
+
+## Authentication
+All API endpoints authenticate via an API key passed in the `X-API-Key` header.
+**Generate your API key from the Conversational Intelligence console** and include it
+in the MCP configuration as `cqa_api_key`. Keys are scoped to a single account.
+
+## Base URL
+```
+https://{host}/cqa/api/v1/accounts/{account_id}
+```
+
+## Rate Limits
+| Endpoint Pattern       | Method | Default Limit          |
+|------------------------|--------|------------------------|
+| /ingress/interactions  | POST   | 100 requests/minute    |
+| /ingress/*             | GET    | 300 requests/minute    |
+
+## API Surface
+
+### Data Import API (Ingress)
+- **Single Ingest**: POST /ingress/interactions
+- **Batch Ingest**: POST /ingress/interactions/batch (up to 100)
+- **File Ingest**: POST /ingress/interactions/files (CSV, up to 100k rows)
+- **Get Interaction**: GET /ingress/interactions/{id}
+- **Track Job**: GET /ingress/interactions/batch/{id}
+
+### Analysis API
+- **Get Analysis**: GET /analyses/{analysis_id}
+
+## Interaction Lifecycle
+| Status     | Meaning                                    |
+|------------|--------------------------------------------|
+| queued     | Accepted, waiting to be processed          |
+| processing | Analysis is underway                       |
+| completed  | All analyses finished successfully         |
+| failed     | Processing failed (check failure_reason)   |
+
+## Response Envelope
+All responses follow a common envelope with status, request_id, data, and error fields.
+
+## API Reference
+Full documentation: https://docs.exotel.com/conversation-intelligence/api-reference-guide
+""";
+    }
+    
+    private String getCqaIngestApiContent() {
+        return """
+# Conversational Intelligence Data Import API
+
+## Ingest a Single Interaction
+**POST** `/api/v1/accounts/{account_id}/ingress/interactions`
+
+### Required Fields
+- `external_interaction_id` (string): Your unique identifier for deduplication
+- `channel_type` (string): voice, chat, email, sms, whatsapp
+
+### Content Requirement
+At least one of `audio_url` or `transcript_url` must be provided.
+
+### Optional Fields
+- `source` (string): Originating system identifier
+- `language` (string): Language code (e.g. en, hi)
+- `interaction_start_time` (ISO 8601): When the interaction started
+- `duration_seconds` (integer): Duration in seconds
+- `audio_format` (string): Format hint (wav, mp3, ogg)
+- `callback_url` (string): Webhook URL for status notifications
+- `pii_redacted` (boolean): Whether PII has been redacted (default false)
+- `metadata` (object): Up to 50 key-value pairs
+
+### Response (201 Created)
+```json
+{
+  "status": 201,
+  "data": {
+    "interaction_id": "550e8400-...",
+    "external_interaction_id": "call-001",
+    "status": "queued"
+  }
+}
+```
+
+---
+
+## Ingest a Batch
+**POST** `/api/v1/accounts/{account_id}/ingress/interactions/batch`
+
+- Body: `{ "interactions": [...], "skip_duplication_check": false }`
+- Max 100 interactions per batch
+- Returns a job ID for tracking
+
+---
+
+## Submit a File
+**POST** `/api/v1/accounts/{account_id}/ingress/interactions/files`
+
+- `file_url` (required): URL to CSV file (https, http, s3)
+- `format` (required): "csv"
+- `column_mapping` (optional): Map your headers to canonical names
+- `metadata` (optional): Default metadata merged into every row
+- Max 100,000 rows, 100 MB file size
+
+---
+
+## Get Interaction
+**GET** `/api/v1/accounts/{account_id}/ingress/interactions/{identifier}`
+
+Accepts the platform-assigned UUID or external_interaction_id. Returns status, metadata, and analyses array.
+
+---
+
+## Track Batch/File Job
+**GET** `/api/v1/accounts/{account_id}/ingress/interactions/batch/{id}?page=0&size=20`
+
+Returns job_status (pending/processing/completed/failed), total_rows, accepted, rejected,
+errors array, and paginated interaction list.
+""";
+    }
+    
+    private String getCqaAnalysisApiContent() {
+        return """
+# Conversational Intelligence Analysis API
+
+## Get Analysis Detail
+**GET** `/api/v1/accounts/{account_id}/analyses/{analysis_id}`
+
+Returns the full scoring breakdown for a completed analysis.
+
+### Response Fields
+| Field                      | Type   | Description                                      |
+|----------------------------|--------|--------------------------------------------------|
+| analysis_id                | UUID   | Unique analysis identifier                       |
+| interaction_id             | UUID   | The interaction this analysis belongs to          |
+| external_interaction_id    | string | Your interaction identifier                      |
+| profile_id                 | string | Quality profile used for scoring                 |
+| profile_name               | string | Human-readable quality profile name              |
+| status                     | string | queued, processing, completed, or failed         |
+| ai_score                   | float  | AI-generated quality score                       |
+| qa_score                   | float  | Manual QA score (if reviewer overrode)           |
+| final_score                | float  | Effective score (qa_score if present, else ai)   |
+| criticality_adjusted_score | float  | Score after criticality weights                  |
+| max_score                  | float  | Maximum possible score for the profile           |
+| categories                 | array  | Scored categories with subcategories and KPIs    |
+
+### Category Object
+Each category contains `name`, `ai_score`, `qa_score`, `final_score`,
+`criticality_adjusted_score`, `max_score`, and `sub_categories` array.
+
+### KPI Object
+Each KPI contains:
+- `kpi_name`: Name of the KPI (e.g. "Proper Greeting")
+- `ai_response`: The AI's answer (e.g. "yes", "no", "partially")
+- `ai_justification`: The AI's reasoning for its score
+- `ai_suggestion`: Optional improvement suggestion
+- `ai_score`, `qa_score`, `final_score`, `max_score`
+
+### Example Response
+```json
+{
+  "status": 200,
+  "data": {
+    "analysis_id": "a1b2c3d4-...",
+    "profile_name": "Voice Quality Standard",
+    "ai_score": 85.0,
+    "final_score": 85.0,
+    "max_score": 100.0,
+    "categories": [
+      {
+        "name": "Communication Skills",
+        "ai_score": 90.0,
+        "sub_categories": [
+          {
+            "name": "Greeting",
+            "kpis": [
+              {
+                "kpi_name": "Proper Greeting",
+                "ai_response": "yes",
+                "ai_justification": "Agent greeted the customer promptly...",
+                "ai_score": 10.0,
+                "max_score": 10.0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+""";
+    }
+    
+    private String getCqaCsvSchemaContent() {
+        return """
+# Conversational Intelligence CSV File Schema
+
+## Canonical Column Names
+The first row of a CSV must contain headers. Headers are trimmed and lowercased.
+
+| Column                  | Required | Type        | Description                              |
+|-------------------------|----------|-------------|------------------------------------------|
+| external_interaction_id | Yes      | string      | Your unique interaction identifier       |
+| channel_type            | Yes      | string      | voice, chat, email, sms, whatsapp        |
+| source                  | No       | string      | Originating system identifier            |
+| language                | No       | string      | Language code (e.g. en, hi)              |
+| interaction_start_time  | No       | ISO 8601    | When the interaction started             |
+| duration_seconds        | No       | integer     | Interaction duration in seconds          |
+| audio_format            | No       | string      | Format hint (wav, mp3, ogg)              |
+| callback_url            | No       | string      | Per-row callback URL                     |
+| pii_redacted            | No       | boolean     | true or false                            |
+| audio_url               | No       | string      | Audio file URL(s), semicolon-separated   |
+| transcript_url          | No       | string      | Transcript file URL(s), semicolon-sep    |
+
+### Content Requirement
+Each row must have at least one of: audio_url, transcript_url.
+
+### Extra Columns Become Metadata
+Any column header not in the canonical set is automatically added to the
+row's metadata map. E.g. columns named "agent", "campaign", or "disposition"
+become metadata key-value pairs.
+
+## Column Mapping
+If your CSV uses non-standard headers, supply a `column_mapping` object:
+```json
+{
+  "column_mapping": {
+    "call id": "external_interaction_id",
+    "type": "channel_type",
+    "recording": "audio_url"
+  }
+}
+```
+
+## Example CSV
+```csv
+external_interaction_id,channel_type,audio_url,transcript_url,language,agent,campaign
+call-001,voice,https://s3.example.com/rec-001.wav,https://s3.example.com/tr-001.txt,en,agent-42,retention
+call-002,voice,https://s3.example.com/rec-002.wav,,hi,agent-15,support
+```
+
+## Limits
+| Constraint                    | Value   |
+|-------------------------------|---------|
+| Max rows per file job         | 100,000 |
+| Max file size                 | 100 MB  |
+| Max concurrent file jobs      | 5       |
+| Max metadata keys per row     | 50      |
+| Supported formats             | csv         |
+| Supported URL schemes         | https, http, s3 |
 """;
     }
 }
