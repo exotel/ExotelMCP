@@ -224,6 +224,13 @@ public class VoiceBotService {
         return defaultCallsBaseUrl;
     }
 
+    private String getVoicebotBaseUrl() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "voicebot_base_url");
+        if (val != null) return val;
+        return voicebotBaseUrl;
+    }
+
     private String callsBasicToken() {
         return Base64.getEncoder().encodeToString(
             (getCallsApiKey() + ":" + getCallsApiToken()).getBytes(StandardCharsets.UTF_8));
@@ -293,7 +300,7 @@ public class VoiceBotService {
                 return "Error: status must be 'active' or 'inactive'";
             }
 
-            StringBuilder url = new StringBuilder(voicebotBaseUrl)
+            StringBuilder url = new StringBuilder(getVoicebotBaseUrl())
                     .append("/accounts/").append(getAccountId()).append("/voicebots?");
 
             if (limit != null && !limit.isBlank()) url.append("limit=").append(limit).append("&");
@@ -324,7 +331,7 @@ public class VoiceBotService {
         try {
             requireVoiceBotCredentials();
             validateId(voiceBotId, "voiceBotId");
-            String url = voicebotBaseUrl + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
@@ -346,7 +353,7 @@ public class VoiceBotService {
         try {
             requireVoiceBotCredentials();
             validateId(voiceBotId, "voiceBotId");
-            String url = voicebotBaseUrl + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class);
             String body = response.getBody();
@@ -375,7 +382,7 @@ public class VoiceBotService {
                 return "Error: textContent too long (max 10,000 characters)";
             }
 
-            String url = voicebotBaseUrl + "/accounts/" + getAccountId() + "/bot-generation";
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/bot-generation";
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
@@ -406,7 +413,7 @@ public class VoiceBotService {
         try {
             requireVoiceBotCredentials();
             validateId(generationId, "generationId");
-            String url = voicebotBaseUrl + "/accounts/" + getAccountId() + "/bot-generation/" + generationId;
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/bot-generation/" + generationId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
@@ -447,7 +454,7 @@ public class VoiceBotService {
             String effectiveCallerId = (callerId != null && !callerId.isBlank()) ? callerId : defaultCallerId;
 
             // Step 1: Fetch the WebSocket stream URL from the bot's dp-endpoint
-            String dpBase = voicebotBaseUrl.replaceFirst("/api/v\\d+$", "/api/v1");
+            String dpBase = getVoicebotBaseUrl().replaceFirst("/api/v\\d+$", "/api/v1");
             String dpEndpointUrl = dpBase + "/accounts/" + accountId + "/bots/" + voiceBotId + "/dp-endpoint";
 
             HttpHeaders dpHeaders = new HttpHeaders();
