@@ -31,12 +31,15 @@ public class StreamableHttpConfig {
     
     @Autowired
     private com.example.mcp_api.service.ExotelService exotelService;
-    
+
     @Autowired
     private com.example.mcp_api.service.QuickAudioService quickAudioService;
-    
+
     @Autowired
     private com.example.mcp_api.service.CqaService cqaService;
+
+    @Autowired
+    private com.example.mcp_api.service.VoiceBotService voiceBotService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -178,7 +181,7 @@ public class StreamableHttpConfig {
         List<Map<String, Object>> tools = new ArrayList<>();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService};
+        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
@@ -262,7 +265,7 @@ public class StreamableHttpConfig {
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService};
+            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();
