@@ -12,6 +12,8 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
@@ -22,6 +24,7 @@ import org.apache.hc.core5.ssl.SSLContextBuilder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import jakarta.servlet.http.HttpServletRequest;
 import javax.net.ssl.SSLContext;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -34,8 +37,11 @@ import java.util.regex.Pattern;
  * Outbound calls API:       https://api.in.exotel.com/v1 (Exotel Calls/connect with VoiceBotSid)
  *
  * Credentials are resolved in priority order:
- *   1. CredentialStore (set via setupExotelCredentials tool)
- *   2. application.properties defaults (@Value)
+ *   1. Authorization header (per-request, multi-tenant) — fields:
+ *      voicebot_api_key, voicebot_api_token, voicebot_account_id,
+ *      calls_api_key, calls_api_token, calls_account_id, calls_base_url
+ *   2. CredentialStore (session-level override)
+ *   3. application.properties defaults (@Value)
  */
 @Service
 public class VoiceBotService {
@@ -86,7 +92,7 @@ public class VoiceBotService {
     @Autowired
     private CredentialStore credentialStore;
 
-    // VoiceBot account credentials — used for both management API and Calls API
+    // Default values from application.properties (lowest priority fallback)
     @Value("${exotel.voicebot.api.key:}")
     private String defaultApiKey;
 
@@ -100,7 +106,7 @@ public class VoiceBotService {
     private String voicebotBaseUrl;
 
     @Value("${exotel.voicebot.calls.base.url:https://api.in.exotel.com}")
-    private String callsBaseUrl;
+    private String defaultCallsBaseUrl;
 
     @Value("${exotel.calls.requested.server.code:}")
     private String requestedServerCode;
@@ -117,11 +123,6 @@ public class VoiceBotService {
     @Value("${exotel.calls.api.token:}")
     private String defaultCallsApiToken;
 
-    private String getCallsAccountId() { return resolve("exotel.calls.account.sid", defaultCallsAccountId); }
-    private String getCallsApiKey()    { String v = resolve("exotel.calls.api.key", defaultCallsApiKey); return v.isBlank() ? getApiKey() : v; }
-    private String getCallsApiToken()  { String v = resolve("exotel.calls.api.token", defaultCallsApiToken); return v.isBlank() ? getApiToken() : v; }
-    private String callsBasicToken()   { return Base64.getEncoder().encodeToString((getCallsApiKey() + ":" + getCallsApiToken()).getBytes(StandardCharsets.UTF_8)); }
-
     @Value("${exotel.voicebot.default.caller.id:04446312776}")
     private String defaultCallerId;
 
@@ -131,10 +132,103 @@ public class VoiceBotService {
     @Value("${exotel.voicebot.device.session.cookie:}")
     private String defaultDeviceSessionCookie;
 
-    // Credential resolvers
-    private String getApiKey()    { return resolve("exotel.voicebot.api.key", defaultApiKey); }
-    private String getApiToken()  { return resolve("exotel.voicebot.api.token", defaultApiToken); }
-    private String getAccountId() { return resolve("exotel.voicebot.account.id", defaultAccountId); }
+    // ======================== AUTH HEADER PARSING ========================
+
+    private JsonNode getAuthNode() {
+        String header = getAuthHeader();
+        if (header == null || header.isBlank()) return null;
+        try {
+            String json = header.trim();
+            if (json.startsWith("Bearer ")) json = json.substring(7);
+            else if (json.startsWith("Basic ")) json = json.substring(6);
+            json = json.replace('\'', '"');
+            if (!json.startsWith("{")) json = "{" + json + "}";
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            logger.debug("Could not parse Authorization header as JSON: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String getAuthHeader() {
+        try {
+            ServletRequestAttributes attrs =
+                (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
+            HttpServletRequest request = attrs.getRequest();
+            String h = request.getHeader("Authorization");
+            if (h != null && !h.isBlank()) return h;
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private String authField(JsonNode node, String field) {
+        if (node == null) return null;
+        JsonNode val = node.path(field);
+        if (val.isMissingNode() || val.isNull()) return null;
+        String text = val.asText();
+        return (text != null && !text.isBlank()) ? text : null;
+    }
+
+    // ======================== CREDENTIAL RESOLVERS ========================
+    // Priority: 1) Auth header  2) CredentialStore  3) @Value default
+
+    private String getApiKey() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "voicebot_api_key");
+        if (val != null) return val;
+        return resolve("exotel.voicebot.api.key", defaultApiKey);
+    }
+
+    private String getApiToken() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "voicebot_api_token");
+        if (val != null) return val;
+        return resolve("exotel.voicebot.api.token", defaultApiToken);
+    }
+
+    private String getAccountId() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "voicebot_account_id");
+        if (val != null) return val;
+        return resolve("exotel.voicebot.account.id", defaultAccountId);
+    }
+
+    private String getCallsApiKey() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "calls_api_key");
+        if (val != null) return val;
+        String stored = resolve("exotel.calls.api.key", defaultCallsApiKey);
+        return stored.isBlank() ? getApiKey() : stored;
+    }
+
+    private String getCallsApiToken() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "calls_api_token");
+        if (val != null) return val;
+        String stored = resolve("exotel.calls.api.token", defaultCallsApiToken);
+        return stored.isBlank() ? getApiToken() : stored;
+    }
+
+    private String getCallsAccountId() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "calls_account_id");
+        if (val != null) return val;
+        return resolve("exotel.calls.account.sid", defaultCallsAccountId);
+    }
+
+    private String getCallsBaseUrl() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "calls_base_url");
+        if (val != null) return val;
+        return defaultCallsBaseUrl;
+    }
+
+    private String callsBasicToken() {
+        return Base64.getEncoder().encodeToString(
+            (getCallsApiKey() + ":" + getCallsApiToken()).getBytes(StandardCharsets.UTF_8));
+    }
+
     private String getVoicebotSessionCookie() { return resolve("exotel.voicebot.session.cookie", defaultVoicebotSessionCookie); }
     private String getDeviceSessionCookie() { return resolve("exotel.voicebot.device.session.cookie", defaultDeviceSessionCookie); }
 
@@ -146,8 +240,8 @@ public class VoiceBotService {
     private void requireVoiceBotCredentials() {
         if (getApiKey().isBlank() || getApiToken().isBlank() || getAccountId().isBlank()) {
             throw new IllegalStateException(
-                "VoiceBot credentials not configured. Set exotel.voicebot.api.key, " +
-                "exotel.voicebot.api.token, and exotel.voicebot.account.id.");
+                "VoiceBot credentials not configured. Pass voicebot_api_key, " +
+                "voicebot_api_token, and voicebot_account_id in the Authorization header.");
         }
         if (!ACCOUNT_ID_PATTERN.matcher(getAccountId()).matches()) {
             throw new IllegalStateException("VoiceBot account ID contains invalid characters");
@@ -157,8 +251,8 @@ public class VoiceBotService {
     private void requireCallsCredentials() {
         if (getCallsApiKey().isBlank() || getCallsApiToken().isBlank() || getCallsAccountId().isBlank()) {
             throw new IllegalStateException(
-                "Calls API credentials not configured. Set exotel.calls.api.key, " +
-                "exotel.calls.api.token, and exotel.calls.account.sid.");
+                "Calls API credentials not configured. Pass calls_api_key, " +
+                "calls_api_token, and calls_account_id in the Authorization header.");
         }
         if (!ACCOUNT_ID_PATTERN.matcher(getCallsAccountId()).matches()) {
             throw new IllegalStateException("Calls account ID contains invalid characters");
@@ -374,7 +468,8 @@ public class VoiceBotService {
             logger.info("callWithBot stream URL obtained for bot={}", sanitizeForLog(voiceBotId));
 
             // Step 2: POST to Calls connect
-            String baseUrl = callsForceHttp ? callsBaseUrl.replaceFirst("^https://", "http://") : callsBaseUrl;
+            String resolvedCallsBase = getCallsBaseUrl();
+            String baseUrl = callsForceHttp ? resolvedCallsBase.replaceFirst("^https://", "http://") : resolvedCallsBase;
             String connectUrl = baseUrl + "/v1/Accounts/" + getCallsAccountId() + "/Calls/connect.json";
 
             HttpHeaders connectHeaders = new HttpHeaders();
@@ -421,7 +516,7 @@ public class VoiceBotService {
         try {
             requireCallsCredentials();
             validateId(callSid, "callSid");
-            String url = callsBaseUrl + "/v1/Accounts/" + getCallsAccountId() + "/Calls/" + callSid + ".json";
+            String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId() + "/Calls/" + callSid + ".json";
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", "Basic " + callsBasicToken());
@@ -447,7 +542,7 @@ public class VoiceBotService {
         logger.info("Listing account phone numbers");
         try {
             requireCallsCredentials();
-            String url = callsBaseUrl + "/v1/Accounts/" + getCallsAccountId() + "/IncomingPhoneNumbers.json";
+            String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId() + "/IncomingPhoneNumbers.json";
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", "Basic " + callsBasicToken());
@@ -475,7 +570,7 @@ public class VoiceBotService {
             requireCallsCredentials();
             validateNumericParam(limit, "limit");
             String lim = (limit != null && !limit.isBlank()) ? limit : "10";
-            String url = callsBaseUrl + "/v1/Accounts/" + getCallsAccountId()
+            String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId()
                     + "/Calls.json?Limit=" + lim + "&SortBy=DateCreated:desc";
 
             HttpHeaders headers = new HttpHeaders();
