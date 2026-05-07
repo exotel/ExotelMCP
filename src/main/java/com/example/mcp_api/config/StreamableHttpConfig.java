@@ -55,7 +55,11 @@ public class StreamableHttpConfig {
                 .and(RequestPredicates.accept(MediaType.APPLICATION_JSON)), 
                 this::handleMcpPost)
             .andRoute(RequestPredicates.GET("/mcp"), 
-                this::handleMcpGet);
+                this::handleMcpGet)
+            .andRoute(RequestPredicates.path("/.well-known/**"),
+                request -> ServerResponse.status(404).body(Map.of("error", "not_found")))
+            .andRoute(RequestPredicates.all(),
+                request -> ServerResponse.status(404).body(Map.of("error", "not_found")));
     }
 
     /**

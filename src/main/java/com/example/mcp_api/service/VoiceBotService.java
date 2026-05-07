@@ -108,9 +108,6 @@ public class VoiceBotService {
     @Value("${exotel.voicebot.calls.base.url:https://api.in.exotel.com}")
     private String defaultCallsBaseUrl;
 
-    @Value("${exotel.calls.requested.server.code:}")
-    private String requestedServerCode;
-
     @Value("${exotel.voicebot.calls.force.http:false}")
     private boolean callsForceHttp;
 
@@ -486,15 +483,10 @@ public class VoiceBotService {
             org.springframework.util.LinkedMultiValueMap<String, String> form = new org.springframework.util.LinkedMultiValueMap<>();
             form.add("StreamType", "bidirectional");
             form.add("StreamUrl", streamUrl);
-            form.add("From", effectiveCallerId);
-            form.add("To", formatPhoneNumber(toNumber));
+            form.add("From", formatPhoneNumber(toNumber));
             form.add("CallerId", effectiveCallerId);
             if (customField != null && !customField.isBlank()) {
                 form.add("CustomField", customField.substring(0, Math.min(customField.length(), 1000)));
-            }
-            form.add("__IgnoreServerStatus", "true");
-            if (requestedServerCode != null && !requestedServerCode.isBlank()) {
-                form.add("__RequestedServerCode", requestedServerCode);
             }
 
             ResponseEntity<String> connectResponse = restTemplate.exchange(
