@@ -486,8 +486,7 @@ public class VoiceBotService {
             org.springframework.util.LinkedMultiValueMap<String, String> form = new org.springframework.util.LinkedMultiValueMap<>();
             form.add("StreamType", "bidirectional");
             form.add("StreamUrl", streamUrl);
-            form.add("From", effectiveCallerId);
-            form.add("To", formatPhoneNumber(toNumber));
+            form.add("From", formatPhoneNumber(toNumber));
             form.add("CallerId", effectiveCallerId);
             if (customField != null && !customField.isBlank()) {
                 form.add("CustomField", customField.substring(0, Math.min(customField.length(), 1000)));
