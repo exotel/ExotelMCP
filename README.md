@@ -9,7 +9,8 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - 📊 **Status Tracking**: Real-time delivery status and callback management
 - 🎵 **Quick Audio Tools**: One-click audio playback, download, and web player access
 - 🔍 **Conversational Intelligence**: AI-powered quality analysis of 100% of conversations across voice and digital channels
-- 🔐 **Secure Authentication**: Token-based authentication system
+- 🤖 **VoiceBot**: Create, manage, and place AI-powered outbound calls with VoiceBots
+- 🔐 **Secure Authentication**: Per-user token-based authentication via Authorization header
 - 🤖 **Claude AI Integration**: Direct integration with Claude through MCP protocol
 
 ## Table of Contents
@@ -62,7 +63,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
       }
     }
   }
@@ -125,6 +126,18 @@ echo -n "your_api_key:your_api_secret" | base64
 
 > **Note**: Conversational Intelligence credentials are only required if you plan to use the quality analysis tools. SMS and Voice tools work independently.
 
+#### **VoiceBot Credentials:**
+
+- **YOUR_VOICEBOT_API_KEY**: API key from the VoiceBot platform
+- **YOUR_VOICEBOT_API_TOKEN**: API token from the VoiceBot platform
+- **YOUR_VOICEBOT_ACCOUNT_ID**: Your VoiceBot account ID (e.g. `ameyo5m`)
+- **YOUR_CALLS_API_KEY**: Exotel CPaaS API key for placing bot-powered calls
+- **YOUR_CALLS_API_TOKEN**: Exotel CPaaS API token for placing bot-powered calls
+- **YOUR_CALLS_ACCOUNT_ID**: Exotel CPaaS account SID for calls (can differ from VoiceBot account)
+- **calls_base_url**: Exotel Calls API base URL (default: `https://api.exotel.com`)
+
+> **Note**: VoiceBot credentials are only required if you plan to use the VoiceBot tools. The VoiceBot management API (list/create/delete bots) uses `voicebot_*` credentials, while placing actual calls uses `calls_*` credentials.
+
 ## Usage
 
 Once configured, you can use Claude to interact with Exotel services using natural language commands. Simply describe what you want to do, and Claude will handle the API calls through the MCP server.
@@ -146,6 +159,13 @@ Once configured, you can use Claude to interact with Exotel services using natur
 - "Get the quality analysis results for analysis a1b2c3d4"
 - "Submit this CSV file for bulk ingestion: https://s3.example.com/calls.csv"
 - "Track the progress of ingestion job abc123"
+
+**VoiceBot Commands:**
+- "List all my VoiceBots"
+- "Create a VoiceBot that handles customer support for order tracking"
+- "Call +919999999999 using my customer support bot"
+- "Get the status of the last bot call"
+- "List available phone numbers on my account"
 
 ## API Services
 
@@ -318,6 +338,58 @@ Retrieve the full quality scoring breakdown for a completed analysis.
 Get the quality analysis for analysis ID a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
+### VoiceBot Services
+
+Create and manage AI-powered VoiceBots that handle entire phone conversations autonomously.
+
+#### List VoiceBots
+List all VoiceBots on your account with pagination and status filtering.
+
+**Example**:
+```
+List all my active VoiceBots
+```
+
+#### Create VoiceBot
+Create a new VoiceBot by describing its personality and purpose in natural language.
+
+**Example**:
+```
+Create a VoiceBot that handles customer support for Acme Corp. It should be friendly, help with order tracking, and offer to escalate to a human agent if needed.
+```
+
+#### Place Outbound Bot Call
+Place a phone call powered by a VoiceBot — the bot handles the entire conversation.
+
+**Example**:
+```
+Call +919999999999 using my order-confirmation bot
+```
+
+#### Get Call Details
+Check the status, duration, and recording URL of a bot-powered call.
+
+**Example**:
+```
+Get details of call abc123def456
+```
+
+#### List Phone Numbers
+List all phone numbers (DIDs) available on the account for use as caller IDs.
+
+**Example**:
+```
+What phone numbers are available on my account?
+```
+
+#### List Recent Calls
+View recent call history with status and outcomes.
+
+**Example**:
+```
+Show me the last 5 bot calls
+```
+
 ## Authentication
 
 The Exotel MCP Server uses secure token-based authentication. All your Exotel credentials are configured in the Claude desktop configuration and are used to authenticate with Exotel's APIs.
@@ -422,7 +494,7 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
       }
     }
   }
