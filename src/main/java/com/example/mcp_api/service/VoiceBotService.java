@@ -129,6 +129,12 @@ public class VoiceBotService {
     @Value("${exotel.voicebot.device.session.cookie:}")
     private String defaultDeviceSessionCookie;
 
+    @Value("${exotel.voicebot.admin.username:vb_admin}")
+    private String defaultAdminUsername;
+
+    @Value("${exotel.voicebot.admin.password:}")
+    private String defaultAdminPassword;
+
     // ======================== AUTH HEADER PARSING ========================
 
     private JsonNode getAuthNode() {
@@ -236,6 +242,30 @@ public class VoiceBotService {
     private String getVoicebotSessionCookie() { return resolve("exotel.voicebot.session.cookie", defaultVoicebotSessionCookie); }
     private String getDeviceSessionCookie() { return resolve("exotel.voicebot.device.session.cookie", defaultDeviceSessionCookie); }
 
+    private String getAdminUsername() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "admin_username");
+        if (val != null) return val;
+        return resolve("exotel.voicebot.admin.username", defaultAdminUsername);
+    }
+
+    private String getAdminPassword() {
+        JsonNode auth = getAuthNode();
+        String val = authField(auth, "admin_password");
+        if (val != null) return val;
+        return resolve("exotel.voicebot.admin.password", defaultAdminPassword);
+    }
+
+    private String adminBasicToken() {
+        return Base64.getEncoder().encodeToString(
+                (getAdminUsername() + ":" + getAdminPassword()).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** v1 base URL — derived from the configured v2 base by swapping the version segment. */
+    private String getVoicebotV1BaseUrl() {
+        return getVoicebotBaseUrl().replaceFirst("/api/v2$", "/api/v1");
+    }
+
     private String resolve(String key, String fallback) {
         String val = credentialStore.get(key);
         return (val != null && !val.isBlank()) ? val : fallback;
@@ -285,7 +315,7 @@ public class VoiceBotService {
 
     // ======================== MCP TOOLS ========================
 
-    @Tool(name = "listVoiceBots",
+    @Tool(name = "exotel_voicebot_list_all",
           description = "Lists all VoiceBots on the Exotel account. Supports pagination (offset/limit) and filtering by status (active/inactive). Returns bot id, name, status, languages, voice config, and version info.")
     public String listVoiceBots(String status, String limit, String offset) {
         logger.info("Listing VoiceBots — status={}, limit={}, offset={}", sanitizeForLog(status), sanitizeForLog(limit), sanitizeForLog(offset));
@@ -321,7 +351,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "getVoiceBot",
+    @Tool(name = "exotel_voicebot_get_details",
           description = "Gets full details of a single VoiceBot by its ID. Returns name, status, supported_languages, assistant_config, voice_config, asr_config, post_session_insights, and version history.")
     public String getVoiceBot(String voiceBotId) {
         logger.info("Getting VoiceBot: {}", sanitizeForLog(voiceBotId));
@@ -343,7 +373,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "deleteVoiceBot",
+    @Tool(name = "exotel_voicebot_delete",
           description = "Deletes a VoiceBot permanently by its ID. This action cannot be undone. Always confirm with the user before calling this tool.")
     public String deleteVoiceBot(String voiceBotId) {
         logger.info("Deleting VoiceBot: {}", sanitizeForLog(voiceBotId));
@@ -366,7 +396,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "createVoiceBot",
+    @Tool(name = "exotel_voicebot_create_from_description",
           description = "Creates a new VoiceBot using AI-powered bot generation. Provide a text description of the bot's personality, purpose, and behavior. The bot is generated asynchronously — use getBotGenerationStatus to poll until status is 'completed'. Params: textContent (description of the bot, e.g. 'You are a friendly customer support agent for Acme Corp. Help customers with orders and returns.').")
     public String createVoiceBot(String textContent) {
         logger.info("Creating VoiceBot via bot-generation — textLength={}", textContent != null ? textContent.length() : 0);
@@ -403,7 +433,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "getBotGenerationStatus",
+    @Tool(name = "exotel_voicebot_get_creation_status",
           description = "Checks the status of a VoiceBot generation request. Status progresses: pending -> in_progress -> completed. When completed, the bot appears in listVoiceBots. Params: generationId (the ID returned by createVoiceBot).")
     public String getBotGenerationStatus(String generationId) {
         logger.info("Checking bot generation status: {}", sanitizeForLog(generationId));
@@ -425,7 +455,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "callWithBot",
+    @Tool(name = "exotel_voicebot_place_outbound_call",
           description = "THE primary tool for making any phone call. Places an outbound call powered by a VoiceBot — " +
                         "the bot handles the entire conversation autonomously. Use this for ALL calling requests. " +
                         "Requires: toNumber (phone to call, e.g. 09720454250), voiceBotId (UUID from listVoiceBots). " +
@@ -508,7 +538,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "getBotCallDetails",
+    @Tool(name = "exotel_voicebot_call_get_status",
           description = "Gets details of a specific call by its Call SID. Returns status, duration, recording URL, timestamps, and direction. Use after makeOutboundBotCall to check if the call connected.")
     public String getBotCallDetails(String callSid) {
         logger.info("Getting call details: {}", sanitizeForLog(callSid));
@@ -535,7 +565,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "listAccountPhoneNumbers",
+    @Tool(name = "exotel_account_list_phone_numbers",
           description = "Lists all phone numbers (DIDs) available on the Exotel account. Use this to find a valid callerId before placing outbound bot calls.")
     public String listAccountPhoneNumbers() {
         logger.info("Listing account phone numbers");
@@ -561,7 +591,7 @@ public class VoiceBotService {
         }
     }
 
-    @Tool(name = "listRecentBotCalls",
+    @Tool(name = "exotel_voicebot_list_recent_calls",
           description = "Lists recent calls on the account. Supports limit (default 10) and sortBy (DateCreated:desc). Use to review call history and outcomes.")
     public String listRecentBotCalls(String limit) {
         logger.info("Listing recent calls — limit={}", sanitizeForLog(limit));
@@ -587,6 +617,538 @@ public class VoiceBotService {
             return "Error: " + e.getMessage();
         } catch (Exception e) {
             return "Error listing recent calls: " + e.getMessage();
+        }
+    }
+
+    // ======================== ASSISTANT TOOLS ========================
+
+    @Tool(name = "exotel_assistant_get_config",
+          description = "Gets the full configuration of a VoiceBot assistant by its ID. " +
+                        "Use version='stable' (default) or a specific version like 'v1', 'v2', etc. " +
+                        "Returns agents, instructions, llm_config, mcp_tools, intent_detection_config.")
+    public String getAssistant(String assistantId, String version) {
+        logger.info("Getting assistant: {} version={}", sanitizeForLog(assistantId), sanitizeForLog(version));
+        try {
+            requireVoiceBotCredentials();
+            validateId(assistantId, "assistantId");
+            String ver = (version != null && !version.isBlank()) ? version : "stable";
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId()
+                    + "/assistants/" + assistantId + "?version=" + ver;
+            HttpEntity<Void> entity = new HttpEntity<>(adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("getAssistant", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("getAssistant", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error getting assistant: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_assistant_update_prompt",
+          description = "Updates the instruction/prompt of a VoiceBot assistant by creating a new version. " +
+                        "Fetches the current stable config, replaces the instruction on the first agent, " +
+                        "and pushes it as a new stable version. " +
+                        "Params: assistantId (UUID of the assistant inside the bot config), " +
+                        "newInstruction (the full updated system prompt), " +
+                        "versionDescription (optional label for this version).")
+    public String updateBotPrompt(String assistantId, String newInstruction, String versionDescription) {
+        logger.info("Updating bot prompt for assistant={}", sanitizeForLog(assistantId));
+        try {
+            requireVoiceBotCredentials();
+            validateId(assistantId, "assistantId");
+            if (newInstruction == null || newInstruction.isBlank()) {
+                return "Error: newInstruction is required";
+            }
+            if (newInstruction.length() > 50_000) {
+                return "Error: newInstruction too long (max 50,000 characters)";
+            }
+
+            // Step 1: fetch current stable config
+            String getUrl = getVoicebotBaseUrl() + "/accounts/" + getAccountId()
+                    + "/assistants/" + assistantId + "?version=stable";
+            ResponseEntity<String> currentResp = restTemplate.exchange(
+                    getUrl, HttpMethod.GET, new HttpEntity<>(adminJsonHeaders()), String.class);
+            JsonNode current = objectMapper.readTree(safeBody(currentResp));
+
+            // Step 2: extract current version label and agents list
+            String sourceVersion = null;
+            JsonNode versionNode = current.path("version");
+            if (!versionNode.isMissingNode()) sourceVersion = versionNode.asText();
+            if (sourceVersion == null || sourceVersion.isBlank()) sourceVersion = "v1";
+
+            // Build agents array: keep IDs, inject updated instruction into first agent
+            com.fasterxml.jackson.databind.node.ArrayNode agentsArray =
+                    objectMapper.createArrayNode();
+            JsonNode existingAgents = current.path("agents");
+            if (existingAgents.isArray() && existingAgents.size() > 0) {
+                boolean first = true;
+                for (JsonNode agent : existingAgents) {
+                    com.fasterxml.jackson.databind.node.ObjectNode agentNode =
+                            (com.fasterxml.jackson.databind.node.ObjectNode) agent.deepCopy();
+                    if (first) {
+                        agentNode.put("instruction", newInstruction);
+                        first = false;
+                    }
+                    agentsArray.add(agentNode);
+                }
+            } else {
+                // No agents found — create minimal agent placeholder
+                com.fasterxml.jackson.databind.node.ObjectNode agent =
+                        objectMapper.createObjectNode();
+                agent.put("instruction", newInstruction);
+                agentsArray.add(agent);
+            }
+
+            // Step 3: build version payload
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("source_version", sourceVersion);
+            payload.put("mark_as_stable", "true");
+            payload.put("version_description",
+                    versionDescription != null && !versionDescription.isBlank()
+                            ? versionDescription : "Prompt updated via MCP");
+            com.fasterxml.jackson.databind.node.ObjectNode data = objectMapper.createObjectNode();
+            data.set("agents", agentsArray);
+            payload.set("data", data);
+
+            // Step 4: POST new version
+            String postUrl = getVoicebotBaseUrl() + "/accounts/" + getAccountId()
+                    + "/assistants/" + assistantId + "/versions";
+            HttpHeaders headers = adminJsonHeaders();
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), headers);
+            ResponseEntity<String> response = restTemplate.exchange(postUrl, HttpMethod.POST, entity, String.class);
+            logger.info("updateBotPrompt status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("updateBotPrompt", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("updateBotPrompt", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error updating bot prompt: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_assistant_push_new_version",
+          description = "Creates a new version of an assistant with a custom data payload. " +
+                        "Use this for advanced updates: attaching tools, updating intent_detection_config, " +
+                        "or swapping agents. The dataJson must be a valid JSON string with the fields to update " +
+                        "(e.g. '{\"agents\":[{\"id\":\"...\"}], \"intent_detection_config\":{...}}'). " +
+                        "Params: assistantId, sourceVersion (e.g. 'v4' or 'stable'), " +
+                        "markAsStable ('true'/'false'), versionDescription, dataJson.")
+    public String createAssistantVersion(String assistantId, String sourceVersion,
+                                         String markAsStable, String versionDescription, String dataJson) {
+        logger.info("Creating assistant version — assistant={}, source={}", sanitizeForLog(assistantId), sanitizeForLog(sourceVersion));
+        try {
+            requireVoiceBotCredentials();
+            validateId(assistantId, "assistantId");
+            if (dataJson == null || dataJson.isBlank()) {
+                return "Error: dataJson is required";
+            }
+
+            // Validate dataJson is valid JSON
+            JsonNode dataNode;
+            try {
+                dataNode = objectMapper.readTree(dataJson);
+            } catch (Exception e) {
+                return "Error: dataJson is not valid JSON — " + e.getMessage();
+            }
+
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            if (sourceVersion != null && !sourceVersion.isBlank()) payload.put("source_version", sourceVersion);
+            payload.put("mark_as_stable", markAsStable != null ? markAsStable : "true");
+            payload.put("version_description",
+                    versionDescription != null && !versionDescription.isBlank()
+                            ? versionDescription : "Updated via MCP");
+            payload.set("data", dataNode);
+
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId()
+                    + "/assistants/" + assistantId + "/versions";
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            logger.info("createAssistantVersion status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("createAssistantVersion", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("createAssistantVersion", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error creating assistant version: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_voicebot_get_session_transcript",
+          description = "Fetches the full conversation transcript for a VoiceBot session using its session UUID. " +
+                        "Note: requires the internal session UUID (not the call SID). " +
+                        "Params: sessionId (UUID of the voicebot session).")
+    public String getBotSessionTranscript(String sessionId) {
+        logger.info("Getting bot session transcript: {}", sanitizeForLog(sessionId));
+        try {
+            requireVoiceBotCredentials();
+            validateId(sessionId, "sessionId");
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId()
+                    + "/voicebot-sessions/" + sessionId + "?transcriptRequired=true";
+            HttpEntity<Void> entity = new HttpEntity<>(adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("getBotSessionTranscript", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("getBotSessionTranscript", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error getting session transcript: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_voicebot_update_tts_asr_vad_config",
+          description = "Updates a VoiceBot's configuration including TTS (voice_config), ASR (asr_config), " +
+                        "VAD (vad_config), denoiser, webhook_config, greeting, and call settings. " +
+                        "Provide a configJson with only the fields you want to change — the bot's existing " +
+                        "config is merged with your updates. " +
+                        "Example configJson for changing TTS voice: " +
+                        "'{\"voice_config\":{\"voice\":{\"id\":\"<voice-id>\"}}}'. " +
+                        "Example for denoiser: '{\"audio_processing\":{\"pstn\":{\"denoiser_config\":{\"enabled\":true}}}}'. " +
+                        "Params: botId (UUID of the VoiceBot), configJson (JSON fields to update).")
+    public String updateBotConfig(String botId, String configJson) {
+        logger.info("Updating bot config for bot={}", sanitizeForLog(botId));
+        try {
+            requireVoiceBotCredentials();
+            validateId(botId, "botId");
+            if (configJson == null || configJson.isBlank()) {
+                return "Error: configJson is required";
+            }
+
+            // Validate JSON
+            try {
+                objectMapper.readTree(configJson);
+            } catch (Exception e) {
+                return "Error: configJson is not valid JSON — " + e.getMessage();
+            }
+
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + botId;
+            HttpEntity<String> entity = new HttpEntity<>(configJson, adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
+            logger.info("updateBotConfig status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("updateBotConfig", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("updateBotConfig", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error updating bot config: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_assistant_create_multiagent",
+          description = "Creates a new assistant (multi-agent orchestrator) for a VoiceBot. " +
+                        "An assistant can have one or more agents, each with its own instruction and llm_config. " +
+                        "Params: name (assistant name), description (what it does), " +
+                        "instruction (top-level system prompt), " +
+                        "agentsJson (optional JSON array of agent objects, each with name/description/instruction/llm_config). " +
+                        "Returns the created assistant's ID which can be linked to a VoiceBot via updateBotConfig.")
+    public String createAssistant(String name, String description, String instruction, String agentsJson) {
+        logger.info("Creating assistant: {}", sanitizeForLog(name));
+        try {
+            requireVoiceBotCredentials();
+            if (name == null || name.isBlank()) return "Error: name is required";
+
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("name", name);
+            if (description != null && !description.isBlank()) payload.put("description", description);
+            if (instruction != null && !instruction.isBlank()) payload.put("instruction", instruction);
+
+            if (agentsJson != null && !agentsJson.isBlank()) {
+                try {
+                    JsonNode agents = objectMapper.readTree(agentsJson);
+                    payload.set("agents", agents);
+                } catch (Exception e) {
+                    return "Error: agentsJson is not valid JSON — " + e.getMessage();
+                }
+            }
+
+            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/assistants";
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            logger.info("createAssistant status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("createAssistant", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("createAssistant", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error creating assistant: " + e.getMessage();
+        }
+    }
+
+    // ======================== PERSONA TOOLS ========================
+
+    @Tool(name = "exotel_persona_list",
+          description = "Lists all personas (system prompt templates) defined for the account. " +
+                        "Personas define the bot's personality, language behaviour, and gender characteristics. " +
+                        "Params: limit (default 20), offset (for pagination).")
+    public String listPersonas(String limit, String offset) {
+        logger.info("Listing personas — limit={}, offset={}", sanitizeForLog(limit), sanitizeForLog(offset));
+        try {
+            requireVoiceBotCredentials();
+            validateNumericParam(limit, "limit");
+            validateNumericParam(offset, "offset");
+            String lim = (limit != null && !limit.isBlank()) ? limit : "20";
+            String off = (offset != null && !offset.isBlank()) ? offset : "0";
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId()
+                    + "/personas?limit=" + lim + "&offset=" + off;
+            HttpEntity<Void> entity = new HttpEntity<>(adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("listPersonas", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("listPersonas", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error listing personas: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_persona_create",
+          description = "Creates a new persona (system prompt template) for the account. " +
+                        "Params: name (unique persona name), instruction (main system prompt), " +
+                        "languagePrompt (optional language-switching instructions with {{languages[0]}} placeholders), " +
+                        "genderPrompt (optional gender/voice style instructions with {{gender}} placeholder).")
+    public String createPersona(String name, String instruction, String languagePrompt, String genderPrompt) {
+        logger.info("Creating persona: {}", sanitizeForLog(name));
+        try {
+            requireVoiceBotCredentials();
+            if (name == null || name.isBlank()) return "Error: name is required";
+            if (instruction == null || instruction.isBlank()) return "Error: instruction is required";
+
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("name", name);
+            payload.put("instruction", instruction);
+            if (languagePrompt != null && !languagePrompt.isBlank()) payload.put("language_prompt", languagePrompt);
+            if (genderPrompt != null && !genderPrompt.isBlank()) payload.put("gender_prompt", genderPrompt);
+
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId() + "/personas";
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            logger.info("createPersona status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("createPersona", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("createPersona", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error creating persona: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_persona_update",
+          description = "Updates an existing persona's instruction, language prompt, or gender prompt. " +
+                        "Params: personaId (UUID of the persona to update), instruction (new system prompt), " +
+                        "languagePrompt (optional, updated language-switching instructions), " +
+                        "genderPrompt (optional, updated gender/voice style instructions).")
+    public String updatePersona(String personaId, String instruction, String languagePrompt, String genderPrompt) {
+        logger.info("Updating persona: {}", sanitizeForLog(personaId));
+        try {
+            requireVoiceBotCredentials();
+            validateId(personaId, "personaId");
+            if (instruction == null || instruction.isBlank()) return "Error: instruction is required";
+
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("instruction", instruction);
+            if (languagePrompt != null && !languagePrompt.isBlank()) payload.put("language_prompt", languagePrompt);
+            if (genderPrompt != null && !genderPrompt.isBlank()) payload.put("gender_prompt", genderPrompt);
+
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId() + "/personas/" + personaId;
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
+            logger.info("updatePersona status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("updatePersona", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("updatePersona", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error updating persona: " + e.getMessage();
+        }
+    }
+
+    // ======================== TTS / VOICE PROVIDER TOOLS ========================
+
+    @Tool(name = "exotel_tts_list_providers",
+          description = "Lists all TTS (Text-to-Speech) voice providers available on the account. " +
+                        "Returns provider IDs and names (e.g. ElevenLabs, Azure, Sarvam). " +
+                        "Use the provider ID with listTtsVoices to browse available voices.")
+    public String listTtsProviders() {
+        logger.info("Listing TTS providers");
+        try {
+            requireVoiceBotCredentials();
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId() + "/voice-providers";
+            HttpEntity<Void> entity = new HttpEntity<>(adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("listTtsProviders", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("listTtsProviders", e);
+        } catch (IllegalStateException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error listing TTS providers: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_tts_list_voices_for_provider",
+          description = "Lists all available TTS voices for a given voice provider. " +
+                        "Use listTtsProviders first to get provider IDs. " +
+                        "Returns voice IDs and metadata (name, gender, language, etc.). " +
+                        "Params: providerId (UUID of the voice provider), limit (default 100).")
+    public String listTtsVoices(String providerId, String limit) {
+        logger.info("Listing TTS voices for provider={}", sanitizeForLog(providerId));
+        try {
+            requireVoiceBotCredentials();
+            validateId(providerId, "providerId");
+            validateNumericParam(limit, "limit");
+            String lim = (limit != null && !limit.isBlank()) ? limit : "100";
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId()
+                    + "/voice-providers/" + providerId + "/voices?limit=" + lim;
+            HttpEntity<Void> entity = new HttpEntity<>(adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("listTtsVoices", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("listTtsVoices", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error listing TTS voices: " + e.getMessage();
+        }
+    }
+
+    // ======================== SPECIALIZATION TOOLS ========================
+
+    @Tool(name = "exotel_specialization_list",
+          description = "Lists all specializations defined for the account. " +
+                        "Specializations are reusable configuration overrides (e.g. language switching, speed adjustments) " +
+                        "that can be applied to VoiceBots.")
+    public String listSpecializations() {
+        logger.info("Listing specializations");
+        try {
+            requireVoiceBotCredentials();
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId() + "/specializations";
+            HttpEntity<Void> entity = new HttpEntity<>(adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("listSpecializations", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("listSpecializations", e);
+        } catch (IllegalStateException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error listing specializations: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_specialization_create",
+          description = "Creates a new specialization (reusable config override) for the account. " +
+                        "Types include 'language_switching' and others. " +
+                        "Params: name (unique specialization name), type (e.g. 'language_switching'), " +
+                        "configJson (JSON object for assistant_override_config or voicebot_override_config, " +
+                        "e.g. '{\"assistant_override_config\":{\"prompt\":\"...\"}}'). ")
+    public String createSpecialization(String name, String type, String configJson) {
+        logger.info("Creating specialization: {} type={}", sanitizeForLog(name), sanitizeForLog(type));
+        try {
+            requireVoiceBotCredentials();
+            if (name == null || name.isBlank()) return "Error: name is required";
+            if (type == null || type.isBlank()) return "Error: type is required";
+
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("name", name);
+            payload.put("type", type);
+
+            if (configJson != null && !configJson.isBlank()) {
+                try {
+                    JsonNode configNode = objectMapper.readTree(configJson);
+                    // Merge config fields into the top-level payload
+                    configNode.fields().forEachRemaining(e -> payload.set(e.getKey(), e.getValue()));
+                } catch (Exception e) {
+                    return "Error: configJson is not valid JSON — " + e.getMessage();
+                }
+            }
+
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId() + "/specializations";
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            logger.info("createSpecialization status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("createSpecialization", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("createSpecialization", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error creating specialization: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_specialization_update",
+          description = "Updates an existing specialization's name or configuration. " +
+                        "Params: specializationId (UUID), name (optional new name), " +
+                        "configJson (JSON object with the config fields to update, " +
+                        "e.g. '{\"voicebot_override_config\":{\"voice_config\":{\"provider_config\":{\"speed\":1.2}}}}').")
+    public String updateSpecialization(String specializationId, String name, String configJson) {
+        logger.info("Updating specialization: {}", sanitizeForLog(specializationId));
+        try {
+            requireVoiceBotCredentials();
+            validateId(specializationId, "specializationId");
+
+            com.fasterxml.jackson.databind.node.ObjectNode payload = objectMapper.createObjectNode();
+            if (name != null && !name.isBlank()) payload.put("name", name);
+
+            if (configJson != null && !configJson.isBlank()) {
+                try {
+                    JsonNode configNode = objectMapper.readTree(configJson);
+                    configNode.fields().forEachRemaining(e -> payload.set(e.getKey(), e.getValue()));
+                } catch (Exception e) {
+                    return "Error: configJson is not valid JSON — " + e.getMessage();
+                }
+            }
+
+            if (payload.isEmpty()) return "Error: provide at least name or configJson to update";
+
+            String url = getVoicebotV1BaseUrl() + "/accounts/" + getAccountId()
+                    + "/specializations/" + specializationId;
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
+            logger.info("updateSpecialization status: {}", response.getStatusCode());
+            return safeBody(response);
+        } catch (HttpClientErrorException e) {
+            return errorMsg("updateSpecialization", e);
+        } catch (HttpServerErrorException e) {
+            return serverErrorMsg("updateSpecialization", e);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error updating specialization: " + e.getMessage();
         }
     }
 
@@ -631,6 +1193,21 @@ public class VoiceBotService {
             return end > idx ? responseBody.substring(idx, end) : responseBody.substring(idx).split("\\s")[0];
         }
         return null;
+    }
+
+    private HttpHeaders adminJsonHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        // Use admin credentials if configured, otherwise fall back to voicebot API key/token
+        String adminUser = getAdminUsername();
+        String adminPass = getAdminPassword();
+        if (!adminUser.isBlank() && !adminPass.isBlank()) {
+            headers.set("Authorization", "Basic " + adminBasicToken());
+        } else {
+            headers.set("Authorization", "Basic " + basicToken());
+        }
+        return headers;
     }
 
     private HttpHeaders jsonHeaders() {

@@ -39,7 +39,7 @@ public class AudioPlayerService {
         ".wav", ".mp3", ".ogg", ".flac", ".aiff", ".au"
     );
     
-    @Tool(name = "listAudioFiles", 
+    @Tool(name = "audio_player_list_local_files", 
           description = "List all available audio files in the configured audio directory. Returns a list of audio files with supported formats (wav, mp3, ogg, flac, aiff, au).")
     public Map<String, Object> listAudioFiles() {
         logger.info("Listing audio files from directory: {}", audioDirectoryPath);
@@ -82,7 +82,7 @@ public class AudioPlayerService {
         }
     }
     
-    @Tool(name = "playAudio",
+    @Tool(name = "audio_player_play_file",
           description = "Play an audio file from local filename or remote URL. Supports local files in audio directory or remote URLs to audio files. Examples: 'song.mp3' for local file or 'https://example.com/audio.mp3' for remote URL. Note: Audio plays on the server machine in SSE mode.")
     public Map<String, Object> playAudio(String filenameOrUrl) {
         logger.info("Attempting to play audio: {}", filenameOrUrl);
@@ -146,7 +146,7 @@ public class AudioPlayerService {
         }
     }
     
-    @Tool(name = "stopAudio",
+    @Tool(name = "audio_player_stop_playback",
           description = "Stop current audio playback and clean up any temporary files.")
     public Map<String, Object> stopAudio() {
         logger.info("Stopping audio playback");
@@ -170,7 +170,7 @@ public class AudioPlayerService {
         }
     }
     
-    @Tool(name = "pauseAudio",
+    @Tool(name = "audio_player_pause_resume",
           description = "Pause or resume current audio playback.")
     public Map<String, Object> pauseAudio() {
         logger.info("Toggling pause state");
@@ -214,7 +214,7 @@ public class AudioPlayerService {
         }
     }
     
-    @Tool(name = "setVolume",
+    @Tool(name = "audio_player_set_volume",
           description = "Set the audio volume (0-10 scale). Volume changes apply to new audio playback.")
     public Map<String, Object> setVolume(int newVolume) {
         logger.info("Setting volume to: {}", newVolume);
@@ -241,7 +241,7 @@ public class AudioPlayerService {
         return result;
     }
     
-    @Tool(name = "getAudioStatus",
+    @Tool(name = "audio_player_get_current_status",
           description = "Get current audio player status including playback state, current file, and volume.")
     public Map<String, Object> getAudioStatus() {
         Map<String, Object> status = new HashMap<>();
@@ -262,7 +262,7 @@ public class AudioPlayerService {
         return status;
     }
     
-    @Tool(name = "checkAudioSystem",
+    @Tool(name = "audio_player_check_system_health",
           description = "Check if the server has audio system capabilities for playback. Useful for diagnosing audio issues in remote/headless environments.")
     public Map<String, Object> checkAudioSystem() {
         return checkAudioSystemAvailability();

@@ -71,7 +71,7 @@ public class CqaService {
 
     // ===================== MCP TOOLS =====================
 
-    @Tool(name = "cqaIngestInteraction",
+    @Tool(name = "exotel_cqa_ingest_single_interaction",
           description = "Ingest a single interaction into Exotel Conversational Intelligence for quality analysis. "
               + "Requires at least one of audioUrl or transcriptUrl. "
               + "Returns the interaction ID and processing status. "
@@ -114,7 +114,7 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "cqaIngestBatch",
+    @Tool(name = "exotel_cqa_ingest_batch_interactions",
           description = "Ingest a batch of interactions (up to 100) into Exotel Conversational Intelligence as a single asynchronous job. "
               + "Accepts a JSON array string of interaction objects. "
               + "Returns a job ID for tracking. "
@@ -147,7 +147,7 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "cqaIngestFile",
+    @Tool(name = "exotel_cqa_ingest_csv_file",
           description = "Submit a remote CSV file URL for asynchronous bulk ingestion into Exotel Conversational Intelligence. "
               + "The platform downloads and processes the file in the background (up to 100k rows, 100MB). "
               + "Returns a job ID for tracking. "
@@ -193,7 +193,7 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "cqaGetInteraction",
+    @Tool(name = "exotel_cqa_get_interaction_status",
           description = "Retrieve the current status and details of an ingested interaction from Exotel Conversational Intelligence. "
               + "Accepts either the platform-assigned UUID or your external_interaction_id. "
               + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
@@ -212,7 +212,7 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "cqaTrackJob",
+    @Tool(name = "exotel_cqa_track_ingestion_job",
           description = "Track the status of a batch or file ingestion job in Exotel Conversational Intelligence. "
               + "Returns paginated interaction list and overall job status (pending/processing/completed/failed). "
               + "Use the job ID returned by cqaIngestBatch or cqaIngestFile. "
@@ -237,7 +237,7 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "cqaGetAnalysis",
+    @Tool(name = "exotel_cqa_get_quality_analysis_results",
           description = "Retrieve the full quality analysis for a completed interaction from Exotel Conversational Intelligence. "
               + "Returns the scoring breakdown including categories, subcategories, and individual KPI scores with AI justifications. "
               + "Use the analysis_id from the interaction detail's analyses array. "
