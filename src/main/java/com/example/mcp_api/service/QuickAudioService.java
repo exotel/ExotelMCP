@@ -17,8 +17,8 @@ public class QuickAudioService {
     @Value("${exotel.base.url:http://localhost:8085}")
     private String baseUrl;
     
-    @Tool(name = "audio_quick_play_from_url", 
-          description = "🎵 Quick Play Audio - One-click audio playback! Provide any audio URL and get a direct clickable link to play it instantly in your browser. No copy-paste needed!")
+    @Tool(name = "exotel_audio_play_from_url", 
+          description = "Quick Play Audio - Provide any audio URL and get a direct clickable link to play it instantly in your browser.")
     public Map<String, Object> quickPlayAudio(String audioUrl) {
         logger.info("Quick play audio requested for: {}", audioUrl);
         
@@ -50,8 +50,8 @@ public class QuickAudioService {
         }
     }
     
-    @Tool(name = "audio_open_web_player_interface", 
-          description = "🎛️ Open Audio Player - Get a clickable link to open the web audio player interface where you can play any audio URL or manage playback.")
+    @Tool(name = "exotel_audio_open_player", 
+          description = "Open Audio Player - Get a clickable link to open the web audio player interface where you can play any audio URL or manage playback.")
     public Map<String, Object> openAudioPlayer() {
         String webPlayerUrl = baseUrl + "/audio/player";
         
@@ -72,8 +72,8 @@ public class QuickAudioService {
         return result;
     }
     
-    @Tool(name = "audio_quick_download_from_url", 
-          description = "💾 Quick Download Audio - Get a direct download link for any audio URL. Click to download the audio file to your computer.")
+    @Tool(name = "exotel_audio_download_from_url", 
+          description = "Quick Download Audio - Get a direct download link for any audio URL. Click to download the audio file to your computer.")
     public Map<String, Object> downloadAudioQuick(String audioUrl) {
         logger.info("Quick download requested for: {}", audioUrl);
         
