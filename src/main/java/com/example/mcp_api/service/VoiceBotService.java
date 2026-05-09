@@ -1,10 +1,10 @@
 package com.example.mcp_api.service;
 
-import com.example.mcp_api.config.CredentialStore;
+import com.example.mcp_api.auth.AuthContext;
+import com.example.mcp_api.auth.AuthCredentials;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -12,8 +12,6 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
@@ -24,24 +22,16 @@ import org.apache.hc.core5.ssl.SSLContextBuilder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import jakarta.servlet.http.HttpServletRequest;
 import javax.net.ssl.SSLContext;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Pattern;
 
 /**
- * VoiceBot MCP Service — exposes Exotel VoiceBot platform APIs as MCP tools.
+ * VoiceBot MCP tools — bot management and outbound calling.
  *
- * VoiceBot management API:  https://voicebot.in.exotel.com/voicebot/api/v2
- * Outbound calls API:       https://api.in.exotel.com/v1 (Exotel Calls/connect with VoiceBotSid)
- *
- * Credentials are resolved in priority order:
- *   1. Authorization header (per-request, multi-tenant) — fields:
- *      voicebot_api_key, voicebot_api_token, voicebot_account_id,
- *      calls_api_key, calls_api_token, calls_account_id, calls_base_url
- *   2. CredentialStore (session-level override)
- *   3. application.properties defaults (@Value)
+ * Credentials come from AuthCredentials (parsed once per request by AuthFilter).
+ * Fallback to @Value defaults for local development only.
  */
 @Service
 public class VoiceBotService {
@@ -49,7 +39,7 @@ public class VoiceBotService {
     private static final Logger logger = LoggerFactory.getLogger(VoiceBotService.class);
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    private static final int MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5 MB cap
+    private static final int MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
     private static final Pattern UUID_PATTERN = Pattern.compile("^[0-9a-fA-F\\-]{1,64}$");
     private static final Pattern ACCOUNT_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_\\-]{1,64}$");
     private static final Pattern PHONE_PATTERN = Pattern.compile("^[+]?[0-9\\-\\s()]{4,20}$");
@@ -89,10 +79,6 @@ public class VoiceBotService {
         }
     }
 
-    @Autowired
-    private CredentialStore credentialStore;
-
-    // Default values from application.properties (lowest priority fallback)
     @Value("${exotel.voicebot.api.key:}")
     private String defaultApiKey;
 
@@ -111,7 +97,7 @@ public class VoiceBotService {
     @Value("${exotel.voicebot.calls.force.http:false}")
     private boolean callsForceHttp;
 
-    @Value("${exotel.calls.account.sid:${exotel.voicebot.account.id:}}")
+    @Value("${exotel.calls.account.sid:}")
     private String defaultCallsAccountId;
 
     @Value("${exotel.calls.api.key:}")
@@ -120,7 +106,7 @@ public class VoiceBotService {
     @Value("${exotel.calls.api.token:}")
     private String defaultCallsApiToken;
 
-    @Value("${exotel.voicebot.default.caller.id:04446312776}")
+    @Value("${exotel.voicebot.default.caller.id:}")
     private String defaultCallerId;
 
     @Value("${exotel.voicebot.session.cookie:}")
@@ -129,103 +115,58 @@ public class VoiceBotService {
     @Value("${exotel.voicebot.device.session.cookie:}")
     private String defaultDeviceSessionCookie;
 
-    // ======================== AUTH HEADER PARSING ========================
-
-    private JsonNode getAuthNode() {
-        String header = getAuthHeader();
-        if (header == null || header.isBlank()) return null;
-        try {
-            String json = header.trim();
-            if (json.startsWith("Bearer ")) json = json.substring(7);
-            else if (json.startsWith("Basic ")) json = json.substring(6);
-            json = json.replace('\'', '"');
-            if (!json.startsWith("{")) json = "{" + json + "}";
-            return objectMapper.readTree(json);
-        } catch (Exception e) {
-            logger.debug("Could not parse Authorization header as JSON: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private String getAuthHeader() {
-        try {
-            ServletRequestAttributes attrs =
-                (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
-            HttpServletRequest request = attrs.getRequest();
-            String h = request.getHeader("Authorization");
-            if (h != null && !h.isBlank()) return h;
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    private String authField(JsonNode node, String field) {
-        if (node == null) return null;
-        JsonNode val = node.path(field);
-        if (val.isMissingNode() || val.isNull()) return null;
-        String text = val.asText();
-        return (text != null && !text.isBlank()) ? text : null;
-    }
-
-    // ======================== CREDENTIAL RESOLVERS ========================
-    // Priority: 1) Auth header  2) CredentialStore  3) @Value default
+    // ======================== CREDENTIAL RESOLUTION ========================
 
     private String getApiKey() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "voicebot_api_key");
-        if (val != null) return val;
-        return resolve("exotel.voicebot.api.key", defaultApiKey);
+        AuthCredentials creds = AuthContext.current();
+        String val = creds.getVoicebotApiKey();
+        return val != null ? val : defaultApiKey;
     }
 
     private String getApiToken() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "voicebot_api_token");
-        if (val != null) return val;
-        return resolve("exotel.voicebot.api.token", defaultApiToken);
+        AuthCredentials creds = AuthContext.current();
+        String val = creds.getVoicebotApiToken();
+        return val != null ? val : defaultApiToken;
     }
 
     private String getAccountId() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "voicebot_account_id");
-        if (val != null) return val;
-        return resolve("exotel.voicebot.account.id", defaultAccountId);
+        AuthCredentials creds = AuthContext.current();
+        String val = creds.getVoicebotAccountId();
+        return val != null ? val : defaultAccountId;
     }
 
     private String getCallsApiKey() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "calls_api_key");
+        AuthCredentials creds = AuthContext.current();
+        String val = creds.getCallsApiKey();
         if (val != null) return val;
-        String stored = resolve("exotel.calls.api.key", defaultCallsApiKey);
-        return stored.isBlank() ? getApiKey() : stored;
+        if (defaultCallsApiKey != null && !defaultCallsApiKey.isBlank()) return defaultCallsApiKey;
+        return getApiKey();
     }
 
     private String getCallsApiToken() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "calls_api_token");
+        AuthCredentials creds = AuthContext.current();
+        String val = creds.getCallsApiToken();
         if (val != null) return val;
-        String stored = resolve("exotel.calls.api.token", defaultCallsApiToken);
-        return stored.isBlank() ? getApiToken() : stored;
+        if (defaultCallsApiToken != null && !defaultCallsApiToken.isBlank()) return defaultCallsApiToken;
+        return getApiToken();
     }
 
     private String getCallsAccountId() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "calls_account_id");
+        AuthCredentials creds = AuthContext.current();
+        String val = creds.getCallsAccountId();
         if (val != null) return val;
-        return resolve("exotel.calls.account.sid", defaultCallsAccountId);
+        if (defaultCallsAccountId != null && !defaultCallsAccountId.isBlank()) return defaultCallsAccountId;
+        return getAccountId();
     }
 
     private String getCallsBaseUrl() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "calls_base_url");
-        if (val != null) return val;
-        return defaultCallsBaseUrl;
+        AuthCredentials creds = AuthContext.current();
+        return creds.effectiveCallsBaseUrl(defaultCallsBaseUrl);
     }
 
     private String getVoicebotBaseUrl() {
-        JsonNode auth = getAuthNode();
-        String val = authField(auth, "voicebot_base_url");
-        if (val != null) return val;
-        return voicebotBaseUrl;
+        AuthCredentials creds = AuthContext.current();
+        return creds.effectiveVoicebotBaseUrl(voicebotBaseUrl);
     }
 
     private String callsBasicToken() {
@@ -233,49 +174,34 @@ public class VoiceBotService {
             (getCallsApiKey() + ":" + getCallsApiToken()).getBytes(StandardCharsets.UTF_8));
     }
 
-    private String getVoicebotSessionCookie() { return resolve("exotel.voicebot.session.cookie", defaultVoicebotSessionCookie); }
-    private String getDeviceSessionCookie() { return resolve("exotel.voicebot.device.session.cookie", defaultDeviceSessionCookie); }
-
-    private String resolve(String key, String fallback) {
-        String val = credentialStore.get(key);
-        return (val != null && !val.isBlank()) ? val : fallback;
+    private String requireVoiceBotCreds() {
+        String error = AuthContext.requireVoicebot();
+        if (error != null) {
+            if (defaultApiKey != null && !defaultApiKey.isBlank()) return null;
+            return error;
+        }
+        return null;
     }
 
-    private void requireVoiceBotCredentials() {
-        if (getApiKey().isBlank() || getApiToken().isBlank() || getAccountId().isBlank()) {
-            throw new IllegalStateException(
-                "VoiceBot credentials not configured. Pass voicebot_api_key, " +
-                "voicebot_api_token, and voicebot_account_id in the Authorization header.");
+    private String requireCallsCreds() {
+        String error = AuthContext.requireCalls();
+        if (error != null) {
+            if (defaultCallsApiKey != null && !defaultCallsApiKey.isBlank()) return null;
+            return error;
         }
-        if (!ACCOUNT_ID_PATTERN.matcher(getAccountId()).matches()) {
-            throw new IllegalStateException("VoiceBot account ID contains invalid characters");
-        }
-    }
-
-    private void requireCallsCredentials() {
-        if (getCallsApiKey().isBlank() || getCallsApiToken().isBlank() || getCallsAccountId().isBlank()) {
-            throw new IllegalStateException(
-                "Calls API credentials not configured. Pass calls_api_key, " +
-                "calls_api_token, and calls_account_id in the Authorization header.");
-        }
-        if (!ACCOUNT_ID_PATTERN.matcher(getCallsAccountId()).matches()) {
-            throw new IllegalStateException("Calls account ID contains invalid characters");
-        }
+        return null;
     }
 
     private void validateId(String value, String name) {
-        if (value == null || value.isBlank()) {
+        if (value == null || value.isBlank())
             throw new IllegalArgumentException(name + " is required");
-        }
-        if (!UUID_PATTERN.matcher(value).matches() && !CALL_SID_PATTERN.matcher(value).matches()) {
+        if (!UUID_PATTERN.matcher(value).matches() && !CALL_SID_PATTERN.matcher(value).matches())
             throw new IllegalArgumentException(name + " contains invalid characters");
-        }
     }
 
     private void validateNumericParam(String value, String name) {
-        if (value != null && !value.isBlank() && !NUMERIC_PATTERN.matcher(value).matches()) {
+        if (value != null && !value.isBlank() && !NUMERIC_PATTERN.matcher(value).matches())
             throw new IllegalArgumentException(name + " must be a number (1-99999)");
-        }
     }
 
     private String sanitizeForLog(String input) {
@@ -285,102 +211,84 @@ public class VoiceBotService {
 
     // ======================== MCP TOOLS ========================
 
-    @Tool(name = "listVoiceBots",
+    @Tool(name = "exotel_voicebot_list_all",
           description = "Lists all VoiceBots on the Exotel account. Supports pagination (offset/limit) and filtering by status (active/inactive). Returns bot id, name, status, languages, voice config, and version info.")
     public String listVoiceBots(String status, String limit, String offset) {
         logger.info("Listing VoiceBots — status={}, limit={}, offset={}", sanitizeForLog(status), sanitizeForLog(limit), sanitizeForLog(offset));
         try {
-            requireVoiceBotCredentials();
+            String authErr = requireVoiceBotCreds();
+            if (authErr != null) return authErr;
             validateNumericParam(limit, "limit");
             validateNumericParam(offset, "offset");
-            if (status != null && !status.isBlank() && !Set.of("active", "inactive").contains(status.toLowerCase())) {
+            if (status != null && !status.isBlank() && !Set.of("active", "inactive").contains(status.toLowerCase()))
                 return "Error: status must be 'active' or 'inactive'";
-            }
 
             StringBuilder url = new StringBuilder(getVoicebotBaseUrl())
                     .append("/accounts/").append(getAccountId()).append("/voicebots?");
-
             if (limit != null && !limit.isBlank()) url.append("limit=").append(limit).append("&");
             else url.append("limit=20&");
-
             if (offset != null && !offset.isBlank()) url.append("offset=").append(offset).append("&");
             if (status != null && !status.isBlank()) url.append("status=").append(status.toLowerCase()).append("&");
 
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
-            ResponseEntity<String> response = restTemplate.exchange(
-                    url.toString(), HttpMethod.GET, entity, String.class);
+            ResponseEntity<String> response = restTemplate.exchange(url.toString(), HttpMethod.GET, entity, String.class);
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("listVoiceBots", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("listVoiceBots", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error listing VoiceBots: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_list_all", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_list_all", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error listing VoiceBots: " + e.getMessage(); }
     }
 
-    @Tool(name = "getVoiceBot",
-          description = "Gets full details of a single VoiceBot by its ID. Returns name, status, supported_languages, assistant_config, voice_config, asr_config, post_session_insights, and version history.")
+    @Tool(name = "exotel_voicebot_get_details",
+          description = "Gets full details of a single VoiceBot by its ID. Returns name, status, supported_languages, assistant_config, voice_config, asr_config, and version history.")
     public String getVoiceBot(String voiceBotId) {
         logger.info("Getting VoiceBot: {}", sanitizeForLog(voiceBotId));
         try {
-            requireVoiceBotCredentials();
+            String authErr = requireVoiceBotCreds();
+            if (authErr != null) return authErr;
             validateId(voiceBotId, "voiceBotId");
             String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("getVoiceBot", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("getVoiceBot", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error getting VoiceBot: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_get_details", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_get_details", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error getting VoiceBot: " + e.getMessage(); }
     }
 
-    @Tool(name = "deleteVoiceBot",
+    @Tool(name = "exotel_voicebot_delete",
           description = "Deletes a VoiceBot permanently by its ID. This action cannot be undone. Always confirm with the user before calling this tool.")
     public String deleteVoiceBot(String voiceBotId) {
         logger.info("Deleting VoiceBot: {}", sanitizeForLog(voiceBotId));
         try {
-            requireVoiceBotCredentials();
+            String authErr = requireVoiceBotCreds();
+            if (authErr != null) return authErr;
             validateId(voiceBotId, "voiceBotId");
             String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class);
             String body = response.getBody();
             return (body != null && !body.isBlank()) ? body : "VoiceBot " + voiceBotId + " deleted successfully.";
-        } catch (HttpClientErrorException e) {
-            return errorMsg("deleteVoiceBot", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("deleteVoiceBot", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error deleting VoiceBot: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_delete", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_delete", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error deleting VoiceBot: " + e.getMessage(); }
     }
 
-    @Tool(name = "createVoiceBot",
-          description = "Creates a new VoiceBot using AI-powered bot generation. Provide a text description of the bot's personality, purpose, and behavior. The bot is generated asynchronously — use getBotGenerationStatus to poll until status is 'completed'. Params: textContent (description of the bot, e.g. 'You are a friendly customer support agent for Acme Corp. Help customers with orders and returns.').")
+    @Tool(name = "exotel_voicebot_create",
+          description = "Creates a new VoiceBot using AI-powered bot generation. Provide a text description of the bot's personality, purpose, and behavior. The bot is generated asynchronously — use exotel_voicebot_creation_status to poll until complete.")
     public String createVoiceBot(String textContent) {
-        logger.info("Creating VoiceBot via bot-generation — textLength={}", textContent != null ? textContent.length() : 0);
+        logger.info("Creating VoiceBot — textLength={}", textContent != null ? textContent.length() : 0);
         try {
-            requireVoiceBotCredentials();
-            if (textContent == null || textContent.isBlank()) {
+            String authErr = requireVoiceBotCreds();
+            if (authErr != null) return authErr;
+            if (textContent == null || textContent.isBlank())
                 return "Error: textContent is required — describe the bot's personality and purpose";
-            }
-            if (textContent.length() > 10_000) {
+            if (textContent.length() > 10_000)
                 return "Error: textContent too long (max 10,000 characters)";
-            }
 
             String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/bot-generation";
-
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
             headers.set("Authorization", "Basic " + basicToken());
@@ -390,67 +298,53 @@ public class VoiceBotService {
 
             HttpEntity<org.springframework.util.LinkedMultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-            logger.info("createVoiceBot status: {}", response.getStatusCode());
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("createVoiceBot", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("createVoiceBot", e);
-        } catch (IllegalStateException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error creating VoiceBot: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_create", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_create", e);
+        } catch (IllegalStateException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error creating VoiceBot: " + e.getMessage(); }
     }
 
-    @Tool(name = "getBotGenerationStatus",
-          description = "Checks the status of a VoiceBot generation request. Status progresses: pending -> in_progress -> completed. When completed, the bot appears in listVoiceBots. Params: generationId (the ID returned by createVoiceBot).")
+    @Tool(name = "exotel_voicebot_creation_status",
+          description = "Checks the status of a VoiceBot generation request. Status: pending -> in_progress -> completed. When completed, the bot appears in exotel_voicebot_list_all.")
     public String getBotGenerationStatus(String generationId) {
-        logger.info("Checking bot generation status: {}", sanitizeForLog(generationId));
+        logger.info("Checking bot generation: {}", sanitizeForLog(generationId));
         try {
-            requireVoiceBotCredentials();
+            String authErr = requireVoiceBotCreds();
+            if (authErr != null) return authErr;
             validateId(generationId, "generationId");
             String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/bot-generation/" + generationId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("getBotGenerationStatus", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("getBotGenerationStatus", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error checking bot generation status: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_creation_status", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_creation_status", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error checking status: " + e.getMessage(); }
     }
 
-    @Tool(name = "callWithBot",
-          description = "THE primary tool for making any phone call. Places an outbound call powered by a VoiceBot — " +
-                        "the bot handles the entire conversation autonomously. Use this for ALL calling requests. " +
-                        "Requires: toNumber (phone to call, e.g. 09720454250), voiceBotId (UUID from listVoiceBots). " +
-                        "Optional: callerId (Exotel phone number, defaults to configured default), customField (metadata for the bot). " +
-                        "After calling, use getBotCallDetails with the returned CallSid to check status and get recording URL.")
+    @Tool(name = "exotel_voicebot_place_call",
+          description = "Places an outbound call powered by a VoiceBot — the bot handles the conversation autonomously. "
+              + "Requires: toNumber (phone to call), voiceBotId (UUID from exotel_voicebot_list_all). "
+              + "Optional: callerId (display number), customField (metadata). "
+              + "After calling, use exotel_voicebot_call_status with the returned CallSid to check status.")
     public String makeOutboundBotCall(String toNumber, String voiceBotId, String callerId, String customField) {
-        logger.info("Outbound bot call — to={}, bot={}, callerId={}", sanitizeForLog(toNumber), sanitizeForLog(voiceBotId), sanitizeForLog(callerId));
+        logger.info("Outbound bot call — to={}, bot={}", sanitizeForLog(toNumber), sanitizeForLog(voiceBotId));
         try {
-            requireVoiceBotCredentials();
-            requireCallsCredentials();
+            String authErr = requireVoiceBotCreds();
+            if (authErr != null) return authErr;
+            String callsErr = requireCallsCreds();
+            if (callsErr != null) return callsErr;
             validateId(voiceBotId, "voiceBotId");
-            if (toNumber == null || toNumber.isBlank()) {
-                return "Error: toNumber is required";
-            }
-            if (!PHONE_PATTERN.matcher(toNumber).matches()) {
-                return "Error: toNumber contains invalid characters";
-            }
-            if (callerId != null && !callerId.isBlank() && !PHONE_PATTERN.matcher(callerId).matches()) {
+            if (toNumber == null || toNumber.isBlank()) return "Error: toNumber is required";
+            if (!PHONE_PATTERN.matcher(toNumber).matches()) return "Error: toNumber contains invalid characters";
+            if (callerId != null && !callerId.isBlank() && !PHONE_PATTERN.matcher(callerId).matches())
                 return "Error: callerId contains invalid characters";
-            }
 
             String accountId = getAccountId();
             String effectiveCallerId = (callerId != null && !callerId.isBlank()) ? callerId : defaultCallerId;
 
-            // Step 1: Fetch the WebSocket stream URL from the bot's dp-endpoint
+            // Step 1: Fetch WebSocket stream URL from bot dp-endpoint
             String dpBase = getVoicebotBaseUrl().replaceFirst("/api/v\\d+$", "/api/v1");
             String dpEndpointUrl = dpBase + "/accounts/" + accountId + "/bots/" + voiceBotId + "/dp-endpoint";
 
@@ -461,17 +355,12 @@ public class VoiceBotService {
                     dpEndpointUrl, HttpMethod.GET, new HttpEntity<>(dpHeaders), String.class);
 
             String streamUrl = extractStreamUrl(safeBody(dpResponse));
-            if (streamUrl == null || streamUrl.isBlank()) {
-                logger.error("callWithBot: failed to extract stream URL from dp-endpoint");
+            if (streamUrl == null || streamUrl.isBlank())
                 return "Error: Could not extract stream URL from VoiceBot dp-endpoint. Verify the bot ID is correct and active.";
-            }
-            if (!streamUrl.startsWith("wss://")) {
-                logger.error("callWithBot: dp-endpoint returned non-secure WebSocket URL");
+            if (!streamUrl.startsWith("wss://"))
                 return "Error: VoiceBot returned insecure WebSocket URL. Contact support.";
-            }
-            logger.info("callWithBot stream URL obtained for bot={}", sanitizeForLog(voiceBotId));
 
-            // Step 2: POST to Calls connect
+            // Step 2: POST to Calls connect.json
             String resolvedCallsBase = getCallsBaseUrl();
             String baseUrl = callsForceHttp ? resolvedCallsBase.replaceFirst("^https://", "http://") : resolvedCallsBase;
             String connectUrl = baseUrl + "/v1/Accounts/" + getCallsAccountId() + "/Calls/connect.json";
@@ -485,35 +374,28 @@ public class VoiceBotService {
             form.add("StreamUrl", streamUrl);
             form.add("From", formatPhoneNumber(toNumber));
             form.add("CallerId", effectiveCallerId);
-            if (customField != null && !customField.isBlank()) {
+            if (customField != null && !customField.isBlank())
                 form.add("CustomField", customField.substring(0, Math.min(customField.length(), 1000)));
-            }
 
             ResponseEntity<String> connectResponse = restTemplate.exchange(
                     connectUrl, HttpMethod.POST, new HttpEntity<>(form, connectHeaders), String.class);
-            logger.info("callWithBot connect status: {}", connectResponse.getStatusCode());
             return safeBody(connectResponse);
 
         } catch (HttpClientErrorException e) {
-            if (e.getStatusCode().value() == 401) {
-                return "Error 401: Authentication failed. Check API credentials.";
-            }
-            return errorMsg("callWithBot", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("callWithBot", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error making outbound bot call: " + e.getMessage();
-        }
+            if (e.getStatusCode().value() == 401) return "Error 401: Authentication failed. Check API credentials.";
+            return errorMsg("exotel_voicebot_place_call", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_place_call", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error making outbound bot call: " + e.getMessage(); }
     }
 
-    @Tool(name = "getBotCallDetails",
-          description = "Gets details of a specific call by its Call SID. Returns status, duration, recording URL, timestamps, and direction. Use after makeOutboundBotCall to check if the call connected.")
+    @Tool(name = "exotel_voicebot_call_status",
+          description = "Gets details of a call by its Call SID. Returns status, duration, recording URL, timestamps. Use after exotel_voicebot_place_call.")
     public String getBotCallDetails(String callSid) {
         logger.info("Getting call details: {}", sanitizeForLog(callSid));
         try {
-            requireCallsCredentials();
+            String callsErr = requireCallsCreds();
+            if (callsErr != null) return callsErr;
             validateId(callSid, "callSid");
             String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId() + "/Calls/" + callSid + ".json";
 
@@ -524,23 +406,19 @@ public class VoiceBotService {
 
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("getBotCallDetails", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("getBotCallDetails", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error getting call details: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_call_status", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_call_status", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error getting call details: " + e.getMessage(); }
     }
 
-    @Tool(name = "listAccountPhoneNumbers",
-          description = "Lists all phone numbers (DIDs) available on the Exotel account. Use this to find a valid callerId before placing outbound bot calls.")
+    @Tool(name = "exotel_voicebot_list_phone_numbers",
+          description = "Lists all phone numbers (DIDs) available on the Exotel account. Use to find a valid callerId before placing calls.")
     public String listAccountPhoneNumbers() {
         logger.info("Listing account phone numbers");
         try {
-            requireCallsCredentials();
+            String callsErr = requireCallsCreds();
+            if (callsErr != null) return callsErr;
             String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId() + "/IncomingPhoneNumbers.json";
 
             HttpHeaders headers = new HttpHeaders();
@@ -550,23 +428,19 @@ public class VoiceBotService {
 
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("listAccountPhoneNumbers", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("listAccountPhoneNumbers", e);
-        } catch (IllegalStateException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error listing phone numbers: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_list_phone_numbers", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_list_phone_numbers", e);
+        } catch (IllegalStateException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error listing phone numbers: " + e.getMessage(); }
     }
 
-    @Tool(name = "listRecentBotCalls",
-          description = "Lists recent calls on the account. Supports limit (default 10) and sortBy (DateCreated:desc). Use to review call history and outcomes.")
+    @Tool(name = "exotel_voicebot_list_recent_calls",
+          description = "Lists recent calls on the account. Supports limit (default 10). Use to review call history and outcomes.")
     public String listRecentBotCalls(String limit) {
         logger.info("Listing recent calls — limit={}", sanitizeForLog(limit));
         try {
-            requireCallsCredentials();
+            String callsErr = requireCallsCreds();
+            if (callsErr != null) return callsErr;
             validateNumericParam(limit, "limit");
             String lim = (limit != null && !limit.isBlank()) ? limit : "10";
             String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId()
@@ -579,31 +453,22 @@ public class VoiceBotService {
 
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             return safeBody(response);
-        } catch (HttpClientErrorException e) {
-            return errorMsg("listRecentBotCalls", e);
-        } catch (HttpServerErrorException e) {
-            return serverErrorMsg("listRecentBotCalls", e);
-        } catch (IllegalStateException | IllegalArgumentException e) {
-            return "Error: " + e.getMessage();
-        } catch (Exception e) {
-            return "Error listing recent calls: " + e.getMessage();
-        }
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_list_recent_calls", e);
+        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_list_recent_calls", e);
+        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error listing recent calls: " + e.getMessage(); }
     }
 
     // ======================== HELPERS ========================
 
-    /**
-     * Normalises an Indian mobile/landline number to +91XXXXXXXXXX format.
-     * Leaves numbers already starting with + untouched.
-     */
     private String formatPhoneNumber(String number) {
         if (number == null || number.isBlank()) return number;
         String digits = number.replaceAll("[^0-9]", "");
-        if (number.startsWith("+")) return number;           // already E.164
-        if (digits.length() == 12 && digits.startsWith("91")) return "+" + digits; // 919XXXXXXXXX
-        if (digits.length() == 11 && digits.startsWith("0")) return "+91" + digits.substring(1); // 09XXXXXXXXX
-        if (digits.length() == 10) return "+91" + digits;   // 9XXXXXXXXX
-        return number; // return as-is for non-Indian formats
+        if (number.startsWith("+")) return number;
+        if (digits.length() == 12 && digits.startsWith("91")) return "+" + digits;
+        if (digits.length() == 11 && digits.startsWith("0")) return "+91" + digits.substring(1);
+        if (digits.length() == 10) return "+91" + digits;
+        return number;
     }
 
     private String extractStreamUrl(String responseBody) {
@@ -638,17 +503,16 @@ public class VoiceBotService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setAccept(List.of(MediaType.APPLICATION_JSON));
         headers.set("Authorization", "Basic " + basicToken());
-        String voicebotCookie = sanitizeHeaderValue(getVoicebotSessionCookie());
-        String deviceCookie = sanitizeHeaderValue(getDeviceSessionCookie());
+        String voicebotCookie = sanitize(defaultVoicebotSessionCookie);
+        String deviceCookie = sanitize(defaultDeviceSessionCookie);
         if (!voicebotCookie.isBlank() && !deviceCookie.isBlank()) {
-            headers.set("Cookie",
-                    "voicebot_session_mum_prod=" + voicebotCookie +
-                    "; exotel_device_session_in=" + deviceCookie);
+            headers.set("Cookie", "voicebot_session_mum_prod=" + voicebotCookie
+                    + "; exotel_device_session_in=" + deviceCookie);
         }
         return headers;
     }
 
-    private String sanitizeHeaderValue(String value) {
+    private String sanitize(String value) {
         if (value == null) return "";
         return value.replaceAll("[\\r\\n]", "");
     }
@@ -661,10 +525,7 @@ public class VoiceBotService {
     private String safeBody(ResponseEntity<String> response) {
         String body = response.getBody();
         if (body == null) return "{}";
-        if (body.length() > MAX_RESPONSE_BYTES) {
-            logger.warn("Response body truncated: {} bytes", body.length());
-            return body.substring(0, MAX_RESPONSE_BYTES);
-        }
+        if (body.length() > MAX_RESPONSE_BYTES) return body.substring(0, MAX_RESPONSE_BYTES);
         return body;
     }
 

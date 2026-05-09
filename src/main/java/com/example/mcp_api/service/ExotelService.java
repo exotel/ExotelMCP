@@ -105,7 +105,7 @@ public class ExotelService {
         return sendSmsToUser(toNumber, message, dltTemplateId, dltEntityId);
     }
     
-    @Tool(name = "sendSmsToUser", 
+    @Tool(name = "exotel_sms_send_single", 
           description = "Send an SMS message to a single user using DLT-compliant parameters. Requires phone number, DLT template ID, DLT entity ID, and message content. Authentication is handled automatically from the session.")
     public String sendSmsToUser(String toNumber, String message, String dltTemplateId, String dltEntityId) {
         logger.info("Sending SMS to: {}", toNumber);
@@ -150,7 +150,7 @@ public class ExotelService {
         return sendVoiceCallToUser(toNumber);
     }
     
-    @Tool(name = "sendVoiceCallToUser", 
+    @Tool(name = "exotel_voice_call_initiate", 
           description = "Initiates a voice call to the specified user number using a fixed source number. Requires phone number. Authentication is handled automatically from the session.")
     public String sendVoiceCallToUser(String toNumber) {
         logger.info("Sending voice call to: {}", toNumber);
@@ -191,7 +191,7 @@ public class ExotelService {
         return outgoingCallToConnectNumber(fromNumber, toNumber);
     }
     
-    @Tool(name = "outgoingCallToConnectNumber", 
+    @Tool(name = "exotel_voice_connect_two_numbers", 
           description = "Initiates an outgoing voice call from a specified number to a target number. Requires from number and to number. Authentication is handled automatically from the session.")
     public String outgoingCallToConnectNumber(String fromNumber, String toNumber) {
         logger.info("Sending voice call from: {} to: {}", fromNumber, toNumber);
@@ -231,7 +231,7 @@ public class ExotelService {
         return sendMessageToBulkNumbers(toNumbers, message);
     }
     
-    @Tool(name = "sendMessageToBulkNumbers", 
+    @Tool(name = "exotel_sms_send_bulk_same_message", 
           description = "Send same SMS to multiple phone numbers at once. Requires phone numbers list and message. Authentication is handled automatically from the session.")
     public String sendMessageToBulkNumbers(List<String> toNumbers, String message) {
         logger.info("Sending bulk SMS to: {}", toNumbers);
@@ -273,7 +273,7 @@ public class ExotelService {
         return sendDynamicBulkSms(messages);
     }
     
-    @Tool(name = "sendDynamicBulkSms", 
+    @Tool(name = "exotel_sms_send_bulk_personalized", 
           description = "Send dynamic SMS to multiple numbers in one request. Each message can have different content. Requires list of messages with Body and To fields. Authentication is handled automatically from the session.")
     public String sendDynamicBulkSms(List<com.example.mcp_api.dto.Message> messages) {
         logger.info("Sending dynamic bulk SMS with {} messages", messages.size());
@@ -310,7 +310,7 @@ public class ExotelService {
         }
     }
     
-    @Tool(name = "connectNumberToCallFlow", 
+    @Tool(name = "exotel_voice_connect_to_call_flow", 
           description = "Initiate a voice call to connect a number to a predefined call flow using the provided app ID. Requires app ID and from number. Authentication is handled automatically from the session.")
     public String connectNumberToCallFlow(String appId, String fromNumber) {
         logger.info("Connecting call flow: {}", appId);
@@ -350,7 +350,7 @@ public class ExotelService {
         return getSmsCallbacks(toNumber);
     }
     
-    @Tool(name = "getSmsCallbacks", 
+    @Tool(name = "exotel_sms_get_delivery_status", 
           description = "Fetch all SMS callback with status records from the database for the given user and phone number. Searches in to_number field with user_id security. Requires phone number. Authentication is handled automatically from the session.")
     public Map<String, Object> getSmsCallbacks(String phoneNumber) {
         logger.info("Fetching SMS callbacks for phone number: {}", phoneNumber);
@@ -391,7 +391,7 @@ public class ExotelService {
         return getVoiceCallCallbacks(toNumber);
     }
     
-    @Tool(name = "getVoiceCallCallbacks", 
+    @Tool(name = "exotel_voice_get_call_status_callbacks", 
           description = "Fetch all voice call callback with status records from the database for the given phone number. Searches in BOTH to_number OR from_number with user_id security. Requires phone number. Authentication is handled automatically from the session.")
     public Map<String, Object> getVoiceCallCallbacks(String phoneNumber) {
         logger.info("=== ENHANCED VOICE CALLBACKS SEARCH ===");
@@ -519,7 +519,7 @@ public class ExotelService {
         return getBulkCallDetails(fromNumber);
     }
     
-    @Tool(name = "getBulkCallDetails", 
+    @Tool(name = "exotel_voice_get_bulk_call_details", 
           description = "Fetch bulk voice call details based on passed from number. Requires from number. Authentication is handled automatically from the session.")
     public String getBulkCallDetails(String fromNumber) {
         logger.info("Fetching bulk voice call details...");
@@ -541,7 +541,7 @@ public class ExotelService {
         return getNumberMetadata(number);
     }
     
-    @Tool(name = "getNumberMetadata", 
+    @Tool(name = "exotel_number_get_metadata", 
           description = "Retrieve metadata details for a given phone number with caching for better performance. Requires phone number. Authentication is handled automatically from the session.")
     public String getNumberMetadata(String number) {
         logger.info("Fetching number metadata for: {}", number);
@@ -1613,7 +1613,7 @@ public class ExotelService {
     //     return result.toString();
     // }
     
-    @Tool(name = "searchVoiceCallbacksByNumber", description = "Search voice callbacks by phone number in BOTH to_number OR from_number with user_id security (limited results)")
+    @Tool(name = "exotel_voice_search_callbacks_by_number", description = "Search voice callbacks by phone number in BOTH to_number OR from_number with user_id security (limited results)")
     public String searchVoiceCallbacksByNumber(String phoneNumber) {
         if (phoneNumber == null || phoneNumber.trim().isEmpty()) {
             return "Error: Phone number is required";
@@ -1674,7 +1674,7 @@ public class ExotelService {
         }
     }
     
-    @Tool(name = "getCallDetails", description = "Get detailed information for a specific CallSid")
+    @Tool(name = "exotel_voice_get_single_call_details", description = "Get detailed information for a specific CallSid")
     public String getCallDetails(String callSid) {
         if (callSid == null || callSid.trim().isEmpty()) {
             return "Error: CallSid is required";
