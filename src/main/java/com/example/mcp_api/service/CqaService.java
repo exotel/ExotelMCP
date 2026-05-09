@@ -10,21 +10,19 @@ import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
 import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.example.mcp_api.auth.AuthContext;
+import com.example.mcp_api.auth.AuthCredentials;
+
 import com.example.mcp_api.dto.CqaAuthData;
 
-import jakarta.servlet.http.HttpServletRequest;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.JsonNode;
 
 @Service
 public class CqaService {
@@ -36,9 +34,6 @@ public class CqaService {
         "cqa-console.in.exotel.com",
         "cqa.exotel.com"
     );
-
-    @Autowired
-    private ExotelService exotelService;
 
     private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -71,11 +66,10 @@ public class CqaService {
 
     // ===================== MCP TOOLS =====================
 
-    @Tool(name = "exotel_cqa_ingest_single_interaction",
+    @Tool(name = "exotel_cqa_ingest_interaction",
           description = "Ingest a single interaction into Exotel Conversational Intelligence for quality analysis. "
               + "Requires at least one of audioUrl or transcriptUrl. "
-              + "Returns the interaction ID and processing status. "
-              + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
+              + "Returns the interaction ID and processing status.")
     public Map<String, Object> cqaIngestInteraction(
             String externalInteractionId,
             String channelType,
@@ -114,11 +108,9 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "exotel_cqa_ingest_batch_interactions",
+    @Tool(name = "exotel_cqa_ingest_batch",
           description = "Ingest a batch of interactions (up to 100) into Exotel Conversational Intelligence as a single asynchronous job. "
-              + "Accepts a JSON array string of interaction objects. "
-              + "Returns a job ID for tracking. "
-              + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
+              + "Accepts a JSON array string of interaction objects. Returns a job ID for tracking.")
     public Map<String, Object> cqaIngestBatch(String interactionsJson, boolean skipDuplicationCheck) {
         logger.info("CQA ingest batch, skipDuplication={}", skipDuplicationCheck);
         try {
@@ -147,11 +139,9 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "exotel_cqa_ingest_csv_file",
+    @Tool(name = "exotel_cqa_ingest_file",
           description = "Submit a remote CSV file URL for asynchronous bulk ingestion into Exotel Conversational Intelligence. "
-              + "The platform downloads and processes the file in the background (up to 100k rows, 100MB). "
-              + "Returns a job ID for tracking. "
-              + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
+              + "The platform downloads and processes the file in the background (up to 100k rows, 100MB). Returns a job ID for tracking.")
     public Map<String, Object> cqaIngestFile(
             String fileUrl,
             String format,
@@ -193,10 +183,9 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "exotel_cqa_get_interaction_status",
+    @Tool(name = "exotel_cqa_get_interaction",
           description = "Retrieve the current status and details of an ingested interaction from Exotel Conversational Intelligence. "
-              + "Accepts either the platform-assigned UUID or your external_interaction_id. "
-              + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
+              + "Accepts either the platform-assigned UUID or your external_interaction_id.")
     public Map<String, Object> cqaGetInteraction(String interactionIdentifier) {
         logger.info("CQA get interaction: {}", interactionIdentifier);
         try {
@@ -212,11 +201,10 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "exotel_cqa_track_ingestion_job",
+    @Tool(name = "exotel_cqa_track_job",
           description = "Track the status of a batch or file ingestion job in Exotel Conversational Intelligence. "
               + "Returns paginated interaction list and overall job status (pending/processing/completed/failed). "
-              + "Use the job ID returned by cqaIngestBatch or cqaIngestFile. "
-              + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
+              + "Use the job ID returned by exotel_cqa_ingest_batch or exotel_cqa_ingest_file.")
     public Map<String, Object> cqaTrackJob(String jobId, int page, int size) {
         logger.info("CQA track job: id={}, page={}, size={}", jobId, page, size);
         try {
@@ -237,11 +225,10 @@ public class CqaService {
         }
     }
 
-    @Tool(name = "exotel_cqa_get_quality_analysis_results",
+    @Tool(name = "exotel_cqa_get_analysis",
           description = "Retrieve the full quality analysis for a completed interaction from Exotel Conversational Intelligence. "
               + "Returns the scoring breakdown including categories, subcategories, and individual KPI scores with AI justifications. "
-              + "Use the analysis_id from the interaction detail's analyses array. "
-              + "Authentication uses cqa_api_key, cqa_account_id, and cqa_host from the session.")
+              + "Use the analysis_id from the interaction detail's analyses array.")
     public Map<String, Object> cqaGetAnalysis(String analysisId) {
         logger.info("CQA get analysis: {}", analysisId);
         try {
@@ -260,49 +247,19 @@ public class CqaService {
     // ===================== AUTH =====================
 
     private CqaAuthData getCqaAuth() {
-        String authHeader = getAuthHeader();
-        return parseCqaAuth(authHeader);
-    }
-
-    private CqaAuthData parseCqaAuth(String authHeader) {
-        if (authHeader == null || authHeader.isBlank()) {
-            throw new IllegalStateException("Authorization header is missing. Provide cqa_api_key, cqa_account_id, and cqa_host in the auth config.");
+        AuthCredentials creds = AuthContext.current();
+        String error = AuthContext.requireCqa();
+        if (error != null) {
+            throw new IllegalStateException(error);
         }
-        try {
-            String json = authHeader.trim();
-            if (json.startsWith("Bearer ")) json = json.substring(7);
-            else if (json.startsWith("Basic ")) json = json.substring(6);
-            json = json.replace('\'', '"');
-            if (!json.startsWith("{")) json = "{" + json + "}";
 
-            JsonNode node = objectMapper.readTree(json);
+        String host = creds.effectiveCqaHost("https://cqa-console.in.exotel.com");
+        validateHost(host);
 
-            String apiKey = getField(node, "cqa_api_key");
-            String accountId = getField(node, "cqa_account_id");
-            String host = getField(node, "cqa_host");
+        String accountId = creds.getCqaAccountId();
+        validateAccountId(accountId);
 
-            if (apiKey == null || apiKey.isBlank()) {
-                throw new IllegalArgumentException("cqa_api_key is required in the auth config");
-            }
-            if (accountId == null || accountId.isBlank()) {
-                throw new IllegalArgumentException("cqa_account_id is required in the auth config");
-            }
-            if (host == null || host.isBlank()) {
-                host = "https://cqa-console.in.exotel.com";
-            }
-            validateHost(host);
-            validateAccountId(accountId);
-
-            return new CqaAuthData(apiKey, accountId, host);
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse CQA auth from Authorization header: " + e.getMessage(), e);
-        }
-    }
-
-    private String getField(JsonNode node, String field) {
-        return node.has(field) ? node.get(field).asText() : null;
+        return new CqaAuthData(creds.getCqaApiKey(), accountId, host);
     }
 
     private void validateHost(String host) {
@@ -327,26 +284,6 @@ public class CqaService {
         if (!accountId.matches("[a-zA-Z0-9\\-]+")) {
             throw new IllegalArgumentException("cqa_account_id contains invalid characters");
         }
-    }
-
-    private String getAuthHeader() {
-        try {
-            ServletRequestAttributes attrs =
-                (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
-            HttpServletRequest request = attrs.getRequest();
-            String h = request.getHeader("Authorization");
-            if (h != null && !h.isBlank()) return h;
-        } catch (Exception ignored) {
-        }
-
-        try {
-            java.lang.reflect.Method m = ExotelService.class.getDeclaredMethod("getCurrentAuthHeader");
-            m.setAccessible(true);
-            return (String) m.invoke(exotelService);
-        } catch (Exception ignored) {
-        }
-
-        return null;
     }
 
     // ===================== HTTP =====================

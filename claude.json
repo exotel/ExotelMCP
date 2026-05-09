@@ -1,9 +1,15 @@
 {
   "mcpServers": {
     "exotel": {
-      "url": "https://mcp.exotel.com/mcp",
-      "headers": {
-        "Authorization": "{'token':'YjU3MTEwYWY5ZmQxYTZhMmY2NTM2ZWE5YjQwYTgyMDUwZjU5ZmY0ODA2NzQzODFlOmE2Njg2MzM3NjJhYmU4MzA1ZDk5MWNhNTNmMGY2OTRiNzk2NTBiMGM1OWVjYWU0MA==','from_number':'08048636945','caller_id':'02247789996','api_domain':'http://api.us3.qaexotel.com','account_sid':'ree5e1us3','exotel_portal_url':'https://my.us3.qaexotel.com','voicebot_api_key':'b57110af9fd1a6a2f6536ea9b40a82050f59ff480674381e','voicebot_api_token':'a668633762abe8305d991ca53f0f694b79650b0c59ecae40','voicebot_account_id':'ameyo5m','voicebot_base_url':'https://voicebot.in.exotel.com/voicebot/api/v2','calls_api_key':'b57110af9fd1a6a2f6536ea9b40a82050f59ff480674381e','calls_api_token':'a668633762abe8305d991ca53f0f694b79650b0c59ecae40','calls_account_id':'ree5e1us3','calls_base_url':'http://api.us3.qaexotel.com','cqa_api_key':'cqa_5tGm5tJK_TruaIXPF8iaas8A6Bby2hvxjMLZO4ElP','cqa_account_id':'f1a191d9fd','cqa_host':'https://cqa-console.in.exotel.com','admin_username':'vb_admin','admin_password':'k7mP9nQ2wX5vR8jL4tY6hN3sB1zF0cGd'}"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.exotel.com/mcp",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','account_sid':'YOUR_ACCOUNT_SID','api_domain':'https://api.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
       }
     }
   }
