@@ -29,7 +29,7 @@ public class ClientAudioService {
         ".wav", ".mp3", ".ogg", ".flac", ".aiff", ".au", ".m4a"
     );
     
-    @Tool(name = "playAudioOnClient", 
+    @Tool(name = "audio_client_play_in_browser", 
           description = "Play audio on client side. For URLs, provides direct URL for client playback. For local files, provides streaming URL. Returns playback instructions for client-side audio.")
     public Map<String, Object> playAudioOnClient(String filenameOrUrl) {
         logger.info("Preparing client-side audio playback for: {}", filenameOrUrl);
@@ -97,7 +97,7 @@ public class ClientAudioService {
         }
     }
     
-    @Tool(name = "downloadAudioToClient", 
+    @Tool(name = "audio_client_download_file", 
           description = "Download audio file from URL to a local client directory for offline playback. Useful for caching audio files locally.")
     public Map<String, Object> downloadAudioToClient(String url, String clientDirectory) {
         logger.info("Preparing audio download from URL: {} to client directory: {}", url, clientDirectory);
@@ -137,7 +137,7 @@ public class ClientAudioService {
         }
     }
     
-    @Tool(name = "listClientAudioFiles", 
+    @Tool(name = "audio_client_list_downloaded_files", 
           description = "List available audio files with client-side streaming URLs. Returns files that can be played on client side.")
     public Map<String, Object> listClientAudioFiles() {
         logger.info("Listing audio files with client streaming URLs from directory: {}", audioDirectoryPath);
@@ -192,7 +192,7 @@ public class ClientAudioService {
         }
     }
     
-    @Tool(name = "getClientPlayerUrl", 
+    @Tool(name = "audio_client_get_player_url", 
           description = "Get the URL for the web-based audio player that runs in browser for client-side playback. Can be used to play any audio file or URL.")
     public Map<String, Object> getClientPlayerUrl() {
         Map<String, Object> result = new HashMap<>();
