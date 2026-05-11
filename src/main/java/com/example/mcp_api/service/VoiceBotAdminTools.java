@@ -168,9 +168,32 @@ public class VoiceBotAdminTools {
             ResponseEntity<String> currentResp = restTemplate.exchange(getUrl, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
             JsonNode current = objectMapper.readTree(safeBody(currentResp));
 
-            String sourceVersion = current.path("version").asText("v1");
+            JsonNode data = current.path("response").path("data");
+            String stableVersion = data.path("stable_version").asText(data.path("latest_version").asText("v1"));
+
+            // Agents live inside data.versions.{version}.agents, not at data.agents
+            // Use the version that actually has agents as the source_version for the POST
+            JsonNode existingAgents = com.fasterxml.jackson.databind.node.NullNode.getInstance();
+            String sourceVersion = stableVersion;
+            JsonNode versions = data.path("versions");
+            // Prefer stable version agents first, then fall back to any version with agents
+            JsonNode stableVersionAgents = versions.path(stableVersion).path("agents");
+            if (stableVersionAgents.isArray() && stableVersionAgents.size() > 0) {
+                existingAgents = stableVersionAgents;
+            } else {
+                java.util.Iterator<java.util.Map.Entry<String, JsonNode>> vIt = versions.fields();
+                while (vIt.hasNext()) {
+                    java.util.Map.Entry<String, JsonNode> entry = vIt.next();
+                    JsonNode vAgents = entry.getValue().path("agents");
+                    if (vAgents.isArray() && vAgents.size() > 0) {
+                        existingAgents = vAgents;
+                        sourceVersion = entry.getKey(); // use the version that has agents
+                        break;
+                    }
+                }
+            }
+
             ArrayNode agentsArray = objectMapper.createArrayNode();
-            JsonNode existingAgents = current.path("agents");
             if (existingAgents.isArray() && existingAgents.size() > 0) {
                 boolean first = true;
                 for (JsonNode agent : existingAgents) {
@@ -188,9 +211,9 @@ public class VoiceBotAdminTools {
             payload.put("source_version", sourceVersion);
             payload.put("mark_as_stable", "true");
             payload.put("version_description", versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Prompt updated via MCP");
-            ObjectNode data = objectMapper.createObjectNode();
-            data.set("agents", agentsArray);
-            payload.set("data", data);
+            ObjectNode versionData = objectMapper.createObjectNode();
+            versionData.set("agents", agentsArray);
+            payload.set("data", versionData);
 
             String postUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "/versions";
             HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminHeaders());
@@ -281,12 +304,22 @@ public class VoiceBotAdminTools {
             String err = requireAuth(); if (err != null) return err;
             validateId(botId, "botId");
             if (configJson == null || configJson.isBlank()) return "Error: configJson is required";
-            JsonNode configNode;
-            try { configNode = objectMapper.readTree(configJson); }
+            JsonNode patchNode;
+            try { patchNode = objectMapper.readTree(configJson); }
             catch (Exception e) { return "Error: configJson is not valid JSON — " + e.getMessage(); }
 
-            String url = getV1BaseUrl() + "/accounts/" + getAccountId() + "/bots/" + botId;
-            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(configNode), adminHeaders());
+            String url = getV1BaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + botId;
+
+            // GET current full config, merge patch, then PUT back
+            ResponseEntity<String> getResp = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+            JsonNode current = objectMapper.readTree(safeBody(getResp));
+            JsonNode dataNode = current.path("response").path("data");
+            if (dataNode.isMissingNode() || !dataNode.isObject())
+                return "Error: could not read current bot config — unexpected API response structure";
+            ObjectNode fullConfig = (ObjectNode) dataNode.deepCopy();
+            patchNode.fields().forEachRemaining(e -> fullConfig.set(e.getKey(), e.getValue()));
+
+            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(fullConfig), adminHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PUT, entity, String.class);
             return safeBody(response);
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_update_config", e);
