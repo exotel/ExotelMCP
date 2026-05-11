@@ -434,30 +434,6 @@ public class VoiceBotService {
         } catch (Exception e) { return "Error listing phone numbers: " + e.getMessage(); }
     }
 
-    @Tool(name = "exotel_voicebot_list_recent_calls",
-          description = "Lists recent calls on the account. Supports limit (default 10). Use to review call history and outcomes.")
-    public String listRecentBotCalls(String limit) {
-        logger.info("Listing recent calls — limit={}", sanitizeForLog(limit));
-        try {
-            String callsErr = requireCallsCreds();
-            if (callsErr != null) return callsErr;
-            validateNumericParam(limit, "limit");
-            String lim = (limit != null && !limit.isBlank()) ? limit : "10";
-            String url = getCallsBaseUrl() + "/v1/Accounts/" + getCallsAccountId()
-                    + "/Calls.json?Limit=" + lim + "&SortBy=DateCreated:desc";
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "Basic " + callsBasicToken());
-            headers.set("Accept", "application/json");
-            HttpEntity<Void> entity = new HttpEntity<>(headers);
-
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
-            return safeBody(response);
-        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_list_recent_calls", e);
-        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_list_recent_calls", e);
-        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
-        } catch (Exception e) { return "Error listing recent calls: " + e.getMessage(); }
-    }
 
     // ======================== HELPERS ========================
 
