@@ -313,7 +313,10 @@ public class VoiceBotAdminTools {
             // GET current full config, merge patch, then PUT back
             ResponseEntity<String> getResp = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
             JsonNode current = objectMapper.readTree(safeBody(getResp));
-            ObjectNode fullConfig = (ObjectNode) current.path("response").path("data").deepCopy();
+            JsonNode dataNode = current.path("response").path("data");
+            if (dataNode.isMissingNode() || !dataNode.isObject())
+                return "Error: could not read current bot config — unexpected API response structure";
+            ObjectNode fullConfig = (ObjectNode) dataNode.deepCopy();
             patchNode.fields().forEachRemaining(e -> fullConfig.set(e.getKey(), e.getValue()));
 
             HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(fullConfig), adminHeaders());
