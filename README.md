@@ -155,7 +155,7 @@ Once configured, you can use Claude to interact with Exotel services using natur
 
 **Conversational Intelligence -- Setup Commands:**
 - "Login to CQA as admin@exotel.com on tenant my_tenant"
-- "Create a quality profile called 'Support Evaluation' with category 'Communication', sub-category 'Clarity', and KPI 'Clear Speech' (Yes/No)"
+- "Create a quality profile called 'Support Evaluation' with category 'Communication', sub-category 'Clarity', and KPIs: 'Clear Speech' (Yes/No, options: Yes=1/No=0), 'Professional Tone' (Yes/No, options: Yes=1/No=0)"
 - "Create a CQA API key called 'my-api-key'"
 - "Create an assignment rule that routes calls with source 'support' to quality profile {profile_id}"
 
@@ -313,10 +313,16 @@ Create a complete quality profile with categories, sub-categories, and KPIs in a
 
 **Example**:
 ```
-Create a quality profile called "Support Evaluation" with category "Communication", sub-category "Clarity", and KPIs: "Clear Speech" (Yes/No), "Professional Tone" (Yes/No)
+Create a quality profile called "Support Evaluation" with category "Communication", sub-category "Clarity", and KPIs: "Clear Speech" (Yes/No, options: Yes=1/No=0), "Professional Tone" (Yes/No, options: Yes=1/No=0)
 ```
 
 > **Supported KPI types:** Yes/No, Selection, Rating, Text
+>
+> **Options are REQUIRED** for Yes/No, Selection, and Rating types. Each option needs `label` (string) and `weightage` (integer). Rating options also need `type: "STAR"`. Text KPIs do not support options.
+>
+> **Additional optional KPI fields:** `is_scoring_allowed`, `is_critical`, `is_mandatory`, `is_comment_mandatory`, `is_dispute_allowed`, `criticality_level`. All fields provided in `categoriesJson` are passed through to the API.
+>
+> **Partial failure handling:** If a sub-step (category, sub-category, or KPI creation) fails, the tool returns a partial result containing the `profile_id` and any categories created before the failure, along with a recovery hint.
 
 #### Create API Key
 Generate an API key for programmatic ingestion and analysis. Keys are scoped to the account.
@@ -336,6 +342,8 @@ Create a rule that routes interactions to quality profiles based on metadata fil
 Create an assignment rule that routes calls with source "support" to quality profile a1b2c3d4-e5f6-7890-abcd-ef1234567890 at 100% sampling
 ```
 
+> **`filterGroupJson` is REQUIRED.** The tool will return an error if no filter is provided.
+>
 > **Supported filter operators:** IS, IS_NOT, CONTAINS, NOT_CONTAINS, GREATER_THAN, LESS_THAN, GREATER_OR_EQUAL, LESS_OR_EQUAL
 
 #### Ingest Single Interaction
