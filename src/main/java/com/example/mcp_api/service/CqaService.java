@@ -249,7 +249,9 @@ public class CqaService {
     @Tool(name = "exotel_cqa_login",
           description = "Authenticate with the CQA platform to obtain a JWT bearer token. "
               + "This token is required for setup operations: creating quality profiles, generating API keys, and managing assignment rules. "
-              + "Returns the bearer_token and account_id from response.data needed for subsequent setup tools.")
+              + "Returns the bearer_token and account_id from response.data needed for subsequent setup tools. "
+              + "SECURITY: Credentials are not stored on the server. The JWT token is short-lived. "
+              + "Requires cqa_host to be configured in the MCP Authorization header.")
     public Map<String, Object> cqaLogin(String username, String password, String tenantName) {
         logger.info("CQA login: tenant={}, user={}", tenantName, username);
         try {
@@ -528,12 +530,14 @@ public class CqaService {
     }
 
     private String getCqaHostUrl() {
-        try {
-            AuthCredentials creds = AuthContext.current();
-            return creds.effectiveCqaHost("https://cqa-console.in.exotel.com");
-        } catch (Exception e) {
-            return "https://cqa-console.in.exotel.com";
+        AuthCredentials creds = AuthContext.current();
+        if (!creds.isParsed() || creds.getCqaHost() == null || creds.getCqaHost().isBlank()) {
+            throw new IllegalStateException(
+                "CQA setup tools require cqa_host in your MCP Authorization header. "
+                + "Add \"cqa_host\":\"https://cqa-console.in.exotel.com\" to your mcp.json config. "
+                + "For setup help, use the tool: exotel_setup_guide");
         }
+        return creds.effectiveCqaHost("https://cqa-console.in.exotel.com");
     }
 
     private void validateHost(String host) {
@@ -589,7 +593,7 @@ public class CqaService {
 
     private String postJsonWithBearer(String url, Object body, String jwtToken) throws Exception {
         String jsonBody = objectMapper.writeValueAsString(body);
-        logger.debug("CQA POST (Bearer) {} body={}", url, jsonBody);
+        logger.debug("CQA POST (Bearer) {}", url);
 
         ClassicHttpRequest request = ClassicRequestBuilder.post(url)
             .setHeader("Authorization", "Bearer " + jwtToken)
@@ -603,7 +607,7 @@ public class CqaService {
 
     private String postJsonNoAuth(String url, Object body) throws Exception {
         String jsonBody = objectMapper.writeValueAsString(body);
-        logger.debug("CQA POST (no auth) {} body={}", url, jsonBody);
+        logger.debug("CQA POST (no auth) {} body=[REDACTED]", url);
 
         ClassicHttpRequest request = ClassicRequestBuilder.post(url)
             .setHeader("Content-Type", "application/json")
@@ -637,9 +641,17 @@ public class CqaService {
 
             if (code >= 400) {
                 logger.warn("CQA API error: status={} body={}", code, responseBody);
-                String bodySnippet = responseBody.length() > 500
-                    ? responseBody.substring(0, 500) + "..." : responseBody;
-                throw new RuntimeException("CQA API returned HTTP " + code + ": " + bodySnippet);
+                String safeMessage = "CQA API returned HTTP " + code;
+                try {
+                    Map<?, ?> errBody = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(responseBody, Map.class);
+                    Object resp = errBody.get("response");
+                    if (resp instanceof Map<?, ?> respMap) {
+                        Object msg = respMap.get("message");
+                        if (msg != null) safeMessage += ": " + msg;
+                    }
+                } catch (Exception ignored) {}
+                throw new RuntimeException(safeMessage);
             }
             return responseBody;
         });
