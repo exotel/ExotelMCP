@@ -153,7 +153,13 @@ Once configured, you can use Claude to interact with Exotel services using natur
 - "Open the audio player interface"
 - "Download audio from https://example.com/podcast.mp3"
 
-**Conversational Intelligence Commands:**
+**Conversational Intelligence -- Setup Commands:**
+- "Login to CQA as admin@exotel.com on tenant my_tenant"
+- "Create a quality profile called 'Support Evaluation' with category 'Communication', sub-category 'Clarity', and KPI 'Clear Speech' (Yes/No)"
+- "Create a CQA API key called 'my-api-key'"
+- "Create an assignment rule that routes calls with source 'support' to quality profile {profile_id}"
+
+**Conversational Intelligence -- Analysis Commands:**
 - "Ingest this call recording for quality analysis: https://storage.example.com/call-001.wav"
 - "Check the status of interaction call-2026-04-01-001"
 - "Get the quality analysis results for analysis a1b2c3d4"
@@ -288,7 +294,49 @@ Download audio from https://example.com/song.mp3
 
 Exotel [Conversational Intelligence](https://exotel.com/products/conversation-quality-analysis/) analyzes 100% of customer conversations across voice and digital channels using AI, delivering real-time quality intelligence. The platform reviews thousands of conversations in minutes, maintaining over 90% accuracy in objective evaluations — replacing manual sampling with continuous, automated QA at scale.
 
-**API key**: Generate your API key from the **Conversational Intelligence console** and provide it as `cqa_api_key` in the MCP configuration.
+**Authentication:** CQA tools use two authentication methods:
+- **Setup tools** (login, quality profiles, API keys, assignment rules) use JWT authentication obtained via the login tool -- no pre-configured credentials needed
+- **Ingestion & analysis tools** (ingest, status, results) use your `cqa_api_key` configured in the MCP auth header
+
+**API key**: Generate your API key from the **Conversational Intelligence console** or via the `exotel_cqa_create_api_key` MCP tool, then provide it as `cqa_api_key` in the MCP configuration.
+
+#### Login
+Authenticate with CQA to get a JWT token required for setup operations (quality profiles, API keys, assignment rules).
+
+**Example**:
+```
+Login to CQA as admin@exotel.com on tenant exotel_support
+```
+
+#### Create Quality Profile
+Create a complete quality profile with categories, sub-categories, and KPIs in a single call. The profile is automatically created with AI analysis enabled.
+
+**Example**:
+```
+Create a quality profile called "Support Evaluation" with category "Communication", sub-category "Clarity", and KPIs: "Clear Speech" (Yes/No), "Professional Tone" (Yes/No)
+```
+
+> **Supported KPI types:** Yes/No, Selection, Rating, Text
+
+#### Create API Key
+Generate an API key for programmatic ingestion and analysis. Keys are scoped to the account.
+
+**Example**:
+```
+Create a CQA API key called "support-api-key"
+```
+
+> **Note**: There is a per-tenant limit on active API keys (currently 2). A 409 response means the limit is reached -- revoke an existing key first.
+
+#### Create Assignment Rule
+Create a rule that routes interactions to quality profiles based on metadata filters (e.g., route all calls with `source=support` to a specific quality profile).
+
+**Example**:
+```
+Create an assignment rule that routes calls with source "support" to quality profile a1b2c3d4-e5f6-7890-abcd-ef1234567890 at 100% sampling
+```
+
+> **Supported filter operators:** IS, IS_NOT, CONTAINS, NOT_CONTAINS, GREATER_THAN, LESS_THAN, GREATER_OR_EQUAL, LESS_OR_EQUAL
 
 #### Ingest Single Interaction
 Submit a single call recording or transcript for quality analysis.
