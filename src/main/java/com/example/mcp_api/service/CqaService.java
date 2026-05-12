@@ -278,7 +278,13 @@ public class CqaService {
               + "Requires a JWT token from exotel_cqa_login. "
               + "categoriesJson must be a JSON array of category objects. Each category has: name (string) "
               + "and sub_categories (array). Each sub_category has: name and kpis (array). "
-              + "Each KPI has: kpi_name, kpi_question, input_type (Yes/No, Selection, Rating, or Text), and help_text.")
+              + "Each KPI has: kpi_name, kpi_question, input_type (Yes/No, Selection, Rating, or Text), and help_text. "
+              + "Options are REQUIRED for Yes/No, Selection, and Rating types -- each option needs 'label' (string) "
+              + "and 'weightage' (integer). Rating options also need 'type':'STAR'. Text KPIs do not support options. "
+              + "Yes/No example options: [{\"label\":\"Yes\",\"weightage\":1},{\"label\":\"No\",\"weightage\":0}]. "
+              + "Additional optional KPI fields: is_scoring_allowed (boolean), is_critical (boolean), "
+              + "is_mandatory (boolean), is_comment_mandatory (boolean), is_dispute_allowed (boolean), "
+              + "criticality_level (string). All KPI fields provided in categoriesJson are passed through to the API.")
     public Map<String, Object> cqaCreateQualityProfile(
             String jwtToken,
             String accountId,
@@ -286,6 +292,10 @@ public class CqaService {
             String description,
             String categoriesJson) {
         logger.info("CQA create quality profile: account={}, name={}", accountId, profileName);
+
+        String qpId = null;
+        List<Map<String, Object>> createdCategories = new ArrayList<>();
+
         try {
             String host = getCqaHostUrl();
             validateHost(host);
@@ -302,13 +312,11 @@ public class CqaService {
             String qpResponse = postJsonWithBearer(baseUrl + "/quality-profiles", qpBody, jwtToken);
             Map<String, Object> qpParsed = objectMapper.readValue(qpResponse, Map.class);
             Map<String, Object> qpData = extractResponseData(qpParsed);
-            String qpId = (String) qpData.get("id");
+            qpId = (String) qpData.get("id");
             if (qpId == null || qpId.isBlank()) {
                 throw new RuntimeException("Failed to extract quality profile ID from response");
             }
             logger.info("QP shell created: id={}", qpId);
-
-            List<Map<String, Object>> createdCategories = new ArrayList<>();
 
             if (categoriesJson != null && !categoriesJson.isBlank()) {
                 List<Map<String, Object>> categories = objectMapper.readValue(categoriesJson, List.class);
@@ -351,12 +359,8 @@ public class CqaService {
 
                             if (kpis != null) {
                                 for (Map<String, Object> kpi : kpis) {
-                                    Map<String, Object> kpiPayload = new LinkedHashMap<>();
-                                    kpiPayload.put("kpi_name", kpi.get("kpi_name"));
-                                    kpiPayload.put("kpi_question", kpi.get("kpi_question"));
-                                    kpiPayload.put("input_type", kpi.get("input_type"));
-                                    if (kpi.containsKey("help_text")) kpiPayload.put("help_text", kpi.get("help_text"));
-                                    if (kpi.containsKey("options")) kpiPayload.put("options", kpi.get("options"));
+                                    validateKpiOptions(kpi);
+                                    Map<String, Object> kpiPayload = new LinkedHashMap<>(kpi);
                                     Map<String, Object> kpiBody = new LinkedHashMap<>();
                                     kpiBody.put("kpi", kpiPayload);
 
@@ -394,8 +398,31 @@ public class CqaService {
             return result;
         } catch (Exception e) {
             logger.error("CQA create quality profile error", e);
+            if (qpId != null) {
+                Map<String, Object> partial = new LinkedHashMap<>();
+                partial.put("partial", true);
+                partial.put("profile_id", qpId);
+                partial.put("profile_name", profileName);
+                partial.put("categories_created_before_failure", createdCategories);
+                partial.put("error", e.getMessage());
+                partial.put("_hint", "Profile was partially created. You can retry the failed parts or delete the profile via the console.");
+                return partial;
+            }
             return errorResult(e);
         }
+    }
+
+    private void validateKpiOptions(Map<String, Object> kpi) {
+        String inputType = (String) kpi.get("input_type");
+        if (inputType == null) return;
+        if (inputType.equalsIgnoreCase("Text")) return;
+        if (kpi.containsKey("options") && kpi.get("options") != null) return;
+
+        throw new RuntimeException(
+            "KPI '" + kpi.get("kpi_name") + "' has input_type '" + inputType
+            + "' which requires an 'options' array. Each option needs 'label' (string) and 'weightage' (integer). "
+            + "Yes/No example: [{\"label\":\"Yes\",\"weightage\":1},{\"label\":\"No\",\"weightage\":0}]. "
+            + "Rating options also need 'type':'STAR'.");
     }
 
     @Tool(name = "exotel_cqa_create_api_key",
@@ -426,7 +453,7 @@ public class CqaService {
     @Tool(name = "exotel_cqa_create_assignment_rule",
           description = "Create an assignment rule that routes interactions to quality profiles for analysis. "
               + "Requires a JWT token from exotel_cqa_login. "
-              + "filterGroupJson defines matching criteria as a 2D array (AND of ORs), e.g. "
+              + "filterGroupJson is REQUIRED and defines matching criteria as a 2D array (OR of ANDs), e.g. "
               + "[[{\"attribute\":\"source\",\"operator\":\"IS\",\"value\":\"my-source\"}]]. "
               + "Supported operators: IS, IS_NOT, CONTAINS, NOT_CONTAINS, GREATER_THAN, LESS_THAN, GREATER_OR_EQUAL, LESS_OR_EQUAL. "
               + "qualityProfileIds is a comma-separated list of quality profile UUIDs to assign. "
@@ -444,6 +471,13 @@ public class CqaService {
             String host = getCqaHostUrl();
             validateHost(host);
             validateAccountId(accountId);
+
+            if (filterGroupJson == null || filterGroupJson.isBlank()) {
+                throw new RuntimeException(
+                    "filterGroupJson is required. It must be a 2D JSON array defining filter conditions. "
+                    + "Example: [[{\"attribute\":\"source\",\"operator\":\"IS\",\"value\":\"my-source\"}]]");
+            }
+
             String url = host + "/cqa/api/v1/accounts/" + accountId + "/quality-analysis-rules";
 
             Map<String, Object> body = new LinkedHashMap<>();
@@ -452,9 +486,7 @@ public class CqaService {
                 body.put("description", description);
             }
 
-            if (filterGroupJson != null && !filterGroupJson.isBlank()) {
-                body.put("filter_group", objectMapper.readValue(filterGroupJson, List.class));
-            }
+            body.put("filter_group", objectMapper.readValue(filterGroupJson, List.class));
 
             String[] qpIds = qualityProfileIds.split(",");
             List<String> profileIds = new ArrayList<>();
