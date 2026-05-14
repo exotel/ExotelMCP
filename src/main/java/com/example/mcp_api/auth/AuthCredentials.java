@@ -53,6 +53,12 @@ public class AuthCredentials {
     private String cqaAccountId;
     private String cqaHost;
 
+    // Tools Server
+    private String toolsServerApiKey;
+    private String toolsServerApiToken;
+    private String toolsServerTenantId;
+    private String toolsServerBaseUrl;
+
     // Raw header for fallback
     private String rawHeader;
     private boolean parsed;
@@ -114,6 +120,12 @@ public class AuthCredentials {
             creds.cqaAccountId = textField(root, "cqa_account_id");
             creds.cqaHost = textField(root, "cqa_host");
 
+            // Tools Server
+            creds.toolsServerApiKey = textField(root, "tools_server_api_key");
+            creds.toolsServerApiToken = textField(root, "tools_server_api_token");
+            creds.toolsServerTenantId = textField(root, "tools_server_tenant_id");
+            creds.toolsServerBaseUrl = textField(root, "tools_server_base_url");
+
             creds.parsed = true;
         } catch (Exception e) {
             logger.debug("Could not parse Authorization header as JSON: {}", e.getMessage());
@@ -158,6 +170,11 @@ public class AuthCredentials {
             && cqaAccountId != null && !cqaAccountId.isBlank();
     }
 
+    public boolean hasToolsServerCredentials() {
+        return toolsServerApiKey != null && !toolsServerApiKey.isBlank()
+            && toolsServerTenantId != null && !toolsServerTenantId.isBlank();
+    }
+
     public boolean isParsed() { return parsed; }
 
     // ======================== DERIVED VALUES ========================
@@ -177,6 +194,16 @@ public class AuthCredentials {
     public String adminBasicToken() {
         return Base64.getEncoder().encodeToString(
             (adminUsername + ":" + adminPassword).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public String toolsServerBasicToken() {
+        String tok = toolsServerApiToken != null ? toolsServerApiToken : "";
+        return Base64.getEncoder().encodeToString(
+            (toolsServerApiKey + ":" + tok).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public String effectiveToolsServerBaseUrl(String defaultUrl) {
+        return toolsServerBaseUrl != null ? toolsServerBaseUrl : defaultUrl;
     }
 
     public String effectiveVoicebotBaseUrl(String defaultUrl) {
@@ -218,6 +245,10 @@ public class AuthCredentials {
     public String getCqaApiKey() { return cqaApiKey; }
     public String getCqaAccountId() { return cqaAccountId; }
     public String getCqaHost() { return cqaHost; }
+    public String getToolsServerApiKey() { return toolsServerApiKey; }
+    public String getToolsServerApiToken() { return toolsServerApiToken; }
+    public String getToolsServerTenantId() { return toolsServerTenantId; }
+    public String getToolsServerBaseUrl() { return toolsServerBaseUrl; }
     public String getRawHeader() { return rawHeader; }
 
     /**
@@ -231,6 +262,7 @@ public class AuthCredentials {
         if (hasCallsCredentials()) sb.append("Calls ");
         if (hasAdminCredentials()) sb.append("Admin ");
         if (hasCqaCredentials()) sb.append("CQA ");
+        if (hasToolsServerCredentials()) sb.append("ToolsServer ");
         return sb.length() > 0 ? sb.toString().trim() : "NONE";
     }
 }
