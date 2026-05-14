@@ -102,4 +102,19 @@ public final class AuthContext {
         }
         return null;
     }
+
+    public static String requireToolsServer() {
+        AuthCredentials creds = current();
+        if (!creds.hasToolsServerCredentials()) {
+            return "Missing Tools Server credentials.\n\n"
+                + "Add these fields to your Authorization header:\n"
+                + "  - tools_server_api_key\n"
+                + "  - tools_server_tenant_id\n"
+                + "  - tools_server_api_token (optional)\n"
+                + "  - tools_server_base_url (optional, defaults to https://tools-server-prod.mum1.exotel.com)\n\n"
+                + "Note: voicebot_api_key / voicebot_api_token / voicebot_account_id are used automatically as fallback.\n"
+                + "For setup help, use the tool: exotel_setup_guide";
+        }
+        return null;
+    }
 }
