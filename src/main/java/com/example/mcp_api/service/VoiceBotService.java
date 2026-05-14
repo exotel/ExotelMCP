@@ -326,10 +326,13 @@ public class VoiceBotService {
     @Tool(name = "exotel_voicebot_place_call",
           description = "Places an outbound call powered by a VoiceBot — the bot handles the conversation autonomously. "
               + "Requires: toNumber (phone to call), voiceBotId (UUID from exotel_voicebot_list_all). "
-              + "Optional: callerId (display number), customField (metadata). "
+              + "Optional: callerId (display number), customField (metadata), record (enable call recording), "
+              + "statusCallback (URL to receive call status updates from Exotel). "
               + "After calling, use exotel_voicebot_call_status with the returned CallSid to check status.")
-    public String makeOutboundBotCall(String toNumber, String voiceBotId, String callerId, String customField) {
-        logger.info("Outbound bot call — to={}, bot={}", sanitizeForLog(toNumber), sanitizeForLog(voiceBotId));
+    public String makeOutboundBotCall(String toNumber, String voiceBotId, String callerId, String customField,
+                                      Boolean record, String statusCallback) {
+        logger.info("Outbound bot call — to={}, bot={}, record={}",
+                sanitizeForLog(toNumber), sanitizeForLog(voiceBotId), record);
         try {
             String authErr = requireVoiceBotCreds();
             if (authErr != null) return authErr;
@@ -340,6 +343,12 @@ public class VoiceBotService {
             if (!PHONE_PATTERN.matcher(toNumber).matches()) return "Error: toNumber contains invalid characters";
             if (callerId != null && !callerId.isBlank() && !PHONE_PATTERN.matcher(callerId).matches())
                 return "Error: callerId contains invalid characters";
+            if (statusCallback != null && !statusCallback.isBlank()) {
+                if (!statusCallback.startsWith("https://") && !statusCallback.startsWith("http://"))
+                    return "Error: statusCallback must be an http(s) URL";
+                if (statusCallback.length() > 2000)
+                    return "Error: statusCallback URL too long (max 2000 chars)";
+            }
 
             String accountId = getAccountId();
             String effectiveCallerId = (callerId != null && !callerId.isBlank()) ? callerId : defaultCallerId;
@@ -360,7 +369,8 @@ public class VoiceBotService {
             if (!streamUrl.startsWith("wss://"))
                 return "Error: VoiceBot returned insecure WebSocket URL. Contact support.";
 
-            // Step 2: POST to Calls connect.json
+            // Step 2: POST to Calls connect.json (production endpoint:
+            // https://api.in.exotel.com/v1/Accounts/<sid>/Calls/connect.json)
             String resolvedCallsBase = getCallsBaseUrl();
             String baseUrl = callsForceHttp ? resolvedCallsBase.replaceFirst("^https://", "http://") : resolvedCallsBase;
             String connectUrl = baseUrl + "/v1/Accounts/" + getCallsAccountId() + "/Calls/connect.json";
@@ -376,6 +386,10 @@ public class VoiceBotService {
             form.add("CallerId", effectiveCallerId);
             if (customField != null && !customField.isBlank())
                 form.add("CustomField", customField.substring(0, Math.min(customField.length(), 1000)));
+            if (record != null && record)
+                form.add("Record", "true");
+            if (statusCallback != null && !statusCallback.isBlank())
+                form.add("StatusCallback", statusCallback);
 
             ResponseEntity<String> connectResponse = restTemplate.exchange(
                     connectUrl, HttpMethod.POST, new HttpEntity<>(form, connectHeaders), String.class);
