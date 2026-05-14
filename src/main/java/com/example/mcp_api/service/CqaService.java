@@ -10,6 +10,7 @@ import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,15 @@ public class CqaService {
         "cqa-console.in.exotel.com",
         "cqa.exotel.com"
     );
+
+    @Value("${exotel.cqa.api.key:}")
+    private String defaultCqaApiKey;
+
+    @Value("${exotel.cqa.account.id:}")
+    private String defaultCqaAccountId;
+
+    @Value("${exotel.cqa.host:https://cqa-console.in.exotel.com}")
+    private String defaultCqaHost;
 
     private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -515,18 +525,28 @@ public class CqaService {
 
     private CqaAuthData getCqaAuth() {
         AuthCredentials creds = AuthContext.current();
-        String error = AuthContext.requireCqa();
-        if (error != null) {
-            throw new IllegalStateException(error);
+
+        // Resolve API key: header first, then application-local.properties default
+        String apiKey = creds.getCqaApiKey();
+        if (apiKey == null || apiKey.isBlank()) apiKey = defaultCqaApiKey;
+
+        // Resolve account ID
+        String accountId = creds.getCqaAccountId();
+        if (accountId == null || accountId.isBlank()) accountId = defaultCqaAccountId;
+
+        // Validate we have the required fields
+        if (apiKey == null || apiKey.isBlank() || accountId == null || accountId.isBlank()) {
+            String error = AuthContext.requireCqa();
+            if (error != null) throw new IllegalStateException(error);
         }
 
-        String host = creds.effectiveCqaHost("https://cqa-console.in.exotel.com");
+        // Resolve host: header > properties default
+        String host = creds.getCqaHost();
+        if (host == null || host.isBlank()) host = defaultCqaHost;
         validateHost(host);
-
-        String accountId = creds.getCqaAccountId();
         validateAccountId(accountId);
 
-        return new CqaAuthData(creds.getCqaApiKey(), accountId, host);
+        return new CqaAuthData(apiKey, accountId, host);
     }
 
     private String getCqaHostUrl() {

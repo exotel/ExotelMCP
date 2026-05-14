@@ -48,6 +48,7 @@ data/
 # Environment Files
 .env
 .env.local
+application-local.properties
 
 # Spring Boot Devtools
 .spring-boot-devtools.properties
