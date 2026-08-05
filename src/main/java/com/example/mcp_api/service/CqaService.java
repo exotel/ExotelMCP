@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.regex.Pattern;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
@@ -30,6 +31,14 @@ public class CqaService {
     private static final Logger logger = LoggerFactory.getLogger(CqaService.class);
     private static final int MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
     private static final int MAX_BATCH_PAYLOAD_CHARS = 2_000_000;
+    private static final int MAX_LOG_BODY_CHARS = 300;
+    /** Match CQA app.ingress.max-transcript-bytes-single default. */
+    private static final int MAX_TRANSCRIPT_TEXT_BYTES = 204_800;
+    private static final int MAX_CATEGORIES_JSON_CHARS = 500_000;
+    /** Cap orchestration fanout for update/create profile tools. */
+    private static final int MAX_OUTBOUND_API_CALLS = 200;
+    /** Path-safe resource IDs (UUIDs / hex ids) — rejects /, ?, .., etc. */
+    private static final Pattern RESOURCE_ID_PATTERN = Pattern.compile("^[0-9a-fA-F\\-]{1,64}$");
     private static final Set<String> ALLOWED_HOSTS = Set.of(
         "cqa-console.in.exotel.com",
         "cqa.exotel.com"
@@ -68,13 +77,17 @@ public class CqaService {
 
     @Tool(name = "exotel_cqa_ingest_interaction",
           description = "Ingest a single interaction into Exotel Conversational Intelligence for quality analysis. "
-              + "Requires at least one of audioUrl or transcriptUrl. "
+              + "Requires at least one of: audioUrl (public HTTPS URL to audio file), transcriptUrl (public HTTPS URL to transcript), "
+              + "or transcriptText (inline transcript text — CQA uploads it to storage automatically). "
+              + "Use transcriptText to ingest a local text transcript without needing to host it anywhere. "
+              + "For local audio files, upload to the onboarding bucket and pass the presigned HTTPS URL as audioUrl. "
               + "Returns the interaction ID and processing status.")
     public Map<String, Object> cqaIngestInteraction(
             String externalInteractionId,
             String channelType,
             String audioUrl,
             String transcriptUrl,
+            String transcriptText,
             String language,
             String source,
             String metadataJson) {
@@ -83,12 +96,28 @@ public class CqaService {
             CqaAuthData auth = getCqaAuth();
             String url = auth.baseUrl() + "/ingress/interactions";
 
+            boolean hasAudio = audioUrl != null && !audioUrl.isBlank();
+            boolean hasTranscriptUrl = transcriptUrl != null && !transcriptUrl.isBlank();
+            boolean hasTranscriptText = transcriptText != null && !transcriptText.isBlank();
+            if (!hasAudio && !hasTranscriptUrl && !hasTranscriptText) {
+                throw new IllegalArgumentException(
+                    "At least one of audioUrl, transcriptUrl, or transcriptText is required");
+            }
+            if (hasTranscriptText) {
+                int bytes = transcriptText.getBytes(StandardCharsets.UTF_8).length;
+                if (bytes > MAX_TRANSCRIPT_TEXT_BYTES) {
+                    throw new IllegalArgumentException(
+                        "transcriptText exceeds max " + MAX_TRANSCRIPT_TEXT_BYTES + " bytes (got " + bytes + ")");
+                }
+            }
+
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("external_interaction_id", externalInteractionId);
             body.put("channel_type", channelType);
 
-            if (audioUrl != null && !audioUrl.isBlank()) body.put("audio_url", audioUrl);
-            if (transcriptUrl != null && !transcriptUrl.isBlank()) body.put("transcript_url", transcriptUrl);
+            if (hasAudio) body.put("audio_url", audioUrl);
+            if (hasTranscriptUrl) body.put("transcript_url", transcriptUrl);
+            if (hasTranscriptText) body.put("transcript_text", transcriptText);
             if (language != null && !language.isBlank()) body.put("language", language);
             if (source != null && !source.isBlank()) body.put("source", source);
 
@@ -249,7 +278,8 @@ public class CqaService {
     @Tool(name = "exotel_cqa_login",
           description = "Authenticate with the CQA platform to obtain a JWT bearer token. "
               + "This token is required for setup operations: creating quality profiles, generating API keys, and managing assignment rules. "
-              + "Returns the bearer_token and account_id from response.data needed for subsequent setup tools. "
+              + "Returns bearer_token from response.data — use it as jwtToken for setup tools. "
+              + "Use cqa_account_id from your MCP Authorization header as accountId. "
               + "SECURITY: Credentials are not stored on the server. The JWT token is short-lived. "
               + "Requires cqa_host to be configured in the MCP Authorization header.")
     public Map<String, Object> cqaLogin(String username, String password, String tenantName) {
@@ -266,7 +296,7 @@ public class CqaService {
 
             String response = postJsonNoAuth(url, body);
             return parseJsonResponse(response,
-                "Login successful. Use response.data.token as jwtToken and response.data.account_id as accountId for setup tools.");
+                "Login successful. Use response.data.bearer_token as jwtToken for setup tools.");
         } catch (Exception e) {
             logger.error("CQA login error", e);
             return errorResult(e);
@@ -299,10 +329,8 @@ public class CqaService {
         List<Map<String, Object>> createdCategories = new ArrayList<>();
 
         try {
-            String host = getCqaHostUrl();
-            validateHost(host);
-            validateAccountId(accountId);
-            String baseUrl = host + "/cqa/api/v1/accounts/" + accountId;
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            enforceCategoriesJsonSize(categoriesJson);
 
             Map<String, Object> qpBody = new LinkedHashMap<>();
             qpBody.put("name", profileName);
@@ -314,10 +342,7 @@ public class CqaService {
             String qpResponse = postJsonWithBearer(baseUrl + "/quality-profiles", qpBody, jwtToken);
             Map<String, Object> qpParsed = objectMapper.readValue(qpResponse, Map.class);
             Map<String, Object> qpData = extractResponseData(qpParsed);
-            qpId = (String) qpData.get("id");
-            if (qpId == null || qpId.isBlank()) {
-                throw new RuntimeException("Failed to extract quality profile ID from response");
-            }
+            qpId = extractId(qpData, "qualityProfileId");
             logger.info("QP shell created: id={}", qpId);
 
             if (categoriesJson != null && !categoriesJson.isBlank()) {
@@ -334,7 +359,7 @@ public class CqaService {
                         catBody, jwtToken);
                     Map<String, Object> catParsed = objectMapper.readValue(catResponse, Map.class);
                     Map<String, Object> catData = extractResponseData(catParsed);
-                    String catId = (String) catData.get("id");
+                    String catId = extractId(catData, "categoryId");
                     logger.info("Category created: id={}, name={}", catId, cat.get("name"));
 
                     List<Map<String, Object>> subCategories = (List<Map<String, Object>>) cat.get("sub_categories");
@@ -353,7 +378,7 @@ public class CqaService {
                                 subCatBody, jwtToken);
                             Map<String, Object> subCatParsed = objectMapper.readValue(subCatResponse, Map.class);
                             Map<String, Object> subCatData = extractResponseData(subCatParsed);
-                            String subCatId = (String) subCatData.get("id");
+                            String subCatId = extractId(subCatData, "subCategoryId");
                             logger.info("Sub-category created: id={}, name={}", subCatId, subCat.get("name"));
 
                             List<Map<String, Object>> kpis = (List<Map<String, Object>>) subCat.get("kpis");
@@ -362,9 +387,8 @@ public class CqaService {
                             if (kpis != null) {
                                 for (Map<String, Object> kpi : kpis) {
                                     validateKpiOptions(kpi);
-                                    Map<String, Object> kpiPayload = new LinkedHashMap<>(kpi);
                                     Map<String, Object> kpiBody = new LinkedHashMap<>();
-                                    kpiBody.put("kpi", kpiPayload);
+                                    kpiBody.put("kpi", sanitizeKpiPayload(kpi));
 
                                     postJsonWithBearer(
                                         baseUrl + "/quality-profiles/" + qpId + "/categories/" + catId
@@ -434,19 +458,54 @@ public class CqaService {
     public Map<String, Object> cqaCreateApiKey(String jwtToken, String accountId, String keyName) {
         logger.info("CQA create API key: account={}, name={}", accountId, keyName);
         try {
-            String host = getCqaHostUrl();
-            validateHost(host);
-            validateAccountId(accountId);
-            String url = host + "/cqa/api/v1/accounts/" + accountId + "/api-keys";
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("name", keyName);
 
-            String response = postJsonWithBearer(url, body, jwtToken);
+            String response = postJsonWithBearer(baseUrl + "/api-keys", body, jwtToken);
             return parseJsonResponse(response,
                 "API key created. Use the key value from response.data for CQA ingestion and analysis tools.");
         } catch (Exception e) {
             logger.error("CQA create API key error", e);
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_list_api_keys",
+          description = "List all active API keys for an account. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "Returns name, created_by, and masked key value for each key. "
+              + "Use this to find a key's ID before revoking it with exotel_cqa_revoke_api_key.")
+    public Map<String, Object> cqaListApiKeys(String jwtToken, String accountId) {
+        logger.info("CQA list API keys: account={}", accountId);
+        try {
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            String response = getJsonWithBearer(baseUrl + "/api-keys", jwtToken);
+            return parseJsonResponse(response,
+                "API keys listed. Use the 'id' field with exotel_cqa_revoke_api_key to revoke a key.");
+        } catch (Exception e) {
+            logger.error("CQA list API keys error", e);
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_revoke_api_key",
+          description = "Revoke (permanently delete) an API key by its ID. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "Use exotel_cqa_list_api_keys to find the key ID. "
+              + "This action is irreversible — any services using the revoked key will immediately lose access. "
+              + "REQUIRED: pass confirm=true to proceed.")
+    public Map<String, Object> cqaRevokeApiKey(String jwtToken, String accountId, String apiKeyId, Boolean confirm) {
+        logger.info("CQA revoke API key: account={}, keyId={}", accountId, apiKeyId);
+        try {
+            requireConfirm(confirm, "revoke API key " + apiKeyId);
+            validateResourceId(apiKeyId, "apiKeyId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            String response = deleteWithBearer(baseUrl + "/api-keys/" + apiKeyId, jwtToken);
+            return parseJsonResponse(response, "API key revoked successfully.");
+        } catch (Exception e) {
+            logger.error("CQA revoke API key error", e);
             return errorResult(e);
         }
     }
@@ -467,20 +526,16 @@ public class CqaService {
             String description,
             String filterGroupJson,
             String qualityProfileIds,
-            int samplingPercentage) {
+            Integer samplingPercentage) {
         logger.info("CQA create assignment rule: account={}, name={}", accountId, ruleName);
         try {
-            String host = getCqaHostUrl();
-            validateHost(host);
-            validateAccountId(accountId);
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
 
             if (filterGroupJson == null || filterGroupJson.isBlank()) {
                 throw new RuntimeException(
                     "filterGroupJson is required. It must be a 2D JSON array defining filter conditions. "
                     + "Example: [[{\"attribute\":\"source\",\"operator\":\"IS\",\"value\":\"my-source\"}]]");
             }
-
-            String url = host + "/cqa/api/v1/accounts/" + accountId + "/quality-analysis-rules";
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("name", ruleName);
@@ -489,20 +544,13 @@ public class CqaService {
             }
 
             body.put("filter_group", objectMapper.readValue(filterGroupJson, List.class));
+            body.put("assign_quality_profiles", parseProfileIds(qualityProfileIds));
 
-            String[] qpIds = qualityProfileIds.split(",");
-            List<String> profileIds = new ArrayList<>();
-            for (String id : qpIds) {
-                String trimmed = id.trim();
-                if (!trimmed.isEmpty()) profileIds.add(trimmed);
+            if (samplingPercentage != null) {
+                body.put("sampling_percentage", requireSamplingPercentage(samplingPercentage));
             }
-            body.put("assign_quality_profiles", profileIds);
 
-            if (samplingPercentage < 0) samplingPercentage = 100;
-            if (samplingPercentage > 100) samplingPercentage = 100;
-            body.put("sampling_percentage", samplingPercentage);
-
-            String response = postJsonWithBearer(url, body, jwtToken);
+            String response = postJsonWithBearer(baseUrl + "/quality-analysis-rules", body, jwtToken);
             return parseJsonResponse(response,
                 "Assignment rule created. Interactions matching the filter will be routed to the specified quality profiles.");
         } catch (Exception e) {
@@ -511,7 +559,535 @@ public class CqaService {
         }
     }
 
+    @Tool(name = "exotel_cqa_get_quality_profile",
+          description = "Retrieve a quality profile by ID, including its full hierarchy of categories, "
+              + "sub-categories, and KPIs. Requires a JWT token from exotel_cqa_login. "
+              + "Use exotel_cqa_list_quality_profiles to find profile IDs.")
+    public Map<String, Object> cqaGetQualityProfile(String jwtToken, String accountId, String profileId) {
+        logger.info("CQA get quality profile: account={}, profileId={}", accountId, profileId);
+        try {
+            validateResourceId(profileId, "profileId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            String response = getJsonWithBearer(baseUrl + "/quality-profiles/" + profileId, jwtToken);
+            return parseJsonResponse(response,
+                "Quality profile retrieved. Use categories/sub_categories/kpis in response.data to inspect or plan updates.");
+        } catch (Exception e) {
+            logger.error("CQA get quality profile error", e);
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_list_quality_profiles",
+          description = "List quality profiles for an account with pagination. Requires a JWT token from exotel_cqa_login. "
+              + "Optional: limit (1-100, default 10), offset (default 0), sortBy (e.g. name:asc,created_at:desc), "
+              + "filter (JSON filter string per CQA API docs).")
+    public Map<String, Object> cqaListQualityProfiles(
+            String jwtToken,
+            String accountId,
+            Integer limit,
+            Integer offset,
+            String sortBy,
+            String filter) {
+        logger.info("CQA list quality profiles: account={}, limit={}, offset={}", accountId, limit, offset);
+        try {
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            int lim = normalizeLimit(limit);
+            int off = normalizeOffset(offset);
+
+            StringBuilder url = new StringBuilder(baseUrl).append("/quality-profiles?limit=").append(lim)
+                .append("&offset=").append(off);
+            if (sortBy != null && !sortBy.isBlank()) {
+                url.append("&sort_by=").append(java.net.URLEncoder.encode(sortBy, StandardCharsets.UTF_8));
+            }
+            if (filter != null && !filter.isBlank()) {
+                url.append("&filter=").append(java.net.URLEncoder.encode(filter, StandardCharsets.UTF_8));
+            }
+
+            String response = getJsonWithBearer(url.toString(), jwtToken);
+            return parseJsonResponse(response,
+                "Profiles listed. Use response.data[].id as profileId for get/update/delete tools.");
+        } catch (Exception e) {
+            logger.error("CQA list quality profiles error", e);
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_delete_quality_profile",
+          description = "Delete a quality profile by ID. Requires a JWT token from exotel_cqa_login. "
+              + "This is irreversible — use only on test or disposable profiles. "
+              + "REQUIRED: pass confirm=true to proceed.")
+    public Map<String, Object> cqaDeleteQualityProfile(
+            String jwtToken, String accountId, String profileId, Boolean confirm) {
+        logger.info("CQA delete quality profile: account={}, profileId={}", accountId, profileId);
+        try {
+            requireConfirm(confirm, "delete quality profile " + profileId);
+            validateResourceId(profileId, "profileId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            String response = deleteWithBearer(baseUrl + "/quality-profiles/" + profileId, jwtToken);
+            return parseJsonResponse(response, "Quality profile deleted.");
+        } catch (Exception e) {
+            logger.error("CQA delete quality profile error", e);
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_delete_assignment_rule",
+          description = "Delete (deactivate) a quality analysis assignment rule by ID. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "REQUIRED: pass confirm=true to proceed.")
+    public Map<String, Object> cqaDeleteAssignmentRule(
+            String jwtToken, String accountId, String ruleId, Boolean confirm) {
+        logger.info("CQA delete assignment rule: account={}, ruleId={}", accountId, ruleId);
+        try {
+            requireConfirm(confirm, "delete assignment rule " + ruleId);
+            validateResourceId(ruleId, "ruleId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            String response = deleteWithBearer(baseUrl + "/quality-analysis-rules/" + ruleId, jwtToken);
+            return parseJsonResponse(response, "Assignment rule deleted.");
+        } catch (Exception e) {
+            logger.error("CQA delete assignment rule error", e);
+            return errorResult(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Tool(name = "exotel_cqa_update_quality_profile",
+          description = "Update an existing quality profile. Requires a JWT token from exotel_cqa_login. "
+              + "This operation is NOT atomic — each category, sub-category, and KPI change is a separate API call. "
+              + "If a later step fails, earlier changes may already be committed; partial responses include a 'changes' list. "
+              + "Provide profileName and/or description to update profile metadata. "
+              + "Provide categoriesJson to update the hierarchy — same structure as exotel_cqa_create_quality_profile, "
+              + "but include 'id' on existing categories/sub-categories. "
+              + "When 'kpis' is provided on a sub-category, all existing KPIs in that sub-category are replaced "
+              + "(deleted and recreated with new IDs). Empty kpis requires confirmWipeKpis=true. "
+              + "Omit categoriesJson to update only profile metadata. "
+              + "Use exotel_cqa_get_quality_profile to verify the final state.")
+    public Map<String, Object> cqaUpdateQualityProfile(
+            String jwtToken,
+            String accountId,
+            String profileId,
+            String profileName,
+            String description,
+            String categoriesJson,
+            Boolean confirmWipeKpis) {
+        logger.info("CQA update quality profile: account={}, profileId={}", accountId, profileId);
+        List<String> changes = new ArrayList<>();
+        int[] callBudget = {0};
+        try {
+            validateResourceId(profileId, "profileId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            enforceCategoriesJsonSize(categoriesJson);
+
+            boolean hasProfileMeta = (profileName != null && !profileName.isBlank())
+                || (description != null && !description.isBlank());
+            if (hasProfileMeta) {
+                Map<String, Object> qpData = new LinkedHashMap<>();
+                if (profileName != null && !profileName.isBlank()) qpData.put("name", profileName);
+                if (description != null && !description.isBlank()) qpData.put("description", description);
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("quality_profile", qpData);
+                putJsonWithBearer(baseUrl + "/quality-profiles/" + profileId, body, jwtToken);
+                bumpOutboundCalls(callBudget);
+                changes.add("profile_metadata");
+            }
+
+            if (categoriesJson == null || categoriesJson.isBlank()) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("profile_id", profileId);
+                result.put("changes", changes);
+                result.put("_hint", changes.isEmpty()
+                    ? "No changes requested. Provide profileName, description, and/or categoriesJson."
+                    : "Profile metadata updated.");
+                return result;
+            }
+
+            List<Map<String, Object>> categories = objectMapper.readValue(categoriesJson, List.class);
+            Map<String, Object> existingProfile = fetchQualityProfileData(baseUrl, profileId, jwtToken);
+            bumpOutboundCalls(callBudget);
+
+            for (Map<String, Object> cat : categories) {
+                String catId = cat.get("id") != null ? cat.get("id").toString() : null;
+                if (catId != null && !catId.isBlank()) {
+                    validateResourceId(catId, "categoryId");
+                    Map<String, Object> catPayload = new LinkedHashMap<>();
+                    if (cat.get("name") != null) catPayload.put("name", cat.get("name"));
+                    if (cat.containsKey("description")) catPayload.put("description", cat.get("description"));
+                    if (!catPayload.isEmpty()) {
+                        Map<String, Object> catBody = new LinkedHashMap<>();
+                        catBody.put("categories", catPayload);
+                        putJsonWithBearer(
+                            baseUrl + "/quality-profiles/" + profileId + "/categories/" + catId,
+                            catBody, jwtToken);
+                        bumpOutboundCalls(callBudget);
+                        changes.add("category:" + catId);
+                    }
+                } else {
+                    Map<String, Object> catPayload = new LinkedHashMap<>();
+                    catPayload.put("name", cat.get("name"));
+                    if (cat.containsKey("description")) catPayload.put("description", cat.get("description"));
+                    Map<String, Object> catBody = new LinkedHashMap<>();
+                    catBody.put("categories", catPayload);
+                    String catResponse = postJsonWithBearer(
+                        baseUrl + "/quality-profiles/" + profileId + "/categories",
+                        catBody, jwtToken);
+                    bumpOutboundCalls(callBudget);
+                    Map<String, Object> catParsed = objectMapper.readValue(catResponse, Map.class);
+                    catId = extractId(extractResponseData(catParsed), "categoryId");
+                    changes.add("created_category:" + catId);
+                }
+
+                List<Map<String, Object>> subCategories = (List<Map<String, Object>>) cat.get("sub_categories");
+                if (subCategories == null) continue;
+
+                for (Map<String, Object> subCat : subCategories) {
+                    String subCatId = subCat.get("id") != null ? subCat.get("id").toString() : null;
+                    if (subCatId != null && !subCatId.isBlank()) {
+                        validateResourceId(subCatId, "subCategoryId");
+                        Map<String, Object> subCatPayload = new LinkedHashMap<>();
+                        if (subCat.get("name") != null) subCatPayload.put("name", subCat.get("name"));
+                        if (subCat.containsKey("description")) {
+                            subCatPayload.put("description", subCat.get("description"));
+                        }
+                        if (!subCatPayload.isEmpty()) {
+                            Map<String, Object> subCatBody = new LinkedHashMap<>();
+                            subCatBody.put("sub_category", subCatPayload);
+                            putJsonWithBearer(
+                                baseUrl + "/quality-profiles/" + profileId + "/categories/" + catId
+                                    + "/sub-categories/" + subCatId,
+                                subCatBody, jwtToken);
+                            bumpOutboundCalls(callBudget);
+                            changes.add("sub_category:" + subCatId);
+                        }
+                    } else {
+                        Map<String, Object> subCatPayload = new LinkedHashMap<>();
+                        subCatPayload.put("name", subCat.get("name"));
+                        if (subCat.containsKey("description")) {
+                            subCatPayload.put("description", subCat.get("description"));
+                        }
+                        Map<String, Object> subCatBody = new LinkedHashMap<>();
+                        subCatBody.put("sub_category", subCatPayload);
+                        String subCatResponse = postJsonWithBearer(
+                            baseUrl + "/quality-profiles/" + profileId + "/categories/" + catId
+                                + "/sub-categories",
+                            subCatBody, jwtToken);
+                        bumpOutboundCalls(callBudget);
+                        Map<String, Object> subCatParsed = objectMapper.readValue(subCatResponse, Map.class);
+                        subCatId = extractId(extractResponseData(subCatParsed), "subCategoryId");
+                        changes.add("created_sub_category:" + subCatId);
+                    }
+
+                    if (!subCat.containsKey("kpis")) continue;
+                    List<Map<String, Object>> kpis = (List<Map<String, Object>>) subCat.get("kpis");
+                    if (kpis == null) continue;
+                    if (kpis.isEmpty() && !Boolean.TRUE.equals(confirmWipeKpis)) {
+                        throw new IllegalArgumentException(
+                            "kpis is empty for subCategoryId=" + subCatId
+                            + " — refusing to wipe KPIs. Pass confirmWipeKpis=true or omit 'kpis'.");
+                    }
+
+                    List<String> existingKpiIds = findKpiIds(existingProfile, catId, subCatId);
+                    if (!existingKpiIds.isEmpty()) {
+                        changes.add("deleting_kpis:" + subCatId + "(" + existingKpiIds.size() + ")");
+                    }
+                    for (String kpiId : existingKpiIds) {
+                        validateResourceId(kpiId, "kpiId");
+                        deleteWithBearer(
+                            baseUrl + "/quality-profiles/" + profileId + "/categories/" + catId
+                                + "/sub-categories/" + subCatId + "/kpis/" + kpiId,
+                            jwtToken);
+                        bumpOutboundCalls(callBudget);
+                    }
+                    int kpisCreated = 0;
+                    for (Map<String, Object> kpi : kpis) {
+                        validateKpiOptions(kpi);
+                        Map<String, Object> kpiBody = new LinkedHashMap<>();
+                        kpiBody.put("kpi", sanitizeKpiPayload(kpi));
+                        postJsonWithBearer(
+                            baseUrl + "/quality-profiles/" + profileId + "/categories/" + catId
+                                + "/sub-categories/" + subCatId + "/kpis",
+                            kpiBody, jwtToken);
+                        bumpOutboundCalls(callBudget);
+                        kpisCreated++;
+                    }
+                    changes.add("replaced_kpis:" + subCatId + "(" + kpisCreated + ")");
+                }
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("profile_id", profileId);
+            result.put("changes", changes);
+            result.put("_hint", "Quality profile updated. Use exotel_cqa_get_quality_profile to verify.");
+            return result;
+        } catch (Exception e) {
+            logger.error("CQA update quality profile error", e);
+            if (!changes.isEmpty()) {
+                Map<String, Object> partial = new LinkedHashMap<>();
+                partial.put("partial", true);
+                partial.put("profile_id", profileId);
+                partial.put("changes", changes);
+                partial.put("error", e.getMessage());
+                partial.put("_hint", "Profile was partially updated. Use exotel_cqa_get_quality_profile to verify, "
+                    + "then retry failed parts or fix manually in the console.");
+                return partial;
+            }
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_list_assignment_rules",
+          description = "List quality analysis assignment rules for an account with pagination. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "Optional: limit (1-100, default 10), offset (default 0), sortBy (e.g. name:asc,created_at:desc), "
+              + "filter (JSON filter, e.g. {\"$and\":[{\"rules.status\":[\"ACTIVE\"]}]}), ruleIds (comma-separated UUIDs).")
+    public Map<String, Object> cqaListAssignmentRules(
+            String jwtToken,
+            String accountId,
+            Integer limit,
+            Integer offset,
+            String sortBy,
+            String ruleIds,
+            String filter) {
+        logger.info("CQA list assignment rules: account={}, limit={}, offset={}", accountId, limit, offset);
+        try {
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            int lim = normalizeLimit(limit);
+            int off = normalizeOffset(offset);
+
+            StringBuilder url = new StringBuilder(baseUrl)
+                .append("/quality-analysis-rules?limit=").append(lim)
+                .append("&offset=").append(off);
+            if (sortBy != null && !sortBy.isBlank()) {
+                url.append("&sort_by=").append(java.net.URLEncoder.encode(sortBy, StandardCharsets.UTF_8));
+            }
+            if (ruleIds != null && !ruleIds.isBlank()) {
+                url.append("&rule_uid=").append(java.net.URLEncoder.encode(ruleIds, StandardCharsets.UTF_8));
+            }
+            if (filter != null && !filter.isBlank()) {
+                url.append("&filter=").append(java.net.URLEncoder.encode(filter, StandardCharsets.UTF_8));
+            }
+
+            String response = getJsonWithBearer(url.toString(), jwtToken);
+            return parseJsonResponse(response,
+                "Assignment rules listed. Use response.data[].id as ruleId for update/delete tools.");
+        } catch (Exception e) {
+            logger.error("CQA list assignment rules error", e);
+            return errorResult(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Tool(name = "exotel_cqa_update_assignment_rule",
+          description = "Update an existing quality analysis assignment rule. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "Provide any combination of: ruleName, description, filterGroupJson (2D array, same format as create), "
+              + "qualityProfileIds (comma-separated UUIDs), samplingPercentage (0-100). "
+              + "Only provided fields are updated.")
+    public Map<String, Object> cqaUpdateAssignmentRule(
+            String jwtToken,
+            String accountId,
+            String ruleId,
+            String ruleName,
+            String description,
+            String filterGroupJson,
+            String qualityProfileIds,
+            Integer samplingPercentage) {
+        logger.info("CQA update assignment rule: account={}, ruleId={}", accountId, ruleId);
+        try {
+            validateResourceId(ruleId, "ruleId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            if (ruleName != null && !ruleName.isBlank()) body.put("name", ruleName);
+            if (description != null && !description.isBlank()) body.put("description", description);
+            if (filterGroupJson != null && !filterGroupJson.isBlank()) {
+                body.put("filter_group", objectMapper.readValue(filterGroupJson, List.class));
+            }
+            if (qualityProfileIds != null && !qualityProfileIds.isBlank()) {
+                body.put("assign_quality_profiles", parseProfileIds(qualityProfileIds));
+            }
+            if (samplingPercentage != null) {
+                body.put("sampling_percentage", requireSamplingPercentage(samplingPercentage));
+            }
+
+            if (body.isEmpty()) {
+                throw new IllegalArgumentException("At least one field must be provided to update.");
+            }
+
+            String response = putJsonWithBearer(baseUrl + "/quality-analysis-rules/" + ruleId, body, jwtToken);
+            return parseJsonResponse(response, "Assignment rule updated.");
+        } catch (Exception e) {
+            logger.error("CQA update assignment rule error", e);
+            return errorResult(e);
+        }
+    }
+
+    @Tool(name = "exotel_cqa_duplicate_quality_profile",
+          description = "Duplicate an existing quality profile including all categories, sub-categories, and KPIs. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "The new profile gets a new ID and '(Duplicate)' appended to its name.")
+    public Map<String, Object> cqaDuplicateQualityProfile(
+            String jwtToken,
+            String accountId,
+            String profileId) {
+        logger.info("CQA duplicate quality profile: account={}, profileId={}", accountId, profileId);
+        try {
+            validateResourceId(profileId, "profileId");
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            Map<String, Object> body = Map.of("action", "duplicate");
+            String response = postJsonWithBearer(
+                baseUrl + "/quality-profiles/" + profileId, body, jwtToken);
+            return parseJsonResponse(response,
+                "Profile duplicated. Use response.data.id as the new profileId.");
+        } catch (Exception e) {
+            logger.error("CQA duplicate quality profile error", e);
+            return errorResult(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Tool(name = "exotel_cqa_configure_metadata",
+          description = "List or create metadata field mappings for interactions. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "action: 'list' (GET all configs) or 'create' (POST new mapping). "
+              + "For create, configJson is required — JSON with fields: cqa_key, mapped_from_external_value, "
+              + "display_name, is_enabled, is_used_for_access_control, is_used_for_filtering, data_type "
+              + "(string/number/boolean/date), description (optional). "
+              + "If is_used_for_access_control is true, pass confirm=true.")
+    public Map<String, Object> cqaConfigureMetadata(
+            String jwtToken,
+            String accountId,
+            String action,
+            String configJson,
+            Boolean confirm) {
+        logger.info("CQA configure metadata: account={}, action={}", accountId, action);
+        try {
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            String url = baseUrl + "/metadata_config";
+            String normalizedAction = action != null ? action.trim().toLowerCase() : "";
+
+            return switch (normalizedAction) {
+                case "list" -> parseJsonResponse(getJsonWithBearer(url, jwtToken),
+                    "Metadata configurations retrieved.");
+                case "create" -> {
+                    if (configJson == null || configJson.isBlank()) {
+                        throw new IllegalArgumentException("configJson is required for action=create");
+                    }
+                    Map<String, Object> body = objectMapper.readValue(configJson, Map.class);
+                    Object ac = body.get("is_used_for_access_control");
+                    if (Boolean.TRUE.equals(ac) || "true".equalsIgnoreCase(String.valueOf(ac))) {
+                        requireConfirm(confirm,
+                            "create metadata with is_used_for_access_control=true");
+                    }
+                    yield parseJsonResponse(postJsonWithBearer(url, body, jwtToken),
+                        "Metadata configuration created.");
+                }
+                default -> throw new IllegalArgumentException(
+                    "action must be 'list' or 'create', got: " + action);
+            };
+        } catch (Exception e) {
+            logger.error("CQA configure metadata error", e);
+            return errorResult(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Tool(name = "exotel_cqa_list_analyses",
+          description = "List interaction analyses (scored conversations) with optional filters. "
+              + "Requires a JWT token from exotel_cqa_login. "
+              + "Uses POST with optional filterJson body containing metadata_filter_group, "
+              + "quality_profile_uid, and other_filters. Pagination via limit and offset. "
+              + "Access is ABAC-scoped: Admin sees all, Supervisor sees team/campaign data, Agent sees own interactions only.")
+    public Map<String, Object> cqaListAnalyses(
+            String jwtToken,
+            String accountId,
+            Integer limit,
+            Integer offset,
+            String filterJson,
+            String qualityProfileUid) {
+        logger.info("CQA list analyses: account={}, limit={}, offset={}", accountId, limit, offset);
+        try {
+            String baseUrl = setupBaseUrl(jwtToken, accountId);
+            int lim = normalizeLimit(limit);
+            int off = normalizeOffset(offset);
+
+            String url = baseUrl + "/interaction-analysis?limit=" + lim + "&offset=" + off;
+            Map<String, Object> body = new LinkedHashMap<>();
+            if (filterJson != null && !filterJson.isBlank()) {
+                Map<String, Object> filters = objectMapper.readValue(filterJson, Map.class);
+                body.putAll(filters);
+            }
+            if (qualityProfileUid != null && !qualityProfileUid.isBlank()) {
+                validateResourceId(qualityProfileUid, "qualityProfileUid");
+                body.put("quality_profile_uid", qualityProfileUid);
+            }
+
+            String response = postJsonWithBearer(url, body.isEmpty() ? Map.of() : body, jwtToken);
+            return parseJsonResponse(response,
+                "Analyses listed. Use exotel_cqa_get_analysis (API-key auth, not JWT) with analysis ID for full detail.");
+        } catch (Exception e) {
+            logger.error("CQA list analyses error", e);
+            return errorResult(e);
+        }
+    }
+
+
     // ===================== AUTH =====================
+
+    private String setupBaseUrl(String jwtToken, String accountId) {
+        if (jwtToken == null || jwtToken.isBlank()) {
+            throw new IllegalArgumentException("jwtToken is required — obtain it via exotel_cqa_login");
+        }
+        String host = getCqaHostUrl();
+        validateHost(host);
+        validateAccountId(accountId);
+        AuthCredentials creds = AuthContext.current();
+        if (creds != null && creds.isParsed()
+                && creds.getCqaAccountId() != null && !creds.getCqaAccountId().isBlank()
+                && !creds.getCqaAccountId().equals(accountId)) {
+            throw new IllegalArgumentException(
+                "accountId does not match cqa_account_id in MCP Authorization header");
+        }
+        return host + "/cqa/api/v1/accounts/" + accountId;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> fetchQualityProfileData(String baseUrl, String profileId, String jwtToken)
+            throws Exception {
+        validateResourceId(profileId, "profileId");
+        String response = getJsonWithBearer(baseUrl + "/quality-profiles/" + profileId, jwtToken);
+        Map<String, Object> parsed = objectMapper.readValue(response, Map.class);
+        return extractResponseData(parsed);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> findKpiIds(Map<String, Object> profileData, String categoryId, String subCategoryId) {
+        List<String> kpiIds = new ArrayList<>();
+        Object categoriesObj = profileData.get("categories");
+        if (!(categoriesObj instanceof List<?> categories)) return kpiIds;
+
+        for (Object catObj : categories) {
+            if (!(catObj instanceof Map<?, ?> cat)) continue;
+            if (!categoryId.equals(String.valueOf(cat.get("id")))) continue;
+            Object subCatsObj = cat.get("sub_categories");
+            if (!(subCatsObj instanceof List<?> subCats)) break;
+
+            for (Object subObj : subCats) {
+                if (!(subObj instanceof Map<?, ?> sub)) continue;
+                if (!subCategoryId.equals(String.valueOf(sub.get("id")))) continue;
+                Object kpisObj = sub.get("kpis");
+                if (!(kpisObj instanceof List<?> kpis)) break;
+
+                for (Object kpiObj : kpis) {
+                    if (kpiObj instanceof Map<?, ?> kpi && kpi.get("id") != null) {
+                        kpiIds.add(kpi.get("id").toString());
+                    }
+                }
+                break;
+            }
+            break;
+        }
+        return kpiIds;
+    }
 
     private CqaAuthData getCqaAuth() {
         AuthCredentials creds = AuthContext.current();
@@ -559,16 +1135,137 @@ public class CqaService {
     }
 
     private void validateAccountId(String accountId) {
-        if (!accountId.matches("[a-zA-Z0-9\\-]+")) {
+        if (accountId == null || !accountId.matches("[a-zA-Z0-9\\-]+")) {
             throw new IllegalArgumentException("cqa_account_id contains invalid characters");
         }
+    }
+
+    private void requireConfirm(Boolean confirm, String action) {
+        if (!Boolean.TRUE.equals(confirm)) {
+            throw new IllegalArgumentException("Set confirm=true to " + action);
+        }
+    }
+
+    private int requireSamplingPercentage(int pct) {
+        if (pct < 0 || pct > 100) {
+            throw new IllegalArgumentException("samplingPercentage must be 0-100, got: " + pct);
+        }
+        return pct;
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit < 1) return 10;
+        return Math.min(limit, 100);
+    }
+
+    private int normalizeOffset(Integer offset) {
+        if (offset == null || offset < 0) return 0;
+        return offset;
+    }
+
+    private void enforceCategoriesJsonSize(String categoriesJson) {
+        if (categoriesJson != null && categoriesJson.length() > MAX_CATEGORIES_JSON_CHARS) {
+            throw new IllegalArgumentException(
+                "categoriesJson exceeds max " + MAX_CATEGORIES_JSON_CHARS + " chars");
+        }
+    }
+
+    private void bumpOutboundCalls(int[] callBudget) {
+        callBudget[0]++;
+        if (callBudget[0] > MAX_OUTBOUND_API_CALLS) {
+            throw new IllegalStateException(
+                "Exceeded max outbound API calls (" + MAX_OUTBOUND_API_CALLS
+                + ") for this tool invocation — split the update");
+        }
+    }
+
+    private String extractId(Map<String, Object> data, String name) {
+        Object id = data == null ? null : data.get("id");
+        String value = id == null ? null : id.toString();
+        validateResourceId(value, name);
+        return value;
+    }
+
+    private List<String> parseProfileIds(String qualityProfileIds) {
+        if (qualityProfileIds == null || qualityProfileIds.isBlank()) {
+            throw new IllegalArgumentException("qualityProfileIds is required");
+        }
+        List<String> profileIds = new ArrayList<>();
+        for (String id : qualityProfileIds.split(",")) {
+            String trimmed = id.trim();
+            if (trimmed.isEmpty()) continue;
+            validateResourceId(trimmed, "qualityProfileId");
+            profileIds.add(trimmed);
+        }
+        if (profileIds.isEmpty()) {
+            throw new IllegalArgumentException("qualityProfileIds must contain at least one id");
+        }
+        return profileIds;
+    }
+
+    private Map<String, Object> sanitizeKpiPayload(Map<String, Object> kpi) {
+        Map<String, Object> payload = new LinkedHashMap<>(kpi);
+        payload.remove("id");
+        payload.remove("created_at");
+        payload.remove("updated_at");
+        payload.remove("createdAt");
+        payload.remove("updatedAt");
+        return payload;
+    }
+
+    /**
+     * Validates IDs used as URL path segments. Rejects path traversal / query injection
+     * characters (/, ?, #, ., etc.).
+     */
+    private void validateResourceId(String value, String name) {
+        if (!isPathSafeResourceId(value)) {
+            throw new IllegalArgumentException(
+                value == null || value.isBlank()
+                    ? name + " is required"
+                    : name + " contains invalid characters");
+        }
+    }
+
+    /** ponytail: package-visible for unit check of path-id regex. */
+    static boolean isPathSafeResourceId(String value) {
+        return value != null && !value.isBlank() && RESOURCE_ID_PATTERN.matcher(value).matches();
+    }
+
+    /** Redact customer content fields before writing request bodies to logs. */
+    private String redactBodyForLog(Map<String, Object> body) {
+        if (body == null || body.isEmpty()) {
+            return "{}";
+        }
+        try {
+            Map<String, Object> copy = new LinkedHashMap<>(body);
+            for (String key : List.of(
+                    "transcript_text", "transcriptText", "password", "username",
+                    "audio_url", "transcript_url", "audioUrl", "transcriptUrl")) {
+                if (copy.containsKey(key) && copy.get(key) != null) {
+                    copy.put(key, "[REDACTED]");
+                }
+            }
+            return objectMapper.writeValueAsString(copy);
+        } catch (Exception e) {
+            return "[UNLOGGABLE]";
+        }
+    }
+
+    private String truncateForLog(String value) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= MAX_LOG_BODY_CHARS) {
+            return value;
+        }
+        return value.substring(0, MAX_LOG_BODY_CHARS) + "...[truncated]";
     }
 
     // ===================== HTTP =====================
 
     private String postJson(String url, Map<String, Object> body, String apiKey) throws Exception {
         String jsonBody = objectMapper.writeValueAsString(body);
-        logger.debug("CQA POST {} body={}", url, jsonBody);
+        logger.debug("CQA POST {} body={}", url, redactBodyForLog(body));
 
         ClassicHttpRequest request = ClassicRequestBuilder.post(url)
             .setHeader("X-API-Key", apiKey)
@@ -600,6 +1297,42 @@ public class CqaService {
             .setHeader("Content-Type", "application/json")
             .setHeader("Accept", "application/json")
             .setEntity(new StringEntity(jsonBody, StandardCharsets.UTF_8))
+            .build();
+
+        return executeRequest(request);
+    }
+
+    private String getJsonWithBearer(String url, String jwtToken) throws Exception {
+        logger.debug("CQA GET (Bearer) {}", url);
+
+        ClassicHttpRequest request = ClassicRequestBuilder.get(url)
+            .setHeader("Authorization", "Bearer " + jwtToken)
+            .setHeader("Accept", "application/json")
+            .build();
+
+        return executeRequest(request);
+    }
+
+    private String putJsonWithBearer(String url, Object body, String jwtToken) throws Exception {
+        String jsonBody = objectMapper.writeValueAsString(body);
+        logger.debug("CQA PUT (Bearer) {}", url);
+
+        ClassicHttpRequest request = ClassicRequestBuilder.put(url)
+            .setHeader("Authorization", "Bearer " + jwtToken)
+            .setHeader("Content-Type", "application/json")
+            .setHeader("Accept", "application/json")
+            .setEntity(new StringEntity(jsonBody, StandardCharsets.UTF_8))
+            .build();
+
+        return executeRequest(request);
+    }
+
+    private String deleteWithBearer(String url, String jwtToken) throws Exception {
+        logger.debug("CQA DELETE (Bearer) {}", url);
+
+        ClassicHttpRequest request = ClassicRequestBuilder.delete(url)
+            .setHeader("Authorization", "Bearer " + jwtToken)
+            .setHeader("Accept", "application/json")
             .build();
 
         return executeRequest(request);
@@ -640,11 +1373,10 @@ public class CqaService {
             logger.debug("CQA response: status={} ({}ms)", code, ms);
 
             if (code >= 400) {
-                logger.warn("CQA API error: status={} body={}", code, responseBody);
+                logger.warn("CQA API error: status={} body={}", code, truncateForLog(responseBody));
                 String safeMessage = "CQA API returned HTTP " + code;
                 try {
-                    Map<?, ?> errBody = new com.fasterxml.jackson.databind.ObjectMapper()
-                        .readValue(responseBody, Map.class);
+                    Map<?, ?> errBody = objectMapper.readValue(responseBody, Map.class);
                     Object resp = errBody.get("response");
                     if (resp instanceof Map<?, ?> respMap) {
                         Object msg = respMap.get("message");
