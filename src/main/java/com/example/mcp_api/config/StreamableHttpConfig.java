@@ -558,7 +558,30 @@ public class StreamableHttpConfig {
                 createArgument("channel_type", "Interaction channel: voice, chat, email, sms, whatsapp", true),
                 createArgument("audio_url", "URL to the audio recording", false),
                 createArgument("transcript_url", "URL to the transcript file", false),
+                createArgument("transcript_text", "Inline transcript text (max 200KB; alternative to transcript_url)", false),
                 createArgument("language", "Language code (e.g. en, hi)", false)
+            )
+        ));
+
+        prompts.add(createPrompt(
+            "cqa_list_quality_profiles",
+            "List CQA Quality Profiles",
+            "List quality profiles for the account (JWT from cqa login). Use before get/update/delete.",
+            List.of(
+                createArgument("jwt_token", "Bearer token from exotel_cqa_login", true),
+                createArgument("account_id", "CQA account id (must match cqa_account_id in auth header)", true)
+            )
+        ));
+
+        prompts.add(createPrompt(
+            "cqa_delete_quality_profile",
+            "Delete CQA Quality Profile",
+            "Irreversible delete of a quality profile. Requires confirm=true.",
+            List.of(
+                createArgument("jwt_token", "Bearer token from exotel_cqa_login", true),
+                createArgument("account_id", "CQA account id", true),
+                createArgument("profile_id", "Quality profile UUID", true),
+                createArgument("confirm", "Must be true to proceed", true)
             )
         ));
         
@@ -926,9 +949,26 @@ public class StreamableHttpConfig {
                     "Please ingest interaction {{external_interaction_id}} ({{channel_type}}) " +
                     "{{#if audio_url}}with audio at {{audio_url}}{{/if}} " +
                     "{{#if transcript_url}}with transcript at {{transcript_url}}{{/if}} " +
+                    "{{#if transcript_text}}with inline transcript text{{/if}} " +
                     "{{#if language}}in {{language}}{{/if}} into Conversational Intelligence for quality analysis",
                     "I'll submit this interaction to Conversational Intelligence using the cqaIngestInteraction tool. " +
                     "Once ingested, the platform will run it through the configured quality profiles and produce scores."
+                );
+
+            case "cqa_list_quality_profiles":
+                return createPromptResponse(
+                    "cqa_list_quality_profiles",
+                    "List quality profiles for a CQA account",
+                    "List CQA quality profiles for account {{account_id}} using JWT {{jwt_token}}",
+                    "I'll call exotel_cqa_list_quality_profiles with the JWT and account id."
+                );
+
+            case "cqa_delete_quality_profile":
+                return createPromptResponse(
+                    "cqa_delete_quality_profile",
+                    "Delete a CQA quality profile (requires confirm=true)",
+                    "Delete CQA quality profile {{profile_id}} for account {{account_id}} with confirm={{confirm}}",
+                    "I'll call exotel_cqa_delete_quality_profile only if confirm is true."
                 );
                 
             case "cqa_ingest_file":
