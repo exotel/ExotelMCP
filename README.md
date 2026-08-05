@@ -347,12 +347,17 @@ Create an assignment rule that routes calls with source "support" to quality pro
 > **Supported filter operators:** IS, IS_NOT, CONTAINS, NOT_CONTAINS, GREATER_THAN, LESS_THAN, GREATER_OR_EQUAL, LESS_OR_EQUAL
 
 #### Ingest Single Interaction
-Submit a single call recording or transcript for quality analysis.
+Submit a single call recording or transcript for quality analysis. Provide at least one of `audioUrl`, `transcriptUrl`, or inline `transcriptText` (max 200KB).
 
 **Example**:
 ```
 Ingest interaction call-001 (voice channel) with audio at https://s3.example.com/call-001.wav in English
 ```
+
+#### Quality Profile / Rule / API Key Management
+JWT setup tools also support list/get/update/delete/duplicate for profiles, list/update/delete for assignment rules, list/revoke for API keys, metadata config, and list analyses.
+
+Destructive tools (`delete_*`, `revoke_api_key`) require `confirm=true`. Empty KPI wipe on profile update requires `confirmWipeKpis=true`. `accountId` must match `cqa_account_id` in the MCP auth header when that header field is set.
 
 #### Ingest Batch
 Submit up to 100 interactions as a single batch job.

@@ -148,9 +148,15 @@ AI: [Ingests into CQA, waits for processing, returns quality scores]
 | `listRecentBotCalls` | List recent calls |
 | `listAccountPhoneNumbers` | List available caller IDs |
 | `getBotGenerationStatus` | Check bot creation progress |
-| `cqaIngestInteraction` | Submit a recording for analysis |
+| `cqaIngestInteraction` | Submit recording/transcript (`audioUrl`, `transcriptUrl`, or `transcriptText`) |
 | `cqaIngestBatch` | Submit multiple recordings |
 | `cqaIngestFile` | Submit a CSV file of recordings |
 | `cqaGetInteraction` | Check interaction processing status |
-| `cqaGetAnalysis` | Get quality scoring results |
+| `cqaGetAnalysis` | Get quality scoring results (API-key auth) |
 | `cqaTrackJob` | Track batch/file job progress |
+| `cqaLogin` | JWT for setup tools |
+| `cqaCreateQualityProfile` / `cqaGetQualityProfile` / `cqaListQualityProfiles` / `cqaUpdateQualityProfile` / `cqaDeleteQualityProfile` / `cqaDuplicateQualityProfile` | Quality profile CRUD (JWT; deletes need `confirm=true`) |
+| `cqaCreateApiKey` / `cqaListApiKeys` / `cqaRevokeApiKey` | API key management (revoke needs `confirm=true`) |
+| `cqaCreateAssignmentRule` / `cqaListAssignmentRules` / `cqaUpdateAssignmentRule` / `cqaDeleteAssignmentRule` | Assignment rules (delete needs `confirm=true`) |
+| `cqaConfigureMetadata` | List/create metadata mappings (`confirm=true` if access-control flag) |
+| `cqaListAnalyses` | List scored analyses (JWT; detail via `cqaGetAnalysis` + API key) |
