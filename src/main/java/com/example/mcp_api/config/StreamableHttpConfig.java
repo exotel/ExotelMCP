@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -49,6 +50,9 @@ public class StreamableHttpConfig {
 
     @Autowired
     private com.example.mcp_api.service.VoiceBotToolsService voiceBotToolsService;
+
+    @Autowired
+    private com.example.mcp_api.service.EngageService engageService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -194,7 +198,7 @@ public class StreamableHttpConfig {
         List<Map<String, Object>> tools = new ArrayList<>();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService};
+        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
@@ -238,11 +242,17 @@ public class StreamableHttpConfig {
                             property.put("type", "string");
                             property.put("description", "Parameter");
                         }
+
+                        ToolParam toolParam = param.getAnnotation(ToolParam.class);
+                        if (toolParam != null && toolParam.description() != null && !toolParam.description().isBlank()) {
+                            property.put("description", toolParam.description());
+                        }
                         
                         properties.put(paramName, property);
-                        // For this example, we'll assume all parameters are required
-                        // You could add custom annotations later to make some optional
-                        required.add(paramName);
+                        boolean isRequired = toolParam == null || toolParam.required();
+                        if (isRequired) {
+                            required.add(paramName);
+                        }
                     }
                     
                     inputSchema.put("properties", properties);
@@ -278,7 +288,7 @@ public class StreamableHttpConfig {
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService};
+            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();
@@ -293,9 +303,24 @@ public class StreamableHttpConfig {
                             Parameter param = methodParams[i];
                             String paramName = param.getName();
                             Object argValue = arguments.get(paramName);
+                            // Clients may send snake_case while Java params are camelCase
+                            if (argValue == null) {
+                                String snake = camelToSnake(paramName);
+                                if (!snake.equals(paramName)) {
+                                    argValue = arguments.get(snake);
+                                }
+                            }
                             
-                            // Enhanced type conversion
-                            if (param.getType() == int.class || param.getType() == Integer.class) {
+                            // Enhanced type conversion — null is allowed for reference types (optional tool args)
+                            if (argValue == null) {
+                                if (param.getType().isPrimitive()) {
+                                    if (param.getType() == boolean.class) methodArgs[i] = false;
+                                    else if (param.getType() == int.class) methodArgs[i] = 0;
+                                    else methodArgs[i] = null;
+                                } else {
+                                    methodArgs[i] = null;
+                                }
+                            } else if (param.getType() == int.class || param.getType() == Integer.class) {
                                 if (argValue instanceof Number) {
                                     methodArgs[i] = ((Number) argValue).intValue();
                                 } else {
@@ -1044,6 +1069,21 @@ public class StreamableHttpConfig {
      */
     private Map<String, Object> createErrorResponse(String message) {
         return createErrorResponse(null, message);
+    }
+
+    private static String camelToSnake(String camel) {
+        if (camel == null || camel.isBlank()) return camel;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < camel.length(); i++) {
+            char c = camel.charAt(i);
+            if (Character.isUpperCase(c)) {
+                if (i > 0) sb.append('_');
+                sb.append(Character.toLowerCase(c));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     private Map<String, Object> createErrorResponse(Object id, String message) {

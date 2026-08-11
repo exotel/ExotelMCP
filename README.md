@@ -5,6 +5,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 ## Features
 
 - 📱 **SMS Services**: Send single, bulk, and dynamic SMS messages with DLT compliance
+- 📨 **Engage SMS Campaigns**: Create static SMS message campaigns via Engage API
 - ☎️ **Voice Calling**: Initiate voice calls, connect numbers, and integrate with call flows
 - 📊 **Status Tracking**: Real-time delivery status and callback management
 - 🎵 **Quick Audio Tools**: One-click audio playback, download, and web player access
@@ -199,6 +200,25 @@ Send personalized messages to multiple recipients with different content for eac
 **Example**: 
 ```
 Send personalized messages: "Hello John" to +919999999999 and "Hello Jane" to +919888888888
+```
+
+### Engage SMS Campaigns
+
+Create a static SMS message campaign on Engage (`exotel_engage_create_sms_campaign`).
+
+Uses the same `calls_api_key` / `calls_api_token` / `calls_account_id` (or CPaaS `token` + `account_sid`) as other telephony tools — no separate Engage credentials.
+
+**Example**:
+```
+Create an Engage SMS campaign named "July promo" to list list_sid from EXOTEL,
+transactional, template "Hello from Engage https://example.com/promo",
+DLT entity 123456 and template id 789012, with URL shortening enabled
+```
+
+Optional schedule and callbacks:
+```
+Same campaign, scheduled 2026-08-10T18:00:00+05:30 to 2026-08-10T20:00:00+05:30,
+with status_callback and message_status_callback URLs
 ```
 
 ### Voice Services
@@ -563,6 +583,63 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
 ```
 
 > **Note**: If your server is running on plain HTTP during local development, add `"--allow-http"` to the `args` array before `"--header"`.
+
+### Running Locally (Cursor + Claude Desktop / CoWork)
+
+Use a local server when developing or when cloud MCP is unavailable. Engage SMS campaigns and all other tools work the same as production.
+
+```bash
+# From the ExotelMCP repo root
+./mvnw spring-boot:run
+# MCP endpoint: http://localhost:8080/mcp
+# Optional: ENGAGE_BASE_URL=https://engage.exotel.com (default)
+```
+
+Or with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+**Cursor** — add to `~/.cursor/mcp.json` (reload window after saving):
+
+```json
+{
+  "mcpServers": {
+    "exotel-local": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+      }
+    }
+  }
+}
+```
+
+**Claude Desktop / CoWork** — CoWork loads the same `claude_desktop_config.json`. Bridge HTTP with `mcp-remote` and `--allow-http`:
+
+```json
+{
+  "mcpServers": {
+    "exotel-local": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:8080/mcp",
+        "--allow-http",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+      }
+    }
+  }
+}
+```
+
+Fully quit and reopen Claude Desktop so CoWork picks up the server. Keep the local Java process running while you orchestrate.
 
 ### Production Checklist
 

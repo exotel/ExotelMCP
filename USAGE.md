@@ -2,7 +2,56 @@
 
 ## Connecting to the MCP Server
 
-### In Cursor IDE
+### Local development (Cursor + Claude Desktop / CoWork)
+
+Run the server from the repo:
+
+```bash
+./mvnw spring-boot:run
+# http://localhost:8080/mcp
+```
+
+**Cursor** — `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "exotel-local": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+      }
+    }
+  }
+}
+```
+
+Reload the Cursor window after saving.
+
+**Claude Desktop / CoWork** — CoWork uses `~/Library/Application Support/Claude/claude_desktop_config.json` (same file as Desktop). Fully quit Claude after editing:
+
+```json
+{
+  "mcpServers": {
+    "exotel-local": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:8080/mcp",
+        "--allow-http",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+      }
+    }
+  }
+}
+```
+
+### Cloud (production) — In Cursor IDE
 
 Add to `~/.cursor/mcp.json`:
 
@@ -51,10 +100,11 @@ Restart Claude Desktop after saving.
 | `voicebot_api_token` | VoiceBot platform admin | VoiceBot tools |
 | `voicebot_account_id` | VoiceBot platform (account ID) | VoiceBot management API |
 | `voicebot_base_url` | Default: `https://voicebot.in.exotel.com/voicebot/api/v2` | VoiceBot management API |
-| `calls_api_key` | Exotel dashboard → API credentials | Outbound calls |
-| `calls_api_token` | Exotel dashboard → API credentials | Outbound calls |
-| `calls_account_id` | Exotel dashboard → Account SID | Outbound calls |
+| `calls_api_key` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
+| `calls_api_token` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
+| `calls_account_id` | Exotel dashboard → Account SID | Outbound calls + Engage SMS campaigns |
 | `calls_base_url` | Default: `https://api.exotel.com` | Outbound calls |
+| `token` / `account_sid` | Exotel dashboard → API Settings | CPaaS SMS/Voice; Engage fallback auth |
 | `cqa_api_key` | CQA console → API Keys | Conversational Intelligence |
 | `cqa_account_id` | CQA console → Account Settings | Conversational Intelligence |
 | `cqa_host` | Default: `https://cqa-console.in.exotel.com` | Conversational Intelligence |
@@ -139,6 +189,7 @@ AI: [Ingests into CQA, waits for processing, returns quality scores]
 
 | Tool | Description |
 |------|-------------|
+| `exotel_engage_create_sms_campaign` | Create Engage static SMS campaign (`lists`, DLT, optional schedule/callbacks) |
 | `listVoiceBots` | List all bots in your account |
 | `getVoiceBot` | Get details of a specific bot |
 | `createVoiceBot` | Create a new bot |
