@@ -12,5 +12,5 @@ COPY --from=build /app/target/*.jar app.jar
 RUN mkdir -p /app/data /app/logs
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:8080/mcp || exit 1
+  CMD wget -q -O - --timeout=3 http://localhost:8080/mcp | head -c 1 | grep -q .
 ENTRYPOINT ["java", "-jar", "app.jar"]
