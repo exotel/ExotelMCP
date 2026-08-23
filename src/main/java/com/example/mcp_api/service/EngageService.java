@@ -32,8 +32,8 @@ import java.util.stream.Collectors;
  * Engage MCP tools — SMS message campaigns via engage.exotel.com.
  *
  * Credentials reuse existing CPaaS / calls_* fields (no separate engage_* product).
- * Prefer CPaaS token + account_sid (messaging account); fall back to calls_api_key +
- * calls_api_token + calls_account_id.
+ * Prefer calls_api_key + calls_api_token + calls_account_id (matches other telephony tools);
+ * fall back to CPaaS token + account_sid.
  */
 @Service
 public class EngageService {
@@ -106,30 +106,29 @@ public class EngageService {
 
     private String getAccountSid() {
         AuthCredentials creds = AuthContext.current();
-        // Prefer CPaaS account_sid for Engage (messaging account); then calls_* / env defaults
-        String cpaasSid = creds.getAccountSid();
-        if (cpaasSid != null && !cpaasSid.isBlank()) return cpaasSid;
+        // Prefer calls_account_id (matches other telephony tools); fall back to CPaaS account_sid / env default
         String callsAccount = creds.getCallsAccountId();
         if (callsAccount != null && !callsAccount.isBlank()) return callsAccount;
+        String cpaasSid = creds.getAccountSid();
+        if (cpaasSid != null && !cpaasSid.isBlank()) return cpaasSid;
         if (defaultCallsAccountId != null && !defaultCallsAccountId.isBlank()) return defaultCallsAccountId;
         return null;
     }
 
     /**
-     * Basic auth value for Engage: prefer CPaaS token (already Base64 of key:secret for the
-     * messaging account); else calls key:token Base64.
+     * Basic auth value for Engage: prefer calls_api_key + calls_api_token (matches other telephony
+     * tools); fall back to CPaaS token (already Base64 of api_key:api_secret).
      */
     private String basicAuthValue() {
-        AuthCredentials creds = AuthContext.current();
-        String cpaasToken = creds.getToken();
-        if (cpaasToken != null && !cpaasToken.isBlank()) {
-            return cpaasToken;
-        }
         String key = getCallsApiKey();
         String token = getCallsApiToken();
         if (key != null && !key.isBlank() && token != null && !token.isBlank()) {
             return Base64.getEncoder().encodeToString(
                     (key + ":" + token).getBytes(StandardCharsets.UTF_8));
+        }
+        String cpaasToken = AuthContext.current().getToken();
+        if (cpaasToken != null && !cpaasToken.isBlank()) {
+            return cpaasToken;
         }
         return null;
     }
@@ -140,9 +139,9 @@ public class EngageService {
         if (accountSid == null || accountSid.isBlank() || basic == null || basic.isBlank()) {
             return "Missing credentials for Engage SMS campaigns.\n\n"
                     + "Provide either:\n"
-                    + "  - token (Base64 of api_key:api_secret) and account_sid\n"
+                    + "  - calls_api_key, calls_api_token, calls_account_id\n"
                     + "or:\n"
-                    + "  - calls_api_key, calls_api_token, calls_account_id\n\n"
+                    + "  - token (Base64 of api_key:api_secret) and account_sid\n\n"
                     + "Get them from my.exotel.com → API Settings.\n"
                     + "For setup help, use the tool: exotel_setup_guide";
         }
@@ -303,7 +302,8 @@ public class EngageService {
 
     private String sanitizeForLog(String value) {
         if (value == null) return "";
-        return value.replaceAll("[\\r\\n]", "").substring(0, Math.min(value.length(), 80));
+        String cleaned = value.replaceAll("[\\r\\n]", "");
+        return cleaned.substring(0, Math.min(cleaned.length(), 80));
     }
 
     private String safeBody(ResponseEntity<String> response) {
