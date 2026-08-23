@@ -153,19 +153,26 @@ public class SetupTools {
     }
 
     private String cpaasGuide(AuthCredentials creds) {
-        String status = creds.hasCpaasCredentials() ? "CONFIGURED" : "NOT CONFIGURED";
-        return "## CPaaS - SMS & Voice [" + status + "]\n\n"
-            + "Send SMS messages and initiate voice calls via Exotel's CPaaS platform.\n\n"
-            + "**Credentials needed:**\n"
+        boolean hasCalls = creds.hasCallsCredentials();
+        boolean hasCpaas = creds.hasCpaasCredentials();
+        String status = (hasCalls || hasCpaas) ? "CONFIGURED" : "NOT CONFIGURED";
+        return "## CPaaS / Calls - SMS, Voice & Engage Campaigns [" + status + "]\n\n"
+            + "Send SMS messages, initiate voice calls, and create Engage SMS message campaigns.\n\n"
+            + "**Credentials needed (CPaaS SMS/Voice):**\n"
             + "- `token` — Base64 encoded `api_key:api_secret` from my.exotel.com → API Settings\n"
             + "- `account_sid` — Your Exotel account SID\n"
             + "- `from_number` — Your Exotel virtual phone number\n"
             + "- `api_domain` — (optional) defaults to https://api.exotel.com\n\n"
+            + "**Credentials for Engage SMS campaigns (reuse calls_* preferred):**\n"
+            + "- `calls_api_key` / `calls_api_token` / `calls_account_id` — my.exotel.com → API Settings\n"
+            + "- Or fall back to CPaaS `token` + `account_sid` (same account)\n"
+            + "- Optional server env: `ENGAGE_BASE_URL` (default https://engage.exotel.com)\n\n"
             + "**What you can do:**\n"
             + "- Send SMS (single and bulk)\n"
             + "- Initiate voice calls\n"
             + "- Connect two numbers\n"
-            + "- Check delivery status\n\n";
+            + "- Check delivery status\n"
+            + "- Create Engage SMS campaigns (`exotel_engage_create_sms_campaign`)\n\n";
     }
 
     private String configSnippet() {
