@@ -117,4 +117,35 @@ public final class AuthContext {
         }
         return null;
     }
+
+    public static String requireAiAssist() {
+        AuthCredentials creds = current();
+        if (!creds.hasAiAssistCredentials()) {
+            return "Missing AI Assist credentials.\n\n"
+                + "LLM WIZARD (do this once per user, then persist):\n"
+                + "  1. Ask the user for the four values below \u2014 use AskQuestion.\n"
+                + "  2. Write them into the user's Cursor mcp.json under this server's `headers.Authorization`\n"
+                + "     as a single-line 'Bearer <json>' envelope. Example shape:\n"
+                + "        \"headers\": {\n"
+                + "          \"Authorization\": \"Bearer {\\\"ai_assist_base_url\\\":\\\"https://ai-assist.in.exotel.com\\\",\\\"ai_assist_account_sid\\\":\\\"<sid>\\\",\\\"ai_assist_auth_key\\\":\\\"<key>\\\",\\\"ai_assist_auth_secret\\\":\\\"<secret>\\\"}\"\n"
+                + "        }\n"
+                + "  3. Ask the user to reload MCP servers in Cursor (Cmd+Shift+P \u2192 'Reload MCP Servers').\n"
+                + "  4. Retry the original tool call.\n\n"
+                + "REQUIRED fields to collect from the user:\n"
+                + "  - ai_assist_base_url        (prod: https://ai-assist.in.exotel.com)\n"
+                + "  - ai_assist_account_sid     (e.g. your_tenant_sid; the AI Assist tenant ID)\n"
+                + "  - ai_assist_auth_key        (CPaaS API key \u2014 Exotel dashboard \u2192 Settings \u2192 API \u2192 API Credentials)\n"
+                + "  - ai_assist_auth_secret     (CPaaS API token \u2014 same page as above)\n\n"
+                + "Alternate auth modes (only if the customer explicitly wants them \u2014 default to Twilix Basic above):\n"
+                + "  B. Auth0 M2M client credentials (operator/internal use; broad scope):\n"
+                + "     - ai_assist_client_id / ai_assist_client_secret\n"
+                + "     Optional overrides: ai_assist_auth_token_url, ai_assist_auth_audience\n"
+                + "  C. Manual bearer paste (short-lived): ai_assist_auth_token\n"
+                + "  D. Session cookie paste (fallback for pre-M2M tenants): ai_assist_session_cookie\n\n"
+                + "Optional:\n"
+                + "  - ai_assist_context_path    (defaults to ai-assist/api)\n"
+                + "  - ai_assist_user_id         (for audit)";
+        }
+        return null;
+    }
 }

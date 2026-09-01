@@ -725,6 +725,30 @@ curl https://your-domain.com/mcp
 - Ensure callback URLs use your public domain
 - Test webhook endpoints manually
 
+#### Local Development — Cursor Not Picking Up Tool Description Changes
+
+**Symptom**: You edited a `@Tool` description in `AiAssistService.java`, killed and restarted the local MCP server, but Cursor's LLM is still reading the OLD tool descriptions in every new chat.
+
+**Cause**: Cursor's MCP client caches the `tools/list` response per server, keyed by a hash of that server's entry in `~/.cursor/mcp.json`. Simply restarting your local server does NOT invalidate that cache — Cursor only re-reads tools/list when it thinks the config has changed or the server is being freshly connected.
+
+**Fix (pick one)**:
+
+1. **Toggle the server off/on in Cursor** — Settings → MCP → find `exotel-mcp` → toggle off, then on again. Fastest option, keeps `mcp.json` clean.
+2. **Reload the Cursor window** — `Cmd+Shift+P` → `Reload Window`. Nukes all MCP caches for the current window.
+3. **Change any value in that server's `mcp.json` block** — e.g. flip the URL between `http://localhost:8090/mcp` and `http://127.0.0.1:8090/mcp`, or add/remove a dummy `X-Cursor-Cache-Bust` header. Changes the config hash → forces re-fetch. Do NOT ship this into production configs; it's a workaround.
+
+**How to verify the new descriptions actually landed**:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8090/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+  | grep -oc '<your new keyword from the description>'
+```
+
+If the grep returns `1` (or more) the server exports the new description. If Cursor still shows the LLM old text, it's the client-side cache — use option 1 or 2 above.
+
 ### Resources
 
 - **Exotel Documentation**: [https://developer.exotel.com/](https://developer.exotel.com/)
