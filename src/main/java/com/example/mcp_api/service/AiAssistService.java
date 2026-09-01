@@ -44,16 +44,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.regex.Pattern;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * AI Assist MCP tools.
+ * AI Assist MCP tools (read + write).
  *
- * Auth: JWT bearer parsed from Authorization header into AuthCredentials.
- * All URLs are built as {ai_assist_base_url}/{ai_assist_context_path}/v1/accounts/{sid}/...
- *
- * Phase 1: whoami stub (auth wiring proof).
- * Phase 2: read tools for assistants, attachments, templates, interactions, agents.
+ * Auth: credentials from the Authorization header envelope ({@link AuthCredentials}).
+ * URLs: {ai_assist_base_url}/{ai_assist_context_path}/v1/accounts/{sid}/...
  */
 @Service
 public class AiAssistService {
@@ -61,22 +58,8 @@ public class AiAssistService {
     private static final Logger logger = LoggerFactory.getLogger(AiAssistService.class);
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    // Loose sanity checks — reject obviously malicious values before building a URL.
-    private static final Pattern ACCOUNT_SID_PATTERN = Pattern.compile("^[a-zA-Z0-9_\\-]{1,64}$");
-    private static final Pattern ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_\\-]{1,128}$");
-
-    // Canonical source integrations supported by the AI Assist UI.
-    private static final java.util.Set<String> VALID_SOURCES =
-            java.util.Set.of("ameyo_6x", "ameyo_6_0", "exolite");
-
-    // Azure STT locale format: 'll-CC' (case-insensitive). Covers en-in, en-US, hi-IN, ta-in, etc.
-    // Matches AI Assist UI supported STT locale codes.
-    private static final Pattern AZURE_LOCALE_PATTERN =
-            Pattern.compile("^[a-zA-Z]{2,3}-[a-zA-Z]{2,4}$");
-
     // LLM suggestion languages the AI Assist UI offers in the "Assistant suggestions language" dropdown.
-    // These are the DISPLAY NAMES sent on the wire (llm_language). Snapshot of the AI Assist UI's derived
-    // Snapshot of the AI Assist UI suggestion-language dropdown. Regenerate when the UI adds locales.
+    // These are the DISPLAY NAMES sent on the wire (llm_language). Regenerate when the UI adds locales.
     private static final java.util.LinkedHashSet<String> LLM_LANGUAGE_NAMES =
             new java.util.LinkedHashSet<>(List.of(
                 "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Assamese", "Azerbaijani",
@@ -118,27 +101,25 @@ public class AiAssistService {
         this.restTemplate = createRestTemplate(true);
     }
 
-    // ---- Auth0 M2M token cache (one entry per JVM process) ----
-    // Cached in-memory only. Refreshed transparently when within 60s of expiry.
+    // ---- Auth0 M2M token cache (per client_id|account_sid key) ----
+    // ponytail: ConcurrentHashMap + coarse lock; fine for MCP's low tenant count.
 
-    private volatile String cachedBearer;
-    private volatile long   cachedExpiresAtEpochMs;
-    private volatile String cachedForKey; // client_id + account_sid \u2014 invalidate if caller switches accounts
+    private record CachedBearer(String token, long expiresAtEpochMs) {}
+
+    private final ConcurrentHashMap<String, CachedBearer> bearerCache = new ConcurrentHashMap<>();
     private final Object bearerLock = new Object();
 
     private String mintOrReuseBearer(String clientId, String clientSecret, String accountSid) {
         String key = clientId + "|" + accountSid;
         long now = System.currentTimeMillis();
-        if (cachedBearer != null
-                && key.equals(cachedForKey)
-                && cachedExpiresAtEpochMs - now > 60_000) {
-            return cachedBearer;
+        CachedBearer cached = bearerCache.get(key);
+        if (cached != null && cached.expiresAtEpochMs - now > 60_000) {
+            return cached.token;
         }
         synchronized (bearerLock) {
-            if (cachedBearer != null
-                    && key.equals(cachedForKey)
-                    && cachedExpiresAtEpochMs - now > 60_000) {
-                return cachedBearer;
+            cached = bearerCache.get(key);
+            if (cached != null && cached.expiresAtEpochMs - now > 60_000) {
+                return cached.token;
             }
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("client_id", clientId);
@@ -158,9 +139,7 @@ public class AiAssistService {
                 if (token == null || token.isBlank()) {
                     throw new IllegalStateException("Auth server response missing access_token");
                 }
-                cachedBearer = token;
-                cachedExpiresAtEpochMs = now + ttl * 1000L;
-                cachedForKey = key;
+                bearerCache.put(key, new CachedBearer(token, now + ttl * 1000L));
                 logger.info("AI Assist: minted token for account_sid={}, ttl={}s", accountSid, ttl);
                 return token;
             } catch (Exception e) {
@@ -231,13 +210,13 @@ public class AiAssistService {
 
         aiAssist.put("auth_mode", authMode);
         aiAssist.put("has_basic_credentials", hasBasic);
-        aiAssist.put("auth_key_prefix", maskToken(creds.getAiAssistAuthKey()));
+        aiAssist.put("auth_key_prefix", AiAssistJson.maskToken(creds.getAiAssistAuthKey()));
         aiAssist.put("has_token", hasToken);
-        aiAssist.put("token_prefix", maskToken(creds.getAiAssistAuthToken()));
+        aiAssist.put("token_prefix", AiAssistJson.maskToken(creds.getAiAssistAuthToken()));
         aiAssist.put("has_session_cookie", hasCookie);
-        aiAssist.put("cookie_prefix", maskToken(creds.getAiAssistSessionCookie()));
+        aiAssist.put("cookie_prefix", AiAssistJson.maskToken(creds.getAiAssistSessionCookie()));
         aiAssist.put("has_client_credentials", hasClient);
-        aiAssist.put("client_id_prefix", maskToken(effectiveClientId(creds)));
+        aiAssist.put("client_id_prefix", AiAssistJson.maskToken(effectiveClientId(creds)));
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("parsed", creds.isParsed());
@@ -249,7 +228,7 @@ public class AiAssistService {
             body.put("hint", effHint);
         }
 
-        return toJson(body);
+        return AiAssistJson.toJson(body);
     }
 
     @Tool(name = "exotel_aiassist_list_assistants",
@@ -273,7 +252,7 @@ public class AiAssistService {
     public String getAssistant(String aiAssistantId) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId must be alphanumeric/dash/underscore, max 128 chars");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId must be alphanumeric/dash/underscore, max 128 chars");
         AuthCredentials creds = AuthContext.current();
         return getJson(creds, "/ai-assistants/" + aiAssistantId, null);
     }
@@ -284,7 +263,7 @@ public class AiAssistService {
     public String listAttachments(String aiAssistantId) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         AuthCredentials creds = AuthContext.current();
         return getJson(creds, "/ai-assistants/" + aiAssistantId + "/attachments", null);
     }
@@ -299,7 +278,7 @@ public class AiAssistService {
     public String listKbUploadJobs(String aiAssistantId) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         AuthCredentials creds = AuthContext.current();
         return getJson(creds, "/ai-assistants/" + aiAssistantId + "/upload-jobs", null);
     }
@@ -321,7 +300,7 @@ public class AiAssistService {
     public String waitForKbReady(String aiAssistantId, Integer timeoutSeconds, Integer pollIntervalSeconds) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
 
         int timeout = clamp(timeoutSeconds == null ? 120 : timeoutSeconds, 1, 600);
         int interval = clamp(pollIntervalSeconds == null ? 3 : pollIntervalSeconds, 1, 30);
@@ -341,8 +320,8 @@ public class AiAssistService {
                 body.put("status", "error");
                 body.put("elapsed_seconds", (System.currentTimeMillis() - start) / 1000);
                 body.put("poll_count", pollCount);
-                body.put("upstream_response_snippet", safeBodySnippet(raw));
-                return toJson(body);
+                body.put("upstream_response_snippet", AiAssistJson.safeBodySnippet(raw));
+                return AiAssistJson.toJson(body);
             }
             // Terminal states, in priority order. QUEUED/UPLOADING/PROCESSING/PENDING are
             // in-flight so they keep the loop polling; only an all-COMPLETED batch is "ready".
@@ -365,13 +344,13 @@ public class AiAssistService {
                         "partial_success", summary.partialSuccess,
                         "failed", summary.failed));
                 body.put("jobs", summary.jobs);
-                return toJson(body);
+                return AiAssistJson.toJson(body);
             }
             try {
                 Thread.sleep(interval * 1000L);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                return errorJson("interrupted", "wait_for_kb_ready interrupted");
+                return AiAssistJson.errorJson("interrupted", "wait_for_kb_ready interrupted");
             }
         }
     }
@@ -464,19 +443,19 @@ public class AiAssistService {
     public String getStreamUrls(String aiAssistantId, String source, String channel) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         AuthCredentials creds = AuthContext.current();
 
         String effectiveSource = resolveSource(creds, aiAssistantId, source);
-        if (effectiveSource != null && !VALID_SOURCES.contains(effectiveSource)) {
-            return errorJson("invalid_argument",
+        if (effectiveSource != null && !AiAssistGuards.VALID_SOURCES.contains(effectiveSource)) {
+            return AiAssistJson.errorJson("invalid_argument",
                     "source '" + effectiveSource + "' is not one of: ameyo_6x, ameyo_6_0, exolite.");
         }
 
         boolean isChat = channel != null && channel.trim().equalsIgnoreCase("chat");
         String streamUrl = buildStreamUrl(creds, aiAssistantId, effectiveSource, isChat);
         if (streamUrl == null) {
-            return errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
+            return AiAssistJson.errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -486,7 +465,7 @@ public class AiAssistService {
         out.put("stream_url", streamUrl);
         out.put("note", "Wire this URL into your CPaaS Stream applet as-is. Do not GET it here \u2014 CPaaS calls it "
                 + "at connect time and supplies runtime custom params (call_sid, etc.).");
-        return toJson(out);
+        return AiAssistJson.toJson(out);
     }
 
     /**
@@ -516,7 +495,7 @@ public class AiAssistService {
 
     private String buildStreamUrl(AuthCredentials creds, String aiAssistantId, String source, boolean chat) {
         String accountSid = effectiveAccountSid(creds);
-        if (!ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) return null;
+        if (!AiAssistGuards.ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) return null;
         String baseUrl = creds.effectiveAiAssistBaseUrl(null);
         String contextPath = creds.effectiveAiAssistContextPath(CONTEXT_PATH);
         UriComponentsBuilder ub = UriComponentsBuilder
@@ -542,15 +521,15 @@ public class AiAssistService {
     public String smokeTestChat(String aiAssistantId, String source) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         AuthCredentials creds = AuthContext.current();
 
         String effectiveSource = resolveSource(creds, aiAssistantId, source);
         if (effectiveSource == null) {
-            return errorJson("invalid_argument", "source required (could not infer from assistant)");
+            return AiAssistJson.errorJson("invalid_argument", "source required (could not infer from assistant)");
         }
-        if (!VALID_SOURCES.contains(effectiveSource)) {
-            return errorJson("invalid_argument", "source '" + effectiveSource + "' is not one of: ameyo_6x, ameyo_6_0, exolite.");
+        if (!AiAssistGuards.VALID_SOURCES.contains(effectiveSource)) {
+            return AiAssistJson.errorJson("invalid_argument", "source '" + effectiveSource + "' is not one of: ameyo_6x, ameyo_6_0, exolite.");
         }
 
         // Resolve the Data Pipe WS URL. channel=chat means the backend won't demand call_sid.
@@ -565,10 +544,10 @@ public class AiAssistService {
             Map<String, Object> data = unwrapResponseData(parsed);
             wss = (data != null && data.get("url") != null) ? data.get("url").toString() : null;
         } catch (Exception e) {
-            return errorJson("stream_url_error", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return AiAssistJson.errorJson("stream_url_error", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         if (wss == null || wss.isBlank()) {
-            return errorJson("stream_url_missing", "stream-urls returned no Data Pipe url");
+            return AiAssistJson.errorJson("stream_url_missing", "stream-urls returned no Data Pipe url");
         }
 
         return runChatHandshake(creds, aiAssistantId, effectiveSource, wss);
@@ -619,25 +598,25 @@ public class AiAssistService {
                     .buildAsync(URI.create(wss), listener)
                     .get(SMOKE_WS_CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS);
 
-            ws.sendText(toJson(Map.of("event", "connected")), true);
+            ws.sendText(AiAssistJson.toJson(Map.of("event", "connected")), true);
             Thread.sleep(SMOKE_CONNECTED_SETTLE_MS);
-            ws.sendText(toJson(buildChatStartEnvelope(streamSid, accountSid, source)), true);
+            ws.sendText(AiAssistJson.toJson(buildChatStartEnvelope(streamSid, accountSid, source)), true);
 
             Map<String, Object> ack = ackFuture.get(SMOKE_START_ACK_TIMEOUT_SEC, TimeUnit.SECONDS);
 
-            try { ws.sendText(toJson(Map.of("event", "stop")), true); } catch (Exception ignored) { }
+            try { ws.sendText(AiAssistJson.toJson(Map.of("event", "stop")), true); } catch (Exception ignored) { }
             safeCloseWs(ws);
 
             return buildSmokeReport(aiAssistantId, source, wss, ack, System.currentTimeMillis() - t0);
         } catch (TimeoutException te) {
             safeCloseWs(ws);
-            return errorJson("start_ack_timeout",
+            return AiAssistJson.errorJson("start_ack_timeout",
                     "No start_ack within timeout. Assistant may not be LIVE, or 'chat' channel is not enabled.",
                     Map.of("data_pipe_url", wss, "elapsed_ms", System.currentTimeMillis() - t0));
         } catch (Exception e) {
             safeCloseWs(ws);
             Throwable cause = (e.getCause() != null) ? e.getCause() : e;
-            return errorJson("handshake_error", cause.getClass().getSimpleName() + ": " + cause.getMessage(),
+            return AiAssistJson.errorJson("handshake_error", cause.getClass().getSimpleName() + ": " + cause.getMessage(),
                     Map.of("data_pipe_url", wss));
         }
     }
@@ -707,7 +686,7 @@ public class AiAssistService {
         out.put("elapsed_ms", elapsedMs);
         out.put("note", "Transport-level proof only. Suggestions require the conversation-events socket "
                 + "(AI Assist UI Test Chat). If ok=false, inspect start_ack.status/message.");
-        return toJson(out);
+        return AiAssistJson.toJson(out);
     }
 
     @Tool(name = "exotel_aiassist_list_asr_providers",
@@ -741,7 +720,7 @@ public class AiAssistService {
         out.put("languages", new java.util.ArrayList<>(LLM_LANGUAGE_NAMES));
         out.put("default", "English");
         out.put("hint", "Send the display name verbatim as llmLanguage on update_assistant. Case-insensitive.");
-        return toJson(out);
+        return AiAssistJson.toJson(out);
     }
 
     /**
@@ -788,119 +767,6 @@ public class AiAssistService {
     }
 
     // ======================== updateAssistant validators ========================
-    // Extracted to keep the tool method focused on orchestration. Each helper either returns
-    // an errorJson string (which the caller must propagate) or null on success. When a helper
-    // mutates parsedConfig (autofills, overrides), that's called out on the method itself.
-
-    /**
-     * Full-body validation of the generalConfig object: mask_sensitive_data + pii_redaction_prompts,
-     * live_transcript / user_sentiment, suggestions.{enabled, max_words_per_reply, feedback_enabled},
-     * and disposition_config (Ameyo sources only; stripped for exolite).
-     * Mutates parsedConfig: removes disposition_config for exolite so it doesn't leak to backend.
-     */
-    private String validateGeneralConfig(Map<String, Object> parsedConfig, String source) {
-        String err = validatePiiRedaction(parsedConfig);
-        if (err != null) return err;
-        err = validateTranscriptAndSentimentToggles(parsedConfig);
-        if (err != null) return err;
-        err = validateSuggestions(parsedConfig);
-        if (err != null) return err;
-        return validateDispositionConfigForSource(parsedConfig, source);
-    }
-
-    private String validatePiiRedaction(Map<String, Object> parsedConfig) {
-        if (!(parsedConfig.get("mask_sensitive_data") instanceof Boolean)) {
-            return errorJson("mask_sensitive_data_required",
-                    "generalConfig.mask_sensitive_data (bool) is required. AI Assist UI label 'Mask Sensitive Data'. "
-                  + "Ask the user; AI Assist UI default is TRUE. When TRUE, also collect pii_redaction_prompts.");
-        }
-        if (!(Boolean) parsedConfig.get("mask_sensitive_data")) return null;
-
-        Object promptsObj = parsedConfig.get("pii_redaction_prompts");
-        if (!(promptsObj instanceof List<?> prompts) || prompts.isEmpty()) {
-            return errorJson("pii_redaction_prompts_required",
-                    "mask_sensitive_data=TRUE, so generalConfig.pii_redaction_prompts (non-empty array of 10\u2013500 char strings) is required. "
-                  + "ASK THE USER for concrete redaction rules. Examples: 'Redact 10-digit Indian phone numbers', "
-                  + "'Redact 6-digit OTPs', 'Redact PAN and Aadhaar numbers'. Do NOT invent them silently.");
-        }
-        if (prompts.size() > 20) {
-            return errorJson("pii_redaction_prompts_too_many",
-                    "pii_redaction_prompts max 20 items (got " + prompts.size() + ").");
-        }
-        for (Object p : prompts) {
-            if (!(p instanceof String s) || s.trim().length() < 10 || s.trim().length() > 500) {
-                return errorJson("pii_redaction_prompt_invalid",
-                        "Each pii_redaction_prompt must be a string 10\u2013500 chars. Bad entry: " + p);
-            }
-        }
-        return null;
-    }
-
-    private String validateTranscriptAndSentimentToggles(Map<String, Object> parsedConfig) {
-        if (!(parsedConfig.get("live_transcript") instanceof Boolean)) {
-            return errorJson("live_transcript_required",
-                    "generalConfig.live_transcript (bool) is required. AI Assist UI label 'Real Time Transcription'. Default TRUE.");
-        }
-        if (!(parsedConfig.get("user_sentiment") instanceof Boolean)) {
-            return errorJson("user_sentiment_required",
-                    "generalConfig.user_sentiment (bool) is required. AI Assist UI label 'Real Time Sentiments'. Default TRUE.");
-        }
-        return null;
-    }
-
-    private String validateSuggestions(Map<String, Object> parsedConfig) {
-        if (!(parsedConfig.get("suggestions") instanceof Map<?, ?> sRaw)) {
-            return errorJson("suggestions_required",
-                    "generalConfig.suggestions object is required. Shape: "
-                  + "{enabled: bool, max_words_per_reply: int \u226510, feedback_enabled: bool}. AI Assist UI default enabled=TRUE.");
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> suggestions = (Map<String, Object>) sRaw;
-        if (!(suggestions.get("enabled") instanceof Boolean)) {
-            return errorJson("suggestions_enabled_required",
-                    "generalConfig.suggestions.enabled (bool) is required. AI Assist UI label 'Real Time Smart Reply'.");
-        }
-        if (!(Boolean) suggestions.get("enabled")) return null;
-
-        Object mw = suggestions.get("max_words_per_reply");
-        if (!(mw instanceof Number mwn) || mwn.intValue() < 10) {
-            return errorJson("max_words_per_reply_required",
-                    "suggestions.enabled=TRUE, so generalConfig.suggestions.max_words_per_reply (int \u2265 10) is required. "
-                  + "ASK THE USER \u2014 AI Assist UI default is 20 but the user should get to choose.");
-        }
-        if (!(suggestions.get("feedback_enabled") instanceof Boolean)) {
-            return errorJson("feedback_enabled_required",
-                    "suggestions.enabled=TRUE, so generalConfig.suggestions.feedback_enabled (bool) is required. "
-                  + "AI Assist UI label 'Smart Reply Feedback'. Default FALSE. When TRUE, feedback options default to "
-                  + "['Irrelevant','Wrong','Outdated'] but can be overridden with up to 3 custom labels (\u2264 15 chars each).");
-        }
-        return null;
-    }
-
-    /** Ameyo sources REQUIRE disposition_config; exolite hides it in the AI Assist UI so we strip it. */
-    private String validateDispositionConfigForSource(Map<String, Object> parsedConfig, String source) {
-        boolean sourceShowsDisposition = "ameyo_6x".equals(source) || "ameyo_6_0".equals(source);
-        if (!sourceShowsDisposition) {
-            parsedConfig.remove("disposition_config");
-            return null;
-        }
-        if (!(parsedConfig.get("disposition_config") instanceof Map<?, ?> dcRaw)) {
-            return errorJson("disposition_config_required",
-                    "source='" + source + "' shows 'Disposition Suggestions' in the AI Assist UI \u2014 "
-                  + "generalConfig.disposition_config object is required. Shape: "
-                  + "{disposition: bool, notes: bool, allow_agent_edit_notes: bool}. All default FALSE.");
-        }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> dc = (Map<String, Object>) dcRaw;
-        for (String k : List.of("disposition", "notes", "allow_agent_edit_notes")) {
-            if (!(dc.get(k) instanceof Boolean)) {
-                return errorJson("disposition_config_" + k + "_required",
-                        "disposition_config." + k + " (bool) is required for source " + source + ".");
-            }
-        }
-        return null;
-    }
-
     /** Overwrite ASR/language fields on parsedConfig from tool args so the LLM can't inject conflicting values. */
     private void overrideAsrAndLanguageFields(Map<String, Object> parsedConfig, String asrProviderId,
                                               String sttLanguage, String llmLanguage, String asrModelId) {
@@ -941,7 +807,7 @@ public class AiAssistService {
     public String getAgent(String agentId) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(agentId)) return errorJson("invalid_argument", "agentId invalid");
+        if (!AiAssistGuards.isValidId(agentId)) return AiAssistJson.errorJson("invalid_argument", "agentId invalid");
         AuthCredentials creds = AuthContext.current();
         return getJson(creds, "/agents/" + agentId, null);
     }
@@ -960,11 +826,11 @@ public class AiAssistService {
         if (from != null && !from.isBlank()) qp.put("from", from);
         if (to != null && !to.isBlank()) qp.put("to", to);
         if (assistantId != null && !assistantId.isBlank()) {
-            if (!validId(assistantId)) return errorJson("invalid_argument", "assistantId invalid");
+            if (!AiAssistGuards.isValidId(assistantId)) return AiAssistJson.errorJson("invalid_argument", "assistantId invalid");
             qp.put("assistant_id", assistantId);
         }
         if (agentId != null && !agentId.isBlank()) {
-            if (!validId(agentId)) return errorJson("invalid_argument", "agentId invalid");
+            if (!AiAssistGuards.isValidId(agentId)) return AiAssistJson.errorJson("invalid_argument", "agentId invalid");
             qp.put("agent_id", agentId);
         }
         return getJson(creds, "/interactions", qp);
@@ -981,10 +847,10 @@ public class AiAssistService {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
         if (interactionId == null || interactionId.isBlank()) {
-            return errorJson("invalid_argument", "interactionId is required");
+            return AiAssistJson.errorJson("invalid_argument", "interactionId is required");
         }
-        if (!validId(interactionId)) {
-            return errorJson("invalid_argument", "interactionId invalid (expected 1-128 chars, [a-zA-Z0-9_-])");
+        if (!AiAssistGuards.isValidId(interactionId)) {
+            return AiAssistJson.errorJson("invalid_argument", "interactionId invalid (expected 1-128 chars, [a-zA-Z0-9_-])");
         }
         AuthCredentials creds = AuthContext.current();
         return getJson(creds, "/interactions/" + interactionId, null);
@@ -1036,15 +902,15 @@ public class AiAssistService {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
         if (name == null || name.isBlank()) {
-            return errorJson("invalid_argument", "name is required");
+            return AiAssistJson.errorJson("invalid_argument", "name is required");
         }
         if (description == null || description.isBlank()) {
-            return errorJson("description_required",
+            return AiAssistJson.errorJson("description_required",
                     "description is required. It should explain in plain English what the assistant does. "
                   + "If the user didn't specify one, ASK them before retrying \u2014 don't invent it.");
         }
         if (description.trim().length() < 20) {
-            return errorJson("description_too_short",
+            return AiAssistJson.errorJson("description_too_short",
                     "description must be at least 20 characters. Ask the user for a fuller sentence "
                   + "describing what the assistant should do.");
         }
@@ -1060,7 +926,7 @@ public class AiAssistService {
         String result = sendJson(creds, HttpMethod.POST, "/ai-assistants", null, body);
         if (looksLikeNameConflict(result)) {
             logger.info("create_assistant name '{}' triggered name_conflict rewrite", name);
-            return errorJson("name_conflict",
+            return AiAssistJson.errorJson("name_conflict",
                     "AI Assist rejected the name (likely conflict with an existing or archived assistant of the same name). "
                   + "Ask the user for a different name and retry. Note: archived assistants also reserve their name.",
                     Map.of("original_name", name.trim(), "backend_hint", "500 rollback / unique constraint"));
@@ -1146,25 +1012,25 @@ public class AiAssistService {
                                   Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
-        if (name == null || name.isBlank()) return errorJson("invalid_argument", "name is required");
-        if (source == null || source.isBlank()) return errorJson("invalid_argument", "source is required");
-        if (!VALID_SOURCES.contains(source)) {
-            return errorJson("invalid_argument",
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
+        if (name == null || name.isBlank()) return AiAssistJson.errorJson("invalid_argument", "name is required");
+        if (source == null || source.isBlank()) return AiAssistJson.errorJson("invalid_argument", "source is required");
+        if (!AiAssistGuards.VALID_SOURCES.contains(source)) {
+            return AiAssistJson.errorJson("invalid_argument",
                     "source '" + source + "' is not supported. Pick one of: "
                   + "ameyo_6x (Ameyo 6.x LEGS), ameyo_6_0 (Ameyo 6.0), exolite (Exotel Platform).");
         }
         if (status == null || !status.matches("DRAFT|LIVE|DEACTIVATED")) {
-            return errorJson("invalid_argument", "status must be one of DRAFT, LIVE, DEACTIVATED");
+            return AiAssistJson.errorJson("invalid_argument", "status must be one of DRAFT, LIVE, DEACTIVATED");
         }
         if (description == null || description.isBlank()) {
-            return errorJson("description_required",
+            return AiAssistJson.errorJson("description_required",
                     "description is required. update_assistant is a full PUT \u2014 sending blank would wipe the "
                   + "existing description. If you don't have one, first call get_assistant, reuse its description, "
                   + "or ask the user for a new one.");
         }
         if (description.trim().length() < 20) {
-            return errorJson("description_too_short",
+            return AiAssistJson.errorJson("description_too_short",
                     "description must be at least 20 characters. Ask the user for a fuller sentence "
                   + "describing what the assistant should do.");
         }
@@ -1173,31 +1039,31 @@ public class AiAssistService {
         if (channels.size() == 1 && "both".equalsIgnoreCase(channels.get(0))) {
             channels = List.of("voice", "chat");
         }
-        if (channels.isEmpty()) return errorJson("invalid_argument", "supportedChannels must be a non-empty list. Pass \"voice\", \"chat\", \"both\", \"voice,chat\", or [\"voice\",\"chat\"].");
+        if (channels.isEmpty()) return AiAssistJson.errorJson("invalid_argument", "supportedChannels must be a non-empty list. Pass \"voice\", \"chat\", \"both\", \"voice,chat\", or [\"voice\",\"chat\"].");
         java.util.Set<String> validChannels = java.util.Set.of("voice", "chat");
         for (String ch : channels) {
             if (!validChannels.contains(ch.toLowerCase())) {
-                return errorJson("invalid_argument",
+                return AiAssistJson.errorJson("invalid_argument",
                         "supportedChannels: '" + ch + "' is not a valid channel. Only 'voice' and 'chat' are accepted. Use \"both\" as shorthand for voice+chat.");
             }
         }
 
         if (asrProviderId == null || asrProviderId.isBlank()) {
-            return errorJson("asr_provider_required",
+            return AiAssistJson.errorJson("asr_provider_required",
                     "asrProviderId is required. The AI Assist UI labels this 'Transcript Model'. Call exotel_aiassist_list_asr_providers, "
                   + "show the user ElevenLabs vs Azure, and pass the chosen provider's UUID here.");
         }
-        if (!validId(asrProviderId.trim())) {
-            return errorJson("invalid_argument",
+        if (!AiAssistGuards.isValidId(asrProviderId.trim())) {
+            return AiAssistJson.errorJson("invalid_argument",
                     "asrProviderId must be a UUID from exotel_aiassist_list_asr_providers (do not invent one). Got: " + asrProviderId);
         }
         if (sttLanguage == null || sttLanguage.isBlank()) {
-            return errorJson("stt_language_required",
+            return AiAssistJson.errorJson("stt_language_required",
                     "sttLanguage is required. AI Assist UI label 'Transcription language'. For ElevenLabs: AUTO | ENG | HIN | ARA. "
                   + "For Azure: locale like en-in, en-us, hi-in, ta-in.");
         }
         if (llmLanguage == null || llmLanguage.isBlank()) {
-            return errorJson("llm_language_required",
+            return AiAssistJson.errorJson("llm_language_required",
                     "llmLanguage is required. AI Assist UI label 'Assistant suggestions language'. Call exotel_aiassist_list_llm_suggestion_languages "
                   + "for the full 80-language dropdown, show the user, and pass the chosen display NAME (e.g. English, Hindi, Telugu, Tamil).");
         }
@@ -1216,15 +1082,15 @@ public class AiAssistService {
                     if (suggestions.size() == 5) break;
                 }
             }
-            return errorJson("llm_language_not_in_dropdown",
+            return AiAssistJson.errorJson("llm_language_not_in_dropdown",
                     "llmLanguage '" + llmLanguage + "' is not one of the 80 options in the AI Assist UI 'Assistant suggestions language' dropdown. "
                   + (suggestions.isEmpty()
                         ? "Call exotel_aiassist_list_llm_suggestion_languages, show the user the full list, and ask them to pick one."
                         : "Did the user mean one of: " + String.join(", ", suggestions) + " ? Otherwise call exotel_aiassist_list_llm_suggestion_languages and show the full list.")
                   );
         }
-        if (asrModelId != null && !asrModelId.isBlank() && !validId(asrModelId.trim())) {
-            return errorJson("invalid_argument", "asrModelId, if provided, must be a UUID. Got: " + asrModelId);
+        if (asrModelId != null && !asrModelId.isBlank() && !AiAssistGuards.isValidId(asrModelId.trim())) {
+            return AiAssistJson.errorJson("invalid_argument", "asrModelId, if provided, must be a UUID. Got: " + asrModelId);
         }
 
         AuthCredentials creds = AuthContext.current();
@@ -1235,7 +1101,7 @@ public class AiAssistService {
         // Must match AI Assist UI supported STT locale codes.
         String vendor = resolveAsrProviderVendor(creds, asrProviderId.trim());
         if (vendor == null) {
-            return errorJson("asr_provider_not_found",
+            return AiAssistJson.errorJson("asr_provider_not_found",
                     "asrProviderId '" + asrProviderId + "' was not found under /asr/providers for this account. "
                   + "Call exotel_aiassist_list_asr_providers and pick a real one.");
         }
@@ -1244,15 +1110,15 @@ public class AiAssistService {
         if ("elevenlabs".equals(vendorLower)) {
             String upper = sttTrim.toUpperCase();
             if (!java.util.Set.of("AUTO", "ENG", "HIN", "ARA").contains(upper)) {
-                return errorJson("stt_language_invalid_for_provider",
+                return AiAssistJson.errorJson("stt_language_invalid_for_provider",
                         "sttLanguage '" + sttLanguage + "' is not valid for ElevenLabs. "
                       + "ElevenLabs accepts exactly one of: AUTO | ENG | HIN | ARA (uppercase 3-letter codes; AUTO = auto-detect). "
                       + "AI Assist UI default is ENG. If the user wants an Azure locale like 'en-in', they need to switch asrProviderId to the Azure UUID first.");
             }
             sttTrim = upper;
         } else {
-            if (!AZURE_LOCALE_PATTERN.matcher(sttTrim).matches()) {
-                return errorJson("stt_language_invalid_for_provider",
+            if (!AiAssistGuards.AZURE_LOCALE_PATTERN.matcher(sttTrim).matches()) {
+                return AiAssistJson.errorJson("stt_language_invalid_for_provider",
                         "sttLanguage '" + sttLanguage + "' is not a valid Azure locale. "
                       + "Azure accepts locales in the form 'll-CC' (e.g. en-in, en-us, hi-in, ta-in, te-in, bn-in, mr-in). "
                       + "AI Assist UI default is 'en-in'. If the user wants an ElevenLabs code like 'ENG', they need to switch asrProviderId to the ElevenLabs UUID first.");
@@ -1263,11 +1129,11 @@ public class AiAssistService {
         try {
             parsedConfig = parseJsonObject(generalConfig);
         } catch (Exception e) {
-            return errorJson("invalid_argument", "generalConfig must be a JSON object: " + e.getMessage());
+            return AiAssistJson.errorJson("invalid_argument", "generalConfig must be a JSON object: " + e.getMessage());
         }
         if (parsedConfig == null) parsedConfig = new LinkedHashMap<>();
 
-        String configErr = validateGeneralConfig(parsedConfig, source.trim());
+        String configErr = AiAssistGuards.validateGeneralConfig(parsedConfig, source.trim());
         if (configErr != null) return configErr;
 
         overrideAsrAndLanguageFields(parsedConfig, asrProviderId.trim(), sttTrim, llmLangNorm, asrModelId);
@@ -1301,7 +1167,7 @@ public class AiAssistService {
     public String archiveAssistant(String aiAssistantId, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "archive_assistant");
@@ -1319,7 +1185,7 @@ public class AiAssistService {
     public String deleteAssistant(String aiAssistantId, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "delete_assistant");
@@ -1344,7 +1210,7 @@ public class AiAssistService {
     public String publishAssistant(String aiAssistantId, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(aiAssistantId)) return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "publish_assistant");
@@ -1356,14 +1222,14 @@ public class AiAssistService {
         try {
             Map<String, Object> parsed = parseJsonObject(currentRaw);
             Object resp = parsed.get("response");
-            if (!(resp instanceof Map)) return errorJson("upstream_shape_error", "GET response missing 'response' object");
+            if (!(resp instanceof Map)) return AiAssistJson.errorJson("upstream_shape_error", "GET response missing 'response' object");
             Object data = ((Map<?, ?>) resp).get("data");
-            if (!(data instanceof Map)) return errorJson("upstream_shape_error", "GET response missing 'response.data' object");
+            if (!(data instanceof Map)) return AiAssistJson.errorJson("upstream_shape_error", "GET response missing 'response.data' object");
             @SuppressWarnings("unchecked")
             Map<String, Object> dataMap = (Map<String, Object>) data;
             current = dataMap;
         } catch (Exception e) {
-            return errorJson("upstream_parse_error", "Failed to parse current assistant JSON: " + e.getMessage());
+            return AiAssistJson.errorJson("upstream_parse_error", "Failed to parse current assistant JSON: " + e.getMessage());
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -1400,7 +1266,7 @@ public class AiAssistService {
                     + aiAssistantId + (srcStr != null ? " source=" + srcStr : "") + " and give the returned url to the user.");
         }
         publishParsed.put("stream_urls", streamBlock);
-        return toJson(publishParsed);
+        return AiAssistJson.toJson(publishParsed);
     }
 
     // ---- Custom description templates ----
@@ -1412,8 +1278,8 @@ public class AiAssistService {
     public String createCustomTemplate(String name, String content, String category, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (name == null || name.isBlank()) return errorJson("invalid_argument", "name is required");
-        if (content == null || content.isBlank()) return errorJson("invalid_argument", "content is required");
+        if (name == null || name.isBlank()) return AiAssistJson.errorJson("invalid_argument", "name is required");
+        if (content == null || content.isBlank()) return AiAssistJson.errorJson("invalid_argument", "content is required");
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "create_custom_template");
@@ -1434,11 +1300,11 @@ public class AiAssistService {
     public String updateCustomTemplate(String templateId, String name, String content, String category, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(templateId)) return errorJson("invalid_argument", "templateId invalid");
+        if (!AiAssistGuards.isValidId(templateId)) return AiAssistJson.errorJson("invalid_argument", "templateId invalid");
         boolean anyField = (name != null && !name.isBlank())
                         || (content != null && !content.isBlank())
                         || (category != null && !category.isBlank());
-        if (!anyField) return errorJson("invalid_argument", "Provide at least one of name/content/category to update");
+        if (!anyField) return AiAssistJson.errorJson("invalid_argument", "Provide at least one of name/content/category to update");
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "update_custom_template");
@@ -1461,7 +1327,7 @@ public class AiAssistService {
     public String deleteCustomTemplate(String templateId, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (!validId(templateId)) return errorJson("invalid_argument", "templateId invalid");
+        if (!AiAssistGuards.isValidId(templateId)) return AiAssistJson.errorJson("invalid_argument", "templateId invalid");
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "delete_custom_template");
@@ -1490,10 +1356,10 @@ public class AiAssistService {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
         if (aiAssistantId == null || aiAssistantId.isBlank()) {
-            return errorJson("invalid_argument", "aiAssistantId is required");
+            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId is required");
         }
-        if (!validId(aiAssistantId)) {
-            return errorJson("invalid_argument", "aiAssistantId invalid (expected 1-128 chars, [a-zA-Z0-9_-])");
+        if (!AiAssistGuards.isValidId(aiAssistantId)) {
+            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid (expected 1-128 chars, [a-zA-Z0-9_-])");
         }
         AuthCredentials creds = AuthContext.current();
 
@@ -1518,7 +1384,7 @@ public class AiAssistService {
             // otherwise the LLM might jump ahead into the applet flow while the create wizard is
             // still mid-conversation.
             if (status != null && !"LIVE".equalsIgnoreCase(status)) {
-                return errorJson("assistant_not_live",
+                return AiAssistJson.errorJson("assistant_not_live",
                         "Assistant status is '" + status + "', not LIVE. This is a post-publish helper \u2014 "
                       + "finish STEP 1 (create) \u2192 STEP 2 (update_assistant) \u2192 STEP 3 (publish_assistant) first, "
                       + "then come back and offer the applet template. Do NOT ask the user about group / dial destination "
@@ -1526,13 +1392,13 @@ public class AiAssistService {
             }
 
         } catch (Exception e) {
-            return errorJson("backend_parse_error", "Failed to parse assistant response: " + e.getMessage());
+            return AiAssistJson.errorJson("backend_parse_error", "Failed to parse assistant response: " + e.getMessage());
         }
         // Build (don't GET) the stream-urls endpoint, matching the assistant's source. CPaaS calls it at
         // connect time with runtime custom params (call_sid, etc.), so we never GET it here.
         wssUrl = buildStreamUrl(creds, aiAssistantId, source, false);
         if (wssUrl == null || wssUrl.isBlank()) {
-            return errorJson("stream_url_missing",
+            return AiAssistJson.errorJson("stream_url_missing",
                     "Could not build stream URL for assistant " + aiAssistantId + " (invalid account sid).");
         }
 
@@ -1621,14 +1487,14 @@ public class AiAssistService {
                     "For CPaaS App Bazaar (dial-to-group) flows, re-create the assistant with source=exolite and re-run this tool \u2014 that path is fully paste-ready from MCP.",
                     "The stream URL already carries ?source=" + source + "; do not append another source param."
             ));
-            return toJson(resp);
+            return AiAssistJson.toJson(resp);
         }
         resp.put("notes", List.of(
                 "CPaaS App Bazaar has no self-serve create API today \u2014 paste is the only path.",
                 "The stream URL already carries ?source=<platform>; do not append another source param.",
                 "Regenerate this template if the assistant is re-published (version number is baked into the URL path)."
         ));
-        return toJson(resp);
+        return AiAssistJson.toJson(resp);
     }
 
     // ---- Utility (AI-assisted, non-mutating on our side) ----
@@ -1641,7 +1507,7 @@ public class AiAssistService {
     public String improveDescription(String description) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (description == null || description.isBlank()) return errorJson("invalid_argument", "description is required");
+        if (description == null || description.isBlank()) return AiAssistJson.errorJson("invalid_argument", "description is required");
         AuthCredentials creds = AuthContext.current();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("description", description);
@@ -1661,15 +1527,15 @@ public class AiAssistService {
     public String detachAttachment(String aiAssistantId, String attachmentIds, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (aiAssistantId == null || aiAssistantId.isBlank() || !validId(aiAssistantId)) {
-            return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (aiAssistantId == null || aiAssistantId.isBlank() || !AiAssistGuards.isValidId(aiAssistantId)) {
+            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         }
         List<String> ids = parseCsvOrJsonArray(attachmentIds);
         if (ids.isEmpty()) {
-            return errorJson("invalid_argument", "attachmentIds is required (comma-separated or JSON array)");
+            return AiAssistJson.errorJson("invalid_argument", "attachmentIds is required (comma-separated or JSON array)");
         }
         for (String id : ids) {
-            if (!validId(id)) return errorJson("invalid_argument", "attachmentId '" + id + "' invalid");
+            if (!AiAssistGuards.isValidId(id)) return AiAssistJson.errorJson("invalid_argument", "attachmentId '" + id + "' invalid");
         }
 
         AuthCredentials creds = AuthContext.current();
@@ -1695,43 +1561,43 @@ public class AiAssistService {
     public String updateKbFileDescriptions(String aiAssistantId, String descriptionsJson, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (aiAssistantId == null || aiAssistantId.isBlank() || !validId(aiAssistantId)) {
-            return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (aiAssistantId == null || aiAssistantId.isBlank() || !AiAssistGuards.isValidId(aiAssistantId)) {
+            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         }
         if (descriptionsJson == null || descriptionsJson.isBlank()) {
-            return errorJson("invalid_argument", "descriptionsJson is required (JSON object mapping filename -> description)");
+            return AiAssistJson.errorJson("invalid_argument", "descriptionsJson is required (JSON object mapping filename -> description)");
         }
 
         Map<String, String> descriptions;
         try {
             JsonNode node = objectMapper.readTree(descriptionsJson);
             if (!node.isObject()) {
-                return errorJson("invalid_argument", "descriptionsJson must be a JSON object, not " + node.getNodeType());
+                return AiAssistJson.errorJson("invalid_argument", "descriptionsJson must be a JSON object, not " + node.getNodeType());
             }
             descriptions = new LinkedHashMap<>();
             Iterator<Map.Entry<String, JsonNode>> it = node.fields();
             while (it.hasNext()) {
                 Map.Entry<String, JsonNode> e = it.next();
                 if (!e.getValue().isTextual()) {
-                    return errorJson("invalid_argument",
+                    return AiAssistJson.errorJson("invalid_argument",
                             "descriptionsJson value for '" + e.getKey() + "' must be a string");
                 }
                 String filename = e.getKey();
                 String desc = e.getValue().asText();
                 if (filename == null || filename.isBlank()) {
-                    return errorJson("invalid_argument", "descriptionsJson has an empty filename key");
+                    return AiAssistJson.errorJson("invalid_argument", "descriptionsJson has an empty filename key");
                 }
                 if (desc == null || desc.isBlank()) {
-                    return errorJson("invalid_argument",
+                    return AiAssistJson.errorJson("invalid_argument",
                             "descriptionsJson value for '" + filename + "' is blank \u2014 ask the user for the doc's purpose");
                 }
                 descriptions.put(filename, desc);
             }
         } catch (Exception e) {
-            return errorJson("invalid_argument", "descriptionsJson is not valid JSON: " + e.getMessage());
+            return AiAssistJson.errorJson("invalid_argument", "descriptionsJson is not valid JSON: " + e.getMessage());
         }
         if (descriptions.isEmpty()) {
-            return errorJson("invalid_argument", "descriptionsJson must contain at least one filename -> description entry");
+            return AiAssistJson.errorJson("invalid_argument", "descriptionsJson must contain at least one filename -> description entry");
         }
 
         AuthCredentials creds = AuthContext.current();
@@ -1742,7 +1608,7 @@ public class AiAssistService {
         try {
             serialized = objectMapper.writeValueAsString(descriptions);
         } catch (Exception e) {
-            return errorJson("serialization_error", "Failed to serialize descriptions map: " + e.getMessage());
+            return AiAssistJson.errorJson("serialization_error", "Failed to serialize descriptions map: " + e.getMessage());
         }
 
         return sendUploadJobsPatch(creds, aiAssistantId, serialized);
@@ -1750,8 +1616,8 @@ public class AiAssistService {
 
     private String sendUploadJobsPatch(AuthCredentials creds, String aiAssistantId, String descriptionJson) {
         String accountSid = effectiveAccountSid(creds);
-        if (!ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) {
-            return errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
+        if (!AiAssistGuards.ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) {
+            return AiAssistJson.errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
         }
         String baseUrl = creds.effectiveAiAssistBaseUrl(null);
         String contextPath = creds.effectiveAiAssistContextPath(CONTEXT_PATH);
@@ -1777,16 +1643,16 @@ public class AiAssistService {
             ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.PATCH, entity, String.class);
             return resp.getBody() != null ? resp.getBody() : "{}";
         } catch (HttpClientErrorException e) {
-            logger.warn("AI Assist upload-jobs client error {} on {}: {}", e.getStatusCode(), url, safeBodySnippet(e.getResponseBodyAsString()));
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode(),
-                    Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
+            logger.warn("AI Assist upload-jobs client error {} on {}: {}", e.getStatusCode(), url, AiAssistJson.safeBodySnippet(e.getResponseBodyAsString()));
+            return AiAssistJson.errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode(),
+                    Map.of("body", AiAssistJson.safeBodySnippet(e.getResponseBodyAsString())));
         } catch (HttpServerErrorException e) {
             logger.warn("AI Assist upload-jobs server error {} on {}", e.getStatusCode(), url);
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode(),
-                    Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
+            return AiAssistJson.errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode(),
+                    Map.of("body", AiAssistJson.safeBodySnippet(e.getResponseBodyAsString())));
         } catch (Exception e) {
             logger.error("AI Assist upload-jobs call failed", e);
-            return errorJson("network_error", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return AiAssistJson.errorJson("network_error", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
@@ -1806,17 +1672,17 @@ public class AiAssistService {
     public String attachAttachmentFromUrl(String aiAssistantId, String fileUrl, String filename, String description, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (aiAssistantId == null || aiAssistantId.isBlank() || !validId(aiAssistantId)) {
-            return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (aiAssistantId == null || aiAssistantId.isBlank() || !AiAssistGuards.isValidId(aiAssistantId)) {
+            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         }
         if (fileUrl == null || fileUrl.isBlank()) {
-            return errorJson("invalid_argument", "fileUrl is required");
+            return AiAssistJson.errorJson("invalid_argument", "fileUrl is required");
         }
         String descCheck = validateAttachmentDescription(description);
         if (descCheck != null) return descCheck;
 
-        String urlCheck = validateFetchUrl(fileUrl);
-        if (urlCheck != null) return errorJson("invalid_url", urlCheck);
+        String urlCheck = AiAssistGuards.validateFetchUrl(fileUrl);
+        if (urlCheck != null) return AiAssistJson.errorJson("invalid_url", urlCheck);
 
         AuthCredentials creds = AuthContext.current();
         String gate = requireWritePermission(creds, confirm, "attach_attachment_from_url");
@@ -1827,39 +1693,39 @@ public class AiAssistService {
         try {
             // SSRF guard: auto-redirect is DISABLED so a 302 cannot silently jump to an internal
             // host after the initial validation. We follow redirects manually and re-run
-            // validateFetchUrl() on every hop (incl. the redirect target), so private/loopback/
+            // AiAssistGuards.validateFetchUrl() on every hop (incl. the redirect target), so private/loopback/
             // link-local and non-https targets are rejected even mid-redirect-chain.
             RestTemplate downloader = createRestTemplate(true, false);
             String currentUrl = fileUrl;
             ResponseEntity<byte[]> dl;
             int hops = 0;
             while (true) {
-                String hopCheck = validateFetchUrl(currentUrl);
-                if (hopCheck != null) return errorJson("invalid_url", hopCheck);
+                String hopCheck = AiAssistGuards.validateFetchUrl(currentUrl);
+                if (hopCheck != null) return AiAssistJson.errorJson("invalid_url", hopCheck);
                 dl = downloader.getForEntity(currentUrl, byte[].class);
                 if (!dl.getStatusCode().is3xxRedirection()) break;
                 if (++hops > MAX_DOWNLOAD_REDIRECTS) {
-                    return errorJson("too_many_redirects",
+                    return AiAssistJson.errorJson("too_many_redirects",
                             "Source URL exceeded " + MAX_DOWNLOAD_REDIRECTS + " redirects");
                 }
                 URI location = dl.getHeaders().getLocation();
                 if (location == null) {
-                    return errorJson("download_failed", "Redirect (" + dl.getStatusCode() + ") without Location header");
+                    return AiAssistJson.errorJson("download_failed", "Redirect (" + dl.getStatusCode() + ") without Location header");
                 }
                 currentUrl = URI.create(currentUrl).resolve(location).toString();
             }
             if (!dl.getStatusCode().is2xxSuccessful() || dl.getBody() == null) {
-                return errorJson("download_failed", "Non-2xx from source URL: " + dl.getStatusCode());
+                return AiAssistJson.errorJson("download_failed", "Non-2xx from source URL: " + dl.getStatusCode());
             }
             bytes = dl.getBody();
             if (bytes.length > MAX_ATTACHMENT_BYTES) {
-                return errorJson("file_too_large", "File > 25MB (" + bytes.length + " bytes)");
+                return AiAssistJson.errorJson("file_too_large", "File > 25MB (" + bytes.length + " bytes)");
             }
             effectiveName = (filename != null && !filename.isBlank())
                     ? filename
                     : filenameFromUrl(fileUrl);
         } catch (Exception e) {
-            return errorJson("download_error", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return AiAssistJson.errorJson("download_error", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
         ByteArrayResource resource = namedByteResource(bytes, effectiveName);
@@ -1885,11 +1751,11 @@ public class AiAssistService {
     public String attachAttachmentFromFile(String aiAssistantId, String filePath, String description, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;
-        if (aiAssistantId == null || aiAssistantId.isBlank() || !validId(aiAssistantId)) {
-            return errorJson("invalid_argument", "aiAssistantId invalid");
+        if (aiAssistantId == null || aiAssistantId.isBlank() || !AiAssistGuards.isValidId(aiAssistantId)) {
+            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
         }
         if (filePath == null || filePath.isBlank()) {
-            return errorJson("invalid_argument", "filePath is required");
+            return AiAssistJson.errorJson("invalid_argument", "filePath is required");
         }
         String descCheck = validateAttachmentDescription(description);
         if (descCheck != null) return descCheck;
@@ -1898,13 +1764,13 @@ public class AiAssistService {
         try {
             path = Paths.get(filePath).toAbsolutePath().normalize();
         } catch (Exception e) {
-            return errorJson("invalid_path", "filePath is not a valid path: " + e.getMessage());
+            return AiAssistJson.errorJson("invalid_path", "filePath is not a valid path: " + e.getMessage());
         }
         if (!Files.exists(path)) {
-            return errorJson("file_not_found", "No file at " + path);
+            return AiAssistJson.errorJson("file_not_found", "No file at " + path);
         }
         if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-            return errorJson("file_not_readable", "Not a readable regular file: " + path);
+            return AiAssistJson.errorJson("file_not_readable", "Not a readable regular file: " + path);
         }
 
         AuthCredentials creds = AuthContext.current();
@@ -1915,11 +1781,11 @@ public class AiAssistService {
         try {
             long size = Files.size(path);
             if (size > MAX_ATTACHMENT_BYTES) {
-                return errorJson("file_too_large", "File > 25MB (" + size + " bytes)");
+                return AiAssistJson.errorJson("file_too_large", "File > 25MB (" + size + " bytes)");
             }
             bytes = Files.readAllBytes(path);
         } catch (Exception e) {
-            return errorJson("file_read_error", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return AiAssistJson.errorJson("file_read_error", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
         String fileName = path.getFileName().toString();
@@ -1930,18 +1796,18 @@ public class AiAssistService {
 
     private String validateAttachmentDescription(String description) {
         if (description == null || description.isBlank()) {
-            return errorJson("description_required",
+            return AiAssistJson.errorJson("description_required",
                     "description is required. The AI Assist UI blocks attachment uploads when any file lacks a description. "
                   + "Ask the user for a one-liner explaining what this document is about (e.g. 'On-call debugging playbook', "
                   + "'AWS runbook for Ameyo QA'). Min 10 chars, max 500.");
         }
         String trimmed = description.trim();
         if (trimmed.length() < 10) {
-            return errorJson("description_too_short",
+            return AiAssistJson.errorJson("description_too_short",
                     "description must be at least 10 characters. Ask the user for a fuller sentence.");
         }
         if (trimmed.length() > 500) {
-            return errorJson("description_too_long",
+            return AiAssistJson.errorJson("description_too_long",
                     "description must be at most 500 characters (got " + trimmed.length() + ").");
         }
         return null;
@@ -1967,7 +1833,7 @@ public class AiAssistService {
             uploadParsed.put("description_error",
                     "Upload succeeded but description could not be serialised: " + e.getMessage()
                   + ". Retry via exotel_aiassist_update_kb_file_descriptions.");
-            return toJson(uploadParsed);
+            return AiAssistJson.toJson(uploadParsed);
         }
         String descResult = sendUploadJobsPatch(creds, aiAssistantId, descPayload);
         Map<String, Object> descParsed = parseJsonObject(descResult);
@@ -1976,12 +1842,12 @@ public class AiAssistService {
             uploadParsed.put("description_error",
                     "Upload succeeded but description PATCH failed: " + descParsed.get("message")
                   + ". Retry via exotel_aiassist_update_kb_file_descriptions.");
-            return toJson(uploadParsed);
+            return AiAssistJson.toJson(uploadParsed);
         }
         if (uploadParsed != null) {
             uploadParsed.put("description_saved", description);
             uploadParsed.put("description_file", fileName);
-            return toJson(uploadParsed);
+            return AiAssistJson.toJson(uploadParsed);
         }
         return uploadResult;
     }
@@ -2001,48 +1867,19 @@ public class AiAssistService {
     private String sendAttachmentsMultipart(AuthCredentials creds, String aiAssistantId,
                                             HttpMethod method,
                                             List<ByteArrayResource> addFiles, List<String> deleteIds) {
-        String accountSid = effectiveAccountSid(creds);
-        if (!ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) {
-            return errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
-        }
-        String baseUrl = creds.effectiveAiAssistBaseUrl(null);
-        String contextPath = creds.effectiveAiAssistContextPath(CONTEXT_PATH);
-
-        String url = UriComponentsBuilder
-                .fromHttpUrl(baseUrl)
-                .pathSegment(contextPath.split("/"))
-                .path("/v1/accounts/" + accountSid + "/ai-assistants/" + aiAssistantId + "/upload-jobs")
-                .build().toUriString();
-
+        String sidErr = accountSidValidationError(creds);
+        if (sidErr != null) return sidErr;
+        String url = buildAccountApiUrl(creds, "/ai-assistants/" + aiAssistantId + "/upload-jobs", null);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
         String authErr = applyAiAssistAuth(creds, headers);
         if (authErr != null) return authErr;
-
         LinkedMultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        // upload-jobs multipart contract: POST uses "files", PATCH uses "add_files".
         String addField = (method == HttpMethod.POST) ? "files" : "add_files";
         for (ByteArrayResource f : addFiles) body.add(addField, f);
         for (String id : deleteIds) body.add("delete_attachment_ids", id);
-
-        HttpEntity<LinkedMultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
-
-        try {
-            logger.debug("AI Assist {} {} (add={}, delete={})", method, url, addFiles.size(), deleteIds.size());
-            ResponseEntity<String> resp = restTemplate.exchange(url, method, entity, String.class);
-            return resp.getBody() != null ? resp.getBody() : "{}";
-        } catch (HttpClientErrorException e) {
-            logger.warn("AI Assist upload-jobs client error {} on {}: {}", e.getStatusCode(), url, safeBodySnippet(e.getResponseBodyAsString()));
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode(),
-                    Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
-        } catch (HttpServerErrorException e) {
-            logger.warn("AI Assist upload-jobs server error {} on {}", e.getStatusCode(), url);
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode(),
-                    Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
-        } catch (Exception e) {
-            logger.error("AI Assist upload-jobs call failed", e);
-            return errorJson("network_error", e.getClass().getSimpleName() + ": " + e.getMessage());
-        }
+        logger.debug("AI Assist {} {} (add={}, delete={})", method, url, addFiles.size(), deleteIds.size());
+        return exchangeApi(method, url, method + " upload-jobs", new HttpEntity<>(body, headers));
     }
 
     private static ByteArrayResource namedByteResource(byte[] bytes, String filename) {
@@ -2050,36 +1887,6 @@ public class AiAssistService {
             @Override public String getFilename() { return filename; }
             @Override public long contentLength() { return bytes.length; }
         };
-    }
-
-    /**
-     * Reject non-https URLs and SSRF vectors (localhost, private/link-local ranges).
-     * Returns null when the URL is allowed.
-     */
-    private static String validateFetchUrl(String fileUrl) {
-        URI uri;
-        try {
-            uri = URI.create(fileUrl);
-        } catch (Exception e) {
-            return "malformed URL";
-        }
-        if (uri.getScheme() == null || !uri.getScheme().equalsIgnoreCase("https")) {
-            return "fileUrl must be https (got " + uri.getScheme() + ")";
-        }
-        String host = uri.getHost();
-        if (host == null || host.isBlank()) return "URL is missing a host";
-        try {
-            for (InetAddress addr : InetAddress.getAllByName(host)) {
-                if (addr.isLoopbackAddress() || addr.isLinkLocalAddress()
-                        || addr.isSiteLocalAddress() || addr.isAnyLocalAddress()
-                        || addr.isMulticastAddress()) {
-                    return "URL resolves to a non-public address (" + addr.getHostAddress() + ")";
-                }
-            }
-        } catch (Exception e) {
-            return "URL host does not resolve: " + e.getMessage();
-        }
-        return null;
     }
 
     private static String filenameFromUrl(String fileUrl) {
@@ -2101,14 +1908,55 @@ public class AiAssistService {
      * Host / env allow-lists were removed \u2014 credentials + confirm are sufficient.
      */
     private String requireWritePermission(AuthCredentials creds, Boolean confirm, String action) {
-        if (!Boolean.TRUE.equals(confirm)) {
-            return errorJson("confirm_required",
-                    "Refusing to perform write '" + action + "' without confirm=true. "
-                  + "Re-issue the tool call with confirm=true after reviewing the arguments.");
-        }
+        String gate = AiAssistGuards.writeGateError(confirm, action);
+        if (gate != null) return gate;
         logger.info("AI Assist write allowed: action={} baseUrl={}",
                 action, creds.effectiveAiAssistBaseUrl(null));
         return null;
+    }
+
+
+    private String accountSidValidationError(AuthCredentials creds) {
+        if (!AiAssistGuards.isValidAccountSid(effectiveAccountSid(creds))) {
+            return AiAssistJson.errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
+        }
+        return null;
+    }
+
+    private String buildAccountApiUrl(AuthCredentials creds, String path, Map<String, String> queryParams) {
+        String accountSid = effectiveAccountSid(creds);
+        String baseUrl = creds.effectiveAiAssistBaseUrl(null);
+        String contextPath = creds.effectiveAiAssistContextPath(CONTEXT_PATH);
+        UriComponentsBuilder ub = UriComponentsBuilder
+                .fromHttpUrl(baseUrl)
+                .pathSegment(contextPath.split("/"))
+                .path("/v1/accounts/" + accountSid + path);
+        if (queryParams != null) queryParams.forEach(ub::queryParam);
+        return ub.build().toUriString();
+    }
+
+    private String exchangeApi(HttpMethod method, String url, String pathLabel, HttpEntity<?> entity) {
+        try {
+            if (method == HttpMethod.GET) logger.debug("AI Assist GET {}", url);
+            else logger.info("AI Assist {} {} (body={}B)", method, url,
+                    entity.getBody() == null ? 0 : String.valueOf(entity.getBody()).length());
+            ResponseEntity<String> resp = restTemplate.exchange(url, method, entity, String.class);
+            return resp.getBody() != null ? resp.getBody() : "{}";
+        } catch (HttpClientErrorException e) {
+            logger.warn("AI Assist client error {} on {} {}: {}", e.getStatusCode(), method, url,
+                    AiAssistJson.safeBodySnippet(e.getResponseBodyAsString()));
+            return AiAssistJson.errorJson("http_" + e.getStatusCode().value(),
+                    "AI Assist responded " + e.getStatusCode() + " for " + pathLabel,
+                    Map.of("body", AiAssistJson.safeBodySnippet(e.getResponseBodyAsString())));
+        } catch (HttpServerErrorException e) {
+            logger.warn("AI Assist server error {} on {} {}", e.getStatusCode(), method, url);
+            return AiAssistJson.errorJson("http_" + e.getStatusCode().value(),
+                    "AI Assist responded " + e.getStatusCode() + " for " + pathLabel,
+                    Map.of("body", AiAssistJson.safeBodySnippet(e.getResponseBodyAsString())));
+        } catch (Exception e) {
+            logger.error("AI Assist {} call failed for {}", method, url, e);
+            return AiAssistJson.errorJson("network_error", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
     }
 
     // ======================== HTTP CORE ========================
@@ -2118,46 +1966,14 @@ public class AiAssistService {
      * Returns the raw response body (JSON) or a JSON error envelope on failure.
      */
     private String getJson(AuthCredentials creds, String path, Map<String, String> queryParams) {
-        String accountSid = effectiveAccountSid(creds);
-        if (!ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) {
-            return errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
-        }
-
-        String baseUrl = creds.effectiveAiAssistBaseUrl(null);
-        String contextPath = creds.effectiveAiAssistContextPath(CONTEXT_PATH);
-
-        UriComponentsBuilder ub = UriComponentsBuilder
-                .fromHttpUrl(baseUrl)
-                .pathSegment(contextPath.split("/"))
-                .path("/v1/accounts/" + accountSid + path);
-        if (queryParams != null) {
-            queryParams.forEach(ub::queryParam);
-        }
-        String url = ub.build().toUriString();
-
+        String sidErr = accountSidValidationError(creds);
+        if (sidErr != null) return sidErr;
+        String url = buildAccountApiUrl(creds, path, queryParams);
         HttpHeaders headers = new HttpHeaders();
         String authErr = applyAiAssistAuth(creds, headers);
         if (authErr != null) return authErr;
         headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
-
-        try {
-            logger.debug("AI Assist GET {}", url);
-            ResponseEntity<String> resp = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
-            return resp.getBody() != null ? resp.getBody() : "{}";
-        } catch (HttpClientErrorException e) {
-            logger.warn("AI Assist client error {} on {}: {}", e.getStatusCode(), url, safeBodySnippet(e.getResponseBodyAsString()));
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode() + " for " + path,
-                Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
-        } catch (HttpServerErrorException e) {
-            logger.warn("AI Assist server error {} on {}", e.getStatusCode(), url);
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode() + " for " + path,
-                Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
-        } catch (Exception e) {
-            logger.error("AI Assist call failed for {}", url, e);
-            return errorJson("network_error", e.getClass().getSimpleName() + ": " + e.getMessage());
-        }
+        return exchangeApi(HttpMethod.GET, url, path, new HttpEntity<>(headers));
     }
 
     /**
@@ -2188,7 +2004,7 @@ public class AiAssistService {
                     headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + bearer);
                 } catch (Exception e) {
                     logger.warn("AI Assist token exchange failed: {}", e.getMessage());
-                    return errorJson("token_exchange_error", e.getMessage());
+                    return AiAssistJson.errorJson("token_exchange_error", e.getMessage());
                 }
             }
         }
@@ -2205,61 +2021,28 @@ public class AiAssistService {
      */
     private String sendJson(AuthCredentials creds, HttpMethod method, String path,
                             Map<String, String> queryParams, Map<String, Object> jsonBody) {
-        String accountSid = effectiveAccountSid(creds);
-        if (!ACCOUNT_SID_PATTERN.matcher(accountSid).matches()) {
-            return errorJson("invalid_credentials", "ai_assist_account_sid failed validation");
-        }
-
-        String baseUrl = creds.effectiveAiAssistBaseUrl(null);
-        String contextPath = creds.effectiveAiAssistContextPath(CONTEXT_PATH);
-
-        UriComponentsBuilder ub = UriComponentsBuilder
-                .fromHttpUrl(baseUrl)
-                .pathSegment(contextPath.split("/"))
-                .path("/v1/accounts/" + accountSid + path);
-        if (queryParams != null) {
-            queryParams.forEach(ub::queryParam);
-        }
-        String url = ub.build().toUriString();
-
+        String sidErr = accountSidValidationError(creds);
+        if (sidErr != null) return sidErr;
+        String url = buildAccountApiUrl(creds, path, queryParams);
         HttpHeaders headers = new HttpHeaders();
         String authErr = applyAiAssistAuth(creds, headers);
         if (authErr != null) return authErr;
         headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-        if (jsonBody != null) {
-            headers.setContentType(MediaType.APPLICATION_JSON);
-        }
-
         String bodyString = null;
         if (jsonBody != null) {
+            headers.setContentType(MediaType.APPLICATION_JSON);
             try {
                 bodyString = objectMapper.writeValueAsString(jsonBody);
             } catch (Exception e) {
-                return errorJson("serialization_error", "Failed to serialize request body: " + e.getMessage());
+                return AiAssistJson.errorJson("serialization_error", "Failed to serialize request body: " + e.getMessage());
             }
         }
-
-        HttpEntity<String> entity = new HttpEntity<>(bodyString, headers);
-
-        try {
-            logger.info("AI Assist {} {} (body={}B)", method, url, bodyString == null ? 0 : bodyString.length());
-            ResponseEntity<String> resp = restTemplate.exchange(url, method, entity, String.class);
-            return resp.getBody() != null ? resp.getBody() : "{}";
-        } catch (HttpClientErrorException e) {
-            logger.warn("AI Assist client error {} on {} {}: {}", e.getStatusCode(), method, url, safeBodySnippet(e.getResponseBodyAsString()));
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode() + " for " + method + " " + path,
-                Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
-        } catch (HttpServerErrorException e) {
-            logger.warn("AI Assist server error {} on {} {}", e.getStatusCode(), method, url);
-            return errorJson("http_" + e.getStatusCode().value(), "AI Assist responded " + e.getStatusCode() + " for " + method + " " + path,
-                Map.of("body", safeBodySnippet(e.getResponseBodyAsString())));
-        } catch (Exception e) {
-            logger.error("AI Assist {} call failed for {}", method, url, e);
-            return errorJson("network_error", e.getClass().getSimpleName() + ": " + e.getMessage());
-        }
+        String pathLabel = method + " " + path;
+        return exchangeApi(method, url, pathLabel, new HttpEntity<>(bodyString, headers));
     }
 
     /**
+     * Parse a JSON object    /**
      * Parse a JSON object string into a Map. Returns null on blank / malformed input or when the
      * top-level JSON is not an object. Callers must null-check.
      */
@@ -2343,40 +2126,4 @@ public class AiAssistService {
         }
     }
 
-    // ======================== HELPERS ========================
-
-    private static boolean validId(String id) {
-        return id != null && !id.isBlank() && ID_PATTERN.matcher(id).matches();
-    }
-
-    private static String maskToken(String token) {
-        if (token == null || token.isBlank()) return null;
-        if (token.length() <= 12) return "***";
-        return token.substring(0, 10) + "...";
-    }
-
-    private static String safeBodySnippet(String body) {
-        if (body == null) return null;
-        return body.length() > 500 ? body.substring(0, 500) + "…" : body;
-    }
-
-    private static String toJson(Object o) {
-        try {
-            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(o);
-        } catch (Exception e) {
-            return o.toString();
-        }
-    }
-
-    private static String errorJson(String code, String message) {
-        return errorJson(code, message, Map.of());
-    }
-
-    private static String errorJson(String code, String message, Map<String, Object> extras) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error", code);
-        body.put("message", message);
-        if (extras != null && !extras.isEmpty()) body.putAll(extras);
-        return toJson(body);
-    }
 }
