@@ -11,6 +11,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - 🎵 **Quick Audio Tools**: One-click audio playback, download, and web player access
 - 🔍 **Conversational Intelligence**: AI-powered quality analysis of 100% of conversations across voice and digital channels
 - 🤖 **VoiceBot**: Create, manage, and place AI-powered outbound calls with VoiceBots
+- 🎧 **AI Assist**: Configure real-time agent assist (smart reply, transcription, KB) via MCP
 - 🔐 **Secure Authentication**: Per-user token-based authentication via Authorization header
 - 🤖 **Claude AI Integration**: Direct integration with Claude through MCP protocol
 
@@ -139,6 +140,46 @@ echo -n "your_api_key:your_api_secret" | base64
 
 > **Note**: VoiceBot credentials are only required if you plan to use the VoiceBot tools. The VoiceBot management API (list/create/delete bots) uses `voicebot_*` credentials, while placing actual calls uses `calls_*` credentials.
 
+#### **AI Assist Credentials:**
+
+Required for all `exotel_aiassist_*` tools:
+
+- **ai_assist_base_url**: AI Assist API host (prod: `https://ai-assist.in.exotel.com`)
+- **ai_assist_account_sid**: Your AI Assist tenant ID (account SID)
+
+Auth: provide **one** of these modes (Twilix Basic is the default for CPaaS tenants):
+
+| Mode | Fields |
+|------|--------|
+| Twilix Basic (recommended) | `ai_assist_auth_key`, `ai_assist_auth_secret` |
+| Auth0 M2M | `ai_assist_client_id`, `ai_assist_client_secret` |
+| Manual bearer | `ai_assist_auth_token` |
+| Session cookie | `ai_assist_session_cookie` |
+
+Optional:
+
+- **ai_assist_context_path**: API context path (default: `ai-assist/api`)
+- **ai_assist_user_id**: User ID for audit trails
+
+Example (Cursor `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "exotel": {
+      "url": "https://mcp.exotel.com/mcp",
+      "headers": {
+        "Authorization": "Bearer {\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"YOUR_ACCOUNT_SID\",\"ai_assist_auth_key\":\"YOUR_API_KEY\",\"ai_assist_auth_secret\":\"YOUR_API_TOKEN\"}"
+      }
+    }
+  }
+}
+```
+
+> **Note**: AI Assist credentials are only required for AI Assist tools. SMS, Voice, CQA, and VoiceBot tools work independently.
+
+> **Write safety**: Create/update/publish/archive/delete tools require `confirm=true` on the tool call.
+
 ## Usage
 
 Once configured, you can use Claude to interact with Exotel services using natural language commands. Simply describe what you want to do, and Claude will handle the API calls through the MCP server.
@@ -173,6 +214,16 @@ Once configured, you can use Claude to interact with Exotel services using natur
 - "Call +919999999999 using my customer support bot"
 - "Get the status of the last bot call"
 - "List available phone numbers on my account"
+
+**AI Assist Commands:**
+- "Run exotel_aiassist_whoami to verify my AI Assist credentials"
+- "List all AI Assist assistants on my account"
+- "Get assistant details for assistant ID abc123"
+- "List ASR providers and LLM suggestion languages before creating an assistant"
+- "Create an AI Assist assistant for Ameyo 6x with real-time transcription and smart reply enabled"
+- "Attach a KB file from https://example.com/policy.pdf to assistant abc123, then wait for indexing"
+- "Publish assistant abc123"
+- "Smoke-test the chat stream for assistant abc123"
 
 ## API Services
 
@@ -471,6 +522,52 @@ View recent call history with status and outcomes.
 Show me the last 5 bot calls
 ```
 
+### AI Assist Services
+
+Real-time agent assist: transcription, sentiment, smart replies, disposition hints, and knowledge-base grounding for contact-center agents. Tools are prefixed `exotel_aiassist_*`.
+
+**Authentication:** Configure `ai_assist_base_url`, `ai_assist_account_sid`, and one auth mode in the Authorization header (see [AI Assist Credentials](#ai-assist-credentials)). Use `exotel_aiassist_whoami` to verify setup.
+
+**Read tools:** list/get assistants, attachments, KB upload jobs, description templates, ASR providers, LLM languages, agents, interactions, settings, stream URLs.
+
+**Write tools:** create/update/publish/archive/delete assistants and custom templates; attach/detach KB files; update descriptions. All writes require `confirm=true`.
+
+**Testing:** `exotel_aiassist_smoke_test_chat` runs a WebSocket handshake against the assistant stream; `exotel_aiassist_wait_for_kb_ready` polls until KB indexing completes.
+
+#### Verify Credentials
+
+**Example**:
+```
+Run exotel_aiassist_whoami
+```
+
+#### List Assistants
+
+**Example**:
+```
+List all AI Assist assistants on my account
+```
+
+#### Create and Publish Assistant
+
+Create with `exotel_aiassist_create_assistant`, configure ASR/language via tool args, then publish with `exotel_aiassist_publish_assistant` (`confirm=true`).
+
+**Example**:
+```
+Create an AI Assist assistant named "Support Copilot" for source ameyo_6x with English STT and smart reply enabled
+```
+
+#### Knowledge Base Upload
+
+Attach files from a public HTTPS URL or local path, then wait for indexing.
+
+**Example**:
+```
+Attach https://example.com/returns-policy.pdf to assistant abc123, then wait for KB to be ready
+```
+
+> **Security**: URL fetch only allows `https://` and blocks private/loopback addresses (SSRF guard).
+
 ## Authentication
 
 The Exotel MCP Server uses secure token-based authentication. All your Exotel credentials are configured in the Claude desktop configuration and are used to authenticate with Exotel's APIs.
@@ -724,30 +821,6 @@ curl https://your-domain.com/mcp
 - Check HTTPS certificate is valid
 - Ensure callback URLs use your public domain
 - Test webhook endpoints manually
-
-#### Local Development — Cursor Not Picking Up Tool Description Changes
-
-**Symptom**: You edited a `@Tool` description in `AiAssistService.java`, killed and restarted the local MCP server, but Cursor's LLM is still reading the OLD tool descriptions in every new chat.
-
-**Cause**: Cursor's MCP client caches the `tools/list` response per server, keyed by a hash of that server's entry in `~/.cursor/mcp.json`. Simply restarting your local server does NOT invalidate that cache — Cursor only re-reads tools/list when it thinks the config has changed or the server is being freshly connected.
-
-**Fix (pick one)**:
-
-1. **Toggle the server off/on in Cursor** — Settings → MCP → find `exotel-mcp` → toggle off, then on again. Fastest option, keeps `mcp.json` clean.
-2. **Reload the Cursor window** — `Cmd+Shift+P` → `Reload Window`. Nukes all MCP caches for the current window.
-3. **Change any value in that server's `mcp.json` block** — e.g. flip the URL between `http://localhost:8090/mcp` and `http://127.0.0.1:8090/mcp`, or add/remove a dummy `X-Cursor-Cache-Bust` header. Changes the config hash → forces re-fetch. Do NOT ship this into production configs; it's a workaround.
-
-**How to verify the new descriptions actually landed**:
-
-```bash
-curl -sS -X POST http://127.0.0.1:8090/mcp \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
-  | grep -oc '<your new keyword from the description>'
-```
-
-If the grep returns `1` (or more) the server exports the new description. If Cursor still shows the LLM old text, it's the client-side cache — use option 1 or 2 above.
 
 ### Resources
 
