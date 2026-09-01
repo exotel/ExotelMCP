@@ -59,6 +59,24 @@ public class AuthCredentials {
     private String toolsServerTenantId;
     private String toolsServerBaseUrl;
 
+    // AI Assist. Any ONE of these auth modes is sufficient:
+    //   - Twilix Basic: ai_assist_auth_key + ai_assist_auth_secret (CPaaS API creds; per-tenant scope).
+    //   - Manual JWT: ai_assist_auth_token.
+    //   - Session cookie: ai_assist_session_cookie (from browser DevTools).
+    //   - Auth0 M2M: ai_assist_client_id + ai_assist_client_secret (exchanged for bearer, cached).
+    private String aiAssistBaseUrl;
+    private String aiAssistContextPath;
+    private String aiAssistAccountSid;
+    private String aiAssistAuthToken;
+    private String aiAssistSessionCookie;
+    private String aiAssistUserId;
+    private String aiAssistClientId;
+    private String aiAssistClientSecret;
+    private String aiAssistAuthTokenUrl;
+    private String aiAssistAuthAudience;
+    private String aiAssistAuthKey;
+    private String aiAssistAuthSecret;
+
     // Raw header for fallback
     private String rawHeader;
     private boolean parsed;
@@ -126,6 +144,20 @@ public class AuthCredentials {
             creds.toolsServerTenantId = textField(root, "tools_server_tenant_id");
             creds.toolsServerBaseUrl = textField(root, "tools_server_base_url");
 
+            // AI Assist
+            creds.aiAssistBaseUrl       = textField(root, "ai_assist_base_url");
+            creds.aiAssistContextPath   = textField(root, "ai_assist_context_path");
+            creds.aiAssistAccountSid    = textField(root, "ai_assist_account_sid");
+            creds.aiAssistAuthToken     = textField(root, "ai_assist_auth_token");
+            creds.aiAssistSessionCookie = textField(root, "ai_assist_session_cookie");
+            creds.aiAssistUserId        = textField(root, "ai_assist_user_id");
+            creds.aiAssistClientId      = textField(root, "ai_assist_client_id");
+            creds.aiAssistClientSecret  = textField(root, "ai_assist_client_secret");
+            creds.aiAssistAuthTokenUrl  = textField(root, "ai_assist_auth_token_url");
+            creds.aiAssistAuthAudience  = textField(root, "ai_assist_auth_audience");
+            creds.aiAssistAuthKey       = textField(root, "ai_assist_auth_key");
+            creds.aiAssistAuthSecret    = textField(root, "ai_assist_auth_secret");
+
             creds.parsed = true;
         } catch (Exception e) {
             logger.debug("Could not parse Authorization header as JSON: {}", e.getMessage());
@@ -175,6 +207,29 @@ public class AuthCredentials {
             && toolsServerTenantId != null && !toolsServerTenantId.isBlank();
     }
 
+    public boolean hasAiAssistCredentials() {
+        boolean hasAuthMaterial =
+                hasAiAssistBasicCredentials()
+             || (aiAssistAuthToken != null && !aiAssistAuthToken.isBlank())
+             || (aiAssistSessionCookie != null && !aiAssistSessionCookie.isBlank())
+             || hasAiAssistClientCredentials();
+        return aiAssistBaseUrl != null && !aiAssistBaseUrl.isBlank()
+            && hasAuthMaterial
+            && aiAssistAccountSid != null && !aiAssistAccountSid.isBlank();
+    }
+
+    public boolean hasAiAssistClientCredentials() {
+        return aiAssistClientId != null && !aiAssistClientId.isBlank()
+            && aiAssistClientSecret != null && !aiAssistClientSecret.isBlank()
+            && aiAssistAccountSid != null && !aiAssistAccountSid.isBlank();
+    }
+
+    public boolean hasAiAssistBasicCredentials() {
+        return aiAssistAuthKey != null && !aiAssistAuthKey.isBlank()
+            && aiAssistAuthSecret != null && !aiAssistAuthSecret.isBlank()
+            && aiAssistAccountSid != null && !aiAssistAccountSid.isBlank();
+    }
+
     public boolean isParsed() { return parsed; }
 
     // ======================== DERIVED VALUES ========================
@@ -222,6 +277,32 @@ public class AuthCredentials {
         return cqaHost != null ? cqaHost : defaultHost;
     }
 
+    public String aiAssistBearerHeader() {
+        return aiAssistAuthToken != null ? "Bearer " + aiAssistAuthToken : null;
+    }
+
+    /**
+     * Constructs the "Basic <base64>" header for Twilix Basic (CPaaS auth_key:auth_token) mode.
+     * Returns null if key/secret are not both set.
+     */
+    public String aiAssistBasicHeader() {
+        if (aiAssistAuthKey == null || aiAssistAuthKey.isBlank()
+                || aiAssistAuthSecret == null || aiAssistAuthSecret.isBlank()) {
+            return null;
+        }
+        String encoded = Base64.getEncoder().encodeToString(
+                (aiAssistAuthKey + ":" + aiAssistAuthSecret).getBytes(StandardCharsets.UTF_8));
+        return "Basic " + encoded;
+    }
+
+    public String effectiveAiAssistBaseUrl(String defaultUrl) {
+        return aiAssistBaseUrl != null ? aiAssistBaseUrl : defaultUrl;
+    }
+
+    public String effectiveAiAssistContextPath(String defaultPath) {
+        return aiAssistContextPath != null ? aiAssistContextPath : defaultPath;
+    }
+
     // ======================== GETTERS ========================
 
     public String getToken() { return token; }
@@ -249,6 +330,18 @@ public class AuthCredentials {
     public String getToolsServerApiToken() { return toolsServerApiToken; }
     public String getToolsServerTenantId() { return toolsServerTenantId; }
     public String getToolsServerBaseUrl() { return toolsServerBaseUrl; }
+    public String getAiAssistBaseUrl() { return aiAssistBaseUrl; }
+    public String getAiAssistContextPath() { return aiAssistContextPath; }
+    public String getAiAssistAccountSid() { return aiAssistAccountSid; }
+    public String getAiAssistAuthToken() { return aiAssistAuthToken; }
+    public String getAiAssistSessionCookie() { return aiAssistSessionCookie; }
+    public String getAiAssistUserId() { return aiAssistUserId; }
+    public String getAiAssistClientId() { return aiAssistClientId; }
+    public String getAiAssistClientSecret() { return aiAssistClientSecret; }
+    public String getAiAssistAuthTokenUrl() { return aiAssistAuthTokenUrl; }
+    public String getAiAssistAuthAudience() { return aiAssistAuthAudience; }
+    public String getAiAssistAuthKey() { return aiAssistAuthKey; }
+    public String getAiAssistAuthSecret() { return aiAssistAuthSecret; }
     public String getRawHeader() { return rawHeader; }
 
     /**
@@ -263,6 +356,7 @@ public class AuthCredentials {
         if (hasAdminCredentials()) sb.append("Admin ");
         if (hasCqaCredentials()) sb.append("CQA ");
         if (hasToolsServerCredentials()) sb.append("ToolsServer ");
+        if (hasAiAssistCredentials()) sb.append("AIAssist ");
         return sb.length() > 0 ? sb.toString().trim() : "NONE";
     }
 }
