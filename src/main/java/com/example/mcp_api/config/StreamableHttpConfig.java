@@ -46,6 +46,9 @@ public class StreamableHttpConfig {
     private com.example.mcp_api.service.VoiceBotAdminTools voiceBotAdminTools;
 
     @Autowired
+    private com.example.mcp_api.service.VoiceBotBuilderTools voiceBotBuilderTools;
+
+    @Autowired
     private com.example.mcp_api.service.setup.SetupTools setupTools;
 
     @Autowired
@@ -207,7 +210,7 @@ public class StreamableHttpConfig {
      */
     private Object[] toolServices() {
         return new Object[] {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools,
-                setupTools, voiceBotToolsService, engageService, whatsAppService};
+                voiceBotBuilderTools, setupTools, voiceBotToolsService, engageService, whatsAppService};
     }
 
     /**

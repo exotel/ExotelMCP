@@ -268,7 +268,7 @@ public class VoiceBotService {
             String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class);
-            String body = response.getBody();
+            String body = VoiceBotBuilderTools.redactJsonText(response.getBody());
             return (body != null && !body.isBlank()) ? body : "VoiceBot " + voiceBotId + " deleted successfully.";
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_delete", e);
         } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_delete", e);
@@ -513,7 +513,7 @@ public class VoiceBotService {
     }
 
     private String safeBody(ResponseEntity<String> response) {
-        String body = response.getBody();
+        String body = VoiceBotBuilderTools.redactJsonText(response.getBody());
         if (body == null) return "{}";
         if (body.length() > MAX_RESPONSE_BYTES) return body.substring(0, MAX_RESPONSE_BYTES);
         return body;
