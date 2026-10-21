@@ -355,6 +355,8 @@ public class StreamableHttpConfig {
                                 } else {
                                     methodArgs[i] = new java.util.HashMap<>();
                                 }
+                            } else if (param.getType() == String.class && !(argValue instanceof String)) {
+                                methodArgs[i] = asStringArg(argValue, objectMapper);
                             } else {
                                 methodArgs[i] = argValue;
                             }
@@ -1078,6 +1080,18 @@ public class StreamableHttpConfig {
      */
     private Map<String, Object> createErrorResponse(String message) {
         return createErrorResponse(null, message);
+    }
+
+    /**
+     * Models often send a JSON object, number or boolean for a String tool parameter (dataJson, limit,
+     * markAsStable). Pass objects and arrays on as JSON text and scalars as their text form, instead of
+     * failing the whole call with "argument type mismatch".
+     */
+    static String asStringArg(Object value, ObjectMapper mapper) throws com.fasterxml.jackson.core.JsonProcessingException {
+        if (value instanceof Map || value instanceof List) {
+            return mapper.writeValueAsString(value);
+        }
+        return String.valueOf(value);
     }
 
     private static String camelToSnake(String camel) {
