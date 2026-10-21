@@ -166,7 +166,7 @@ public class VoiceBotAdminTools {
 
             String getUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=stable";
             ResponseEntity<String> currentResp = restTemplate.exchange(getUrl, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
-            JsonNode current = objectMapper.readTree(safeBody(currentResp));
+            JsonNode current = objectMapper.readTree(rawBody(currentResp));
 
             JsonNode data = current.path("response").path("data");
             String stableVersion = data.path("stable_version").asText(data.path("latest_version").asText("v1"));
@@ -312,7 +312,7 @@ public class VoiceBotAdminTools {
 
             // GET current full config, merge patch, then PUT back
             ResponseEntity<String> getResp = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
-            JsonNode current = objectMapper.readTree(safeBody(getResp));
+            JsonNode current = objectMapper.readTree(rawBody(getResp));
             JsonNode dataNode = current.path("response").path("data");
             if (dataNode.isMissingNode() || !dataNode.isObject())
                 return "Error: could not read current bot config — unexpected API response structure";
@@ -499,8 +499,19 @@ public class VoiceBotAdminTools {
 
     // ======================== HELPERS ========================
 
-    private String safeBody(ResponseEntity<String> response) {
+    /**
+     * Unredacted body, for read-modify-write paths only (parse, merge, send back). Never return it to the
+     * caller: use safeBody, which redacts credential fields, for anything the model sees.
+     */
+    private String rawBody(ResponseEntity<String> response) {
         String body = response.getBody();
+        if (body == null) return "{}";
+        if (body.length() > MAX_RESPONSE_BYTES) return body.substring(0, MAX_RESPONSE_BYTES);
+        return body;
+    }
+
+    private String safeBody(ResponseEntity<String> response) {
+        String body = VoiceBotBuilderTools.redactJsonText(response.getBody());
         if (body == null) return "{}";
         if (body.length() > MAX_RESPONSE_BYTES) return body.substring(0, MAX_RESPONSE_BYTES);
         return body;
