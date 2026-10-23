@@ -65,7 +65,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','whatsapp_from':'YOUR_WHATSAPP_SENDER_E164','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
       }
     }
   }
@@ -270,6 +270,23 @@ Optional schedule and callbacks:
 ```
 Same campaign, scheduled 2026-08-10T18:00:00+05:30 to 2026-08-10T20:00:00+05:30,
 with status_callback and message_status_callback URLs
+```
+
+### WhatsApp Services
+
+Send a WhatsApp message through Exotel (Exotel is the WhatsApp BSP) with `exotel_whatsapp_send_message`.
+
+Uses the CPaaS `token` + `account_sid` + `api_domain`, plus a dedicated **`whatsapp_from`** auth field — your WhatsApp-enabled sender number in E.164 with a leading `+` (usually different from `from_number`, and not the WABA id). Mumbai accounts use `api_domain=https://api.in.exotel.com`.
+
+**Template (start a conversation)**:
+```
+Send a WhatsApp template "order_confirmation" (language en) to +919999999999
+with body variables ["Rahul", "#ORD-12345"]
+```
+
+**Free text (reply inside the 24-hour window)**:
+```
+Send a WhatsApp text "Thanks, your request is noted" to +919999999999
 ```
 
 ### Voice Services
@@ -672,7 +689,7 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','whatsapp_from':'YOUR_WHATSAPP_SENDER_E164','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
       }
     }
   }

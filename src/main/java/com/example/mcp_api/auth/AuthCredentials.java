@@ -25,6 +25,7 @@ public class AuthCredentials {
     // CPaaS
     private String token;
     private String fromNumber;
+    private String whatsappFrom;
     private String callerId;
     private String apiDomain;
     private String accountSid;
@@ -110,6 +111,7 @@ public class AuthCredentials {
             // CPaaS
             creds.token = textField(root, "token");
             creds.fromNumber = textField(root, "from_number");
+            creds.whatsappFrom = textField(root, "whatsapp_from");
             creds.callerId = textField(root, "caller_id");
             creds.apiDomain = textField(root, "api_domain");
             creds.accountSid = textField(root, "account_sid");
@@ -307,6 +309,7 @@ public class AuthCredentials {
 
     public String getToken() { return token; }
     public String getFromNumber() { return fromNumber; }
+    public String getWhatsappFrom() { return whatsappFrom; }
     public String getCallerId() { return callerId; }
     public String getApiDomain() { return apiDomain; }
     public String getAccountSid() { return accountSid; }

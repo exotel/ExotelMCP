@@ -11,7 +11,9 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
@@ -22,9 +24,11 @@ import java.util.Map;
 /**
  * WhatsApp tools for the Exotel MCP.
  *
- * Exposes a "send WhatsApp message" tool that sends a message through Exotel's
- * WhatsApp API (Exotel acts as the WhatsApp BSP), authenticated with the same
- * per-account CPaaS token used by the SMS/voice tools (AuthContext).
+ * Sends a WhatsApp message through Exotel's WhatsApp API (Exotel acts as the
+ * WhatsApp BSP). Authentication reuses the per-account CPaaS token, but the
+ * WhatsApp SENDER is a dedicated auth field `whatsapp_from` — a customer's
+ * WhatsApp-enabled number is usually different from their SMS/voice number, so
+ * this does NOT reuse `from_number`.
  *
  * Contract:
  *   POST {api_domain}/v2/accounts/{account_sid}/messages
@@ -43,35 +47,51 @@ public class WhatsAppService {
 
     private static final Logger logger = LoggerFactory.getLogger(WhatsAppService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = buildRestTemplate();
 
     private static final String WHATSAPP_SEND_PATH = "/v2/accounts/%s/messages";
+
+    // Same 10s connect / 30s read budget as the SMS and Engage tools, so a hung
+    // upstream call cannot pin an mcp.exotel.com thread indefinitely.
+    private static RestTemplate buildRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(30_000);
+        return new RestTemplate(factory);
+    }
 
     @Tool(name = "exotel_whatsapp_send_message",
           description = "Send a WhatsApp message to a single recipient through Exotel (Exotel is the WhatsApp BSP). "
               + "Use messageType='template' with templateName (and templateParams for body variables) to start a new "
               + "conversation, or messageType='text' with body to reply inside the 24-hour customer-service window. "
-              + "Authentication (account, API token, WhatsApp from-number) is taken automatically from the session.")
+              + "The WhatsApp sender comes from the 'whatsapp_from' header (your WhatsApp-enabled E.164 number with a "
+              + "leading +, NOT the WABA id); account/token/api_domain are taken from the session.")
     public String sendWhatsAppMessage(
             @ToolParam(description = "Recipient phone number in E.164, e.g. +919876543210") String toNumber,
             @ToolParam(description = "Message type: 'template' or 'text'") String messageType,
             @ToolParam(required = false, description = "Template name (required when messageType='template')") String templateName,
-            @ToolParam(required = false, description = "Template language code, e.g. 'en' / 'hi' (template only; default 'en')") String templateLanguage,
+            @ToolParam(required = false, description = "Template language code exactly as approved in Meta, e.g. 'en' or 'en_US' (template only)") String templateLanguage,
             @ToolParam(required = false, description = "Ordered body variables for the template, if any") List<String> templateParams,
             @ToolParam(required = false, description = "Free-text message body (required when messageType='text', 24h window only)") String body) {
 
-        logger.info("Sending WhatsApp message to: {} (type: {})", toNumber, messageType);
+        logger.info("Sending WhatsApp message (type: {})", messageType);
 
         AuthCredentials creds = AuthContext.current();
         String token = creds.getToken();
         String apiDomain = creds.getApiDomain();
         String accountSid = creds.getAccountSid();
-        String fromNumber = creds.getFromNumber(); // WhatsApp sender number for this account
+        String whatsappFrom = creds.getWhatsappFrom(); // dedicated WhatsApp sender (NOT from_number)
 
         if (token == null || token.isBlank() || accountSid == null || accountSid.isBlank()
-                || apiDomain == null || apiDomain.isBlank() || fromNumber == null || fromNumber.isBlank()) {
-            return "{\"message\":\"Missing WhatsApp credentials. Provide token, account_sid, api_domain and "
-                + "from_number (your WhatsApp sender number) in the Authorization header.\"}";
+                || apiDomain == null || apiDomain.isBlank()) {
+            return "{\"message\":\"Missing credentials. Provide token, account_sid and api_domain in the Authorization header.\"}";
+        }
+        if (whatsappFrom == null || whatsappFrom.isBlank()) {
+            return "{\"message\":\"Missing 'whatsapp_from'. Add it to the Authorization header: your WhatsApp-enabled "
+                + "sender number in E.164 with a leading + (e.g. +919876500001), not the WABA id.\"}";
+        }
+        if (toNumber == null || !toNumber.matches("\\+?[1-9]\\d{6,14}")) {
+            return "{\"message\":\"toNumber must be a valid E.164 phone number, e.g. +919876543210.\"}";
         }
         if (!"template".equalsIgnoreCase(messageType) && !"text".equalsIgnoreCase(messageType)) {
             return "{\"message\":\"messageType must be 'template' or 'text'.\"}";
@@ -84,7 +104,8 @@ public class WhatsAppService {
         }
 
         try {
-            String url = apiDomain + String.format(WHATSAPP_SEND_PATH, accountSid);
+            String base = apiDomain.replaceAll("/+$", ""); // strip trailing slash(es)
+            String url = base + String.format(WHATSAPP_SEND_PATH, accountSid);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -92,7 +113,7 @@ public class WhatsAppService {
             headers.set("Authorization", "Basic " + token);
 
             Map<String, Object> requestBody = buildMessageBody(
-                    fromNumber, toNumber, messageType, templateName, templateLanguage, templateParams, body);
+                    whatsappFrom, toNumber, messageType, templateName, templateLanguage, templateParams, body);
 
             String json = objectMapper.writeValueAsString(requestBody);
             logger.info("WhatsApp send URL: {}", url);
@@ -102,9 +123,22 @@ public class WhatsAppService {
 
             logger.info("WhatsApp response status: {}", response.getStatusCode());
             return response.getBody();
+        } catch (HttpStatusCodeException e) {
+            // Pass the upstream error through so the agent sees the real reason
+            // (e.g. template not found, 24h window, sender not WhatsApp-enabled).
+            logger.error("WhatsApp send failed: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            String respBody = e.getResponseBodyAsString();
+            if (respBody != null && !respBody.isBlank()) {
+                return respBody; // Exotel returns a JSON error body
+            }
+            return "{\"message\":\"WhatsApp send failed with status " + e.getStatusCode().value() + ".\"}";
         } catch (Exception e) {
             logger.error("Error sending WhatsApp message", e);
-            return "{\"message\":\"" + e.getMessage() + "\"}";
+            try {
+                return "{\"message\":" + objectMapper.writeValueAsString(String.valueOf(e.getMessage())) + "}";
+            } catch (Exception ignored) {
+                return "{\"message\":\"Error sending WhatsApp message.\"}";
+            }
         }
     }
 
@@ -122,8 +156,10 @@ public class WhatsAppService {
      *                                              "parameters":[{"type":"text","text":<var>}] }] }
      *       }
      *   } ] } }
+     *
+     * Package-private static for unit testing.
      */
-    private Map<String, Object> buildMessageBody(
+    static Map<String, Object> buildMessageBody(
             String from, String to, String messageType,
             String templateName, String templateLanguage, List<String> templateParams, String body) {
 

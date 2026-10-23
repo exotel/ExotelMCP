@@ -63,6 +63,7 @@ public class SetupTools {
         if (includeCpaas) {
             authFields.append("\"token\":\"BASE64_OF_API_KEY:API_SECRET\",");
             authFields.append("\"from_number\":\"YOUR_EXOTEL_VIRTUAL_NUMBER\",");
+            authFields.append("\"whatsapp_from\":\"YOUR_WHATSAPP_SENDER_E164\",");
             authFields.append("\"account_sid\":\"YOUR_ACCOUNT_SID\",");
             authFields.append("\"api_domain\":\"https://api.exotel.com\",");
         }
@@ -161,8 +162,10 @@ public class SetupTools {
             + "**Credentials needed (CPaaS SMS/Voice):**\n"
             + "- `token` — Base64 encoded `api_key:api_secret` from my.exotel.com → API Settings\n"
             + "- `account_sid` — Your Exotel account SID\n"
-            + "- `from_number` — Your Exotel virtual phone number\n"
-            + "- `api_domain` — (optional) defaults to https://api.exotel.com\n\n"
+            + "- `from_number` — Your Exotel virtual phone number (SMS/voice)\n"
+            + "- `whatsapp_from` — (for WhatsApp) your WhatsApp-enabled sender number in E.164 with a leading +, "
+            + "e.g. +919876500001. This is usually DIFFERENT from `from_number`, and is NOT the WABA id.\n"
+            + "- `api_domain` — (optional) defaults to https://api.exotel.com; Mumbai accounts use https://api.in.exotel.com\n\n"
             + "**Credentials for Engage SMS campaigns (reuse calls_* preferred):**\n"
             + "- `calls_api_key` / `calls_api_token` / `calls_account_id` — my.exotel.com → API Settings\n"
             + "- Or fall back to CPaaS `token` + `account_sid` (same account)\n"
@@ -172,7 +175,8 @@ public class SetupTools {
             + "- Initiate voice calls\n"
             + "- Connect two numbers\n"
             + "- Check delivery status\n"
-            + "- Create Engage SMS campaigns (`exotel_engage_create_sms_campaign`)\n\n";
+            + "- Create Engage SMS campaigns (`exotel_engage_create_sms_campaign`)\n"
+            + "- Send WhatsApp messages (`exotel_whatsapp_send_message`) — needs `whatsapp_from`\n\n";
     }
 
     private String configSnippet() {
