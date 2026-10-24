@@ -58,6 +58,9 @@ public class StreamableHttpConfig {
     private com.example.mcp_api.service.AiAssistService aiAssistService;
 
     @Autowired
+    private com.example.mcp_api.service.WhatsAppService whatsAppService;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     /**
@@ -201,7 +204,7 @@ public class StreamableHttpConfig {
         List<Map<String, Object>> tools = new ArrayList<>();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService};
+        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
@@ -291,7 +294,7 @@ public class StreamableHttpConfig {
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService};
+            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();
