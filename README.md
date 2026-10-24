@@ -289,6 +289,13 @@ with body variables ["Rahul", "#ORD-12345"]
 Send a WhatsApp text "Thanks, your request is noted" to +919999999999
 ```
 
+**Notes (common failures):**
+- **`token` must be base64 of `api_key:api_secret`** (not the secret alone). Build it with `printf '%s' 'API_KEY:API_SECRET' | base64`. A wrong or placeholder token is the usual cause of a `401`.
+- **Template name** is the lowercase identifier (e.g. `sample_issue_resolution`), not the display title.
+- **Language code must match Meta exactly** — `en` and `en_US` are different; a mismatch returns a `400`.
+- **Free text works only inside the 24-hour window** — i.e. the recipient messaged your `whatsapp_from` number in the last 24h. To start a new conversation, use a template.
+- A `202` response means Exotel **accepted** the message (returns a `sid`); it does not confirm WhatsApp delivery.
+
 ### Voice Services
 
 #### Make Voice Call
