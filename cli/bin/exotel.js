@@ -21,6 +21,7 @@ const BOOLEAN_FLAGS = new Set(['quiet',
 function parseArgs(argv) {
   const pos = [];
   const flags = {};
+  const names = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') {
@@ -30,6 +31,7 @@ function parseArgs(argv) {
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
       const key = eq > 0 ? a.slice(2, eq) : a.slice(2);
+      names.push(key);
       if (eq > 0) flags[key] = a.slice(eq + 1);
       else if (BOOLEAN_FLAGS.has(key)) flags[key] = true;
       else if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) flags[key] = argv[++i];
@@ -43,7 +45,7 @@ function parseArgs(argv) {
     if (flags[canonical] !== undefined && flags[internal] === undefined) flags[internal] = flags[canonical];
     delete flags[canonical];
   }
-  return { pos, flags };
+  return { pos, flags, names };
 }
 
 function confirm(summary, flags, kind = 'spend') {
@@ -587,7 +589,7 @@ ${ui.c.dim('All commands: exotel help all   ·   Help for one: exotel help <comm
 };
 
 async function main(argv) {
-  const { pos, flags } = parseArgs(argv);
+  const { pos, flags, names } = parseArgs(argv);
   if (flags.json) setJson(true);
   const [cmd, sub, ...rest] = pos;
   if (flags.version) return out({ version: pkg.version }, pkg.version);
@@ -601,6 +603,7 @@ async function main(argv) {
   if (cmd === 'help' && sub === 'all') return void process.stdout.write(HELP + '\n');
   if (!cmd || cmd === 'help') return void process.stdout.write((process.stdout.isTTY ? HOME() : HELP) + '\n');
   if (flags.help) return void process.stdout.write(HELP + '\n');
+  if (COMMANDS.includes(cmd) || ['campaign', 'skills', 'voiceai'].includes(cmd)) require('../lib/validate').check(cmd === 'voiceai' ? 'voice-ai' : cmd, sub, names);
   switch (cmd) {
     case 'init': return cmdInit(flags);
     case 'login': return cmdLogin(flags);
@@ -675,7 +678,10 @@ async function main(argv) {
     default: {
       const clean = String(cmd).replace(/[.,;:!?'"`]+$/, '');
       const near = require('../lib/ui').suggest(clean, COMMANDS);
-      const hint = clean !== cmd ? ` Did you mean "exotel ${clean}"? (a punctuation mark was copied with it)` : near ? ` Did you mean "exotel ${near}"?` : ' Run: exotel --help';
+      const words = pos.join(' ');
+      const hint = clean !== cmd ? ` Did you mean "exotel ${clean}"? (a punctuation mark was copied with it)`
+        : near ? ` Did you mean "exotel ${near}"?`
+          : pos.length > 1 ? `\nAsking a question? Try: exotel ask "${words}"\nAll commands: exotel help all` : ' Run: exotel help all';
       throw new CliError(`Unknown command "${cmd}".${hint}`, EXIT.USAGE);
     }
   }

@@ -592,3 +592,20 @@ test('ask: routes call records, campaigns and SDK questions', () => {
   assert.strictEqual(top('run a reminder campaign to 2000 numbers'), 'campaigns');
   assert.strictEqual(top('add calling to my android app with webrtc'), 'voice-sdks');
 });
+
+test('wrong input is caught before anything runs, with the right suggestion', async () => {
+  // A dry-run typo must never fall through to a real (billed) call, even with --yes.
+  for (const typo of ['dry-rnu', 'dryrun', 'dry-ru', 'dry_run']) {
+    const r = await cli(['call', '+919876543210', '--bot-id', 'Asha', '--caller-id', '08000000001', `--${typo}`, '--yes']);
+    assert.strictEqual(r.code, 2, typo);
+    assert.match(r.json.error, /Unknown option[\s\S]*Nothing was run/, typo);
+  }
+  assert.match((await cli(['call', '--too', '+91'])).json.error, /Did you mean --to\?/);
+  assert.match((await cli(['calls', 'list', '--sinse', '2026-11-01'])).json.error, /Did you mean --since\?/);
+  assert.match((await cli(['numbers', 'lsit'])).json.error, /Did you mean: exotel numbers list/);
+  assert.match((await cli(['voicebot', 'tescall'])).json.error, /exotel voicebot test-call/);
+  assert.match((await cli(['leg', 'sya', '--leg-sid', 'L1'])).json.error, /exotel leg say/);
+  assert.match((await cli(['how', 'do', 'i', 'make', 'a', 'call'])).json.error, /exotel ask "how do i make a call"/);
+  // every flag the docs and tests use is still accepted
+  assert.strictEqual((await cli(['numbers', 'available', '--type', 'mobile', '--region', 'KA', '--dry-run'])).code, 0);
+});

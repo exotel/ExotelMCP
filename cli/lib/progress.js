@@ -43,6 +43,9 @@ async function follow(poll, { timeoutSec = 300, intervalMs = 3000 } = {}) {
   let last = null;
   let lastPrint = t0;
   let data = null;
+  const spinBefore = process.env.EXOTEL_NO_SPIN;
+  process.env.EXOTEL_NO_SPIN = '1'; // the status lines are the progress; no spinner between them
+  try {
   while (Date.now() - t0 < timeoutSec * 1000) {
     let status = null;
     try {
@@ -63,6 +66,9 @@ async function follow(poll, { timeoutSec = 300, intervalMs = 3000 } = {}) {
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   return { status: 'timeout', data, seconds: timeoutSec };
+  } finally {
+    if (spinBefore === undefined) delete process.env.EXOTEL_NO_SPIN; else process.env.EXOTEL_NO_SPIN = spinBefore;
+  }
 }
 
 /** Human summary for the end of a call. */

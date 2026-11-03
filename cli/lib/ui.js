@@ -98,7 +98,7 @@ function statusColor(s) {
 /** Spinner on stderr while a promise runs; silent when not a terminal or in --json mode. */
 async function spin(text, promise) {
   const json = require('./io').isJson();
-  if (!errTty() || json || process.env.EXOTEL_QUIET === '1') return promise;
+  if (!errTty() || json || process.env.EXOTEL_QUIET === '1' || process.env.EXOTEL_NO_SPIN === '1') return promise;
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let i = 0;
   const draw = () => process.stderr.write(`\r${c.cyan(frames[i++ % frames.length], process.stderr)} ${text}`);
@@ -139,7 +139,11 @@ function distance(a, b) {
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 1; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      // swapped neighbours ("sya" → "say") count as one edit
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
   }
   return d[a.length][b.length];
 }
