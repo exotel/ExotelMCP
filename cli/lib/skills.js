@@ -11,7 +11,22 @@ function skillsRoot() {
   if (fs.existsSync(packaged)) return packaged;
   const repo = path.resolve(__dirname, '..', '..', 'skills'); // running from a git checkout
   if (fs.existsSync(repo)) return repo;
-  throw new Error('Bundled skills not found');
+  // Single-file binary: the skills are embedded; write them out once per version.
+  let embedded;
+  try {
+    embedded = require('./generated.json');
+  } catch {
+    throw new Error('Bundled skills not found');
+  }
+  const dir = path.join(require('./credentials').configDir(), `skills-${embedded.version}`);
+  if (!fs.existsSync(path.join(dir, '.complete'))) {
+    for (const [name, content] of Object.entries(embedded.skills)) {
+      fs.mkdirSync(path.join(dir, name), { recursive: true });
+      fs.writeFileSync(path.join(dir, name, 'SKILL.md'), content);
+    }
+    fs.writeFileSync(path.join(dir, '.complete'), '');
+  }
+  return dir;
 }
 
 function parseFrontmatter(md) {

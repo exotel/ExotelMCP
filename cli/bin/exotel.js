@@ -160,7 +160,9 @@ async function cmdDoctor() {
   }
   add('detected-clients', true, clients.detectClients().join(', ') || 'none');
   const ok = checks.every((x) => x.ok || x.name.startsWith('tool:'));
-  out({ ok, checks }, () => checks.map((x) => `${x.ok ? '✔' : '✘'} ${x.name.padEnd(48)} ${x.detail}`).join('\n'));
+  const ui = require('../lib/ui');
+  out({ ok, checks }, () => checks.map((x) => `${x.ok ? ui.c.green('✔') : x.name.startsWith('tool:') ? ui.c.dim('–') : ui.c.red('✘')} ${x.name.padEnd(48)} ${x.ok || !x.name.startsWith('tool:') ? x.detail : ui.c.dim(x.detail)}`).join('\n')
+    + `\n${ok ? ui.c.green('All good.') : ui.c.red('Something needs fixing (✘ above).')}${checks.some((x) => !x.ok && x.name.startsWith('tool:')) ? ui.c.dim('  – = optional MCP tools not on the hosted server yet; the CLI works without them.') : ''}`);
   if (!ok) process.exitCode = EXIT.ERROR;
 }
 
@@ -346,7 +348,7 @@ async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call'
   if (!flags['dry-run'] && confirmText) await confirm(confirmText, flags, 'spend');
   if (!flags['dry-run']) progress.info(`Placing ${label}…`);
   const res = await runTool(tool, args, confirmText ? { ...flags, yes: true } : flags, { quiet: true });
-  if (res.dryRun) return out(res.preview);
+  if (res.dryRun) return out(res.preview, () => `Dry run: nothing was called.\nWould ${confirmText ? confirmText.split('\n')[0].replace(/^Call/, 'call') : `run ${tool}`}\nTool: ${tool} ${JSON.stringify(res.preview.arguments)}`);
   const callSid = findCallSid(res.data);
   const result = { ok: res.ok, tool, callSid, response: res.data !== undefined ? res.data : res.text };
   if (!res.ok || !callSid) {
@@ -489,6 +491,7 @@ NOT SURE WHICH API?
 GET STARTED
   exotel call [number]        place a test call; asks what to connect (VoiceBot, flow or your wss bot)
   exotel config               saved defaults: your number, caller ID, default bot
+  exotel completion zsh|bash|fish   tab-completion for your shell
   exotel init                 log in, connect your coding agents (MCP), install Exotel skills
   exotel login | logout | whoami | doctor
   exotel balance              account balance
@@ -545,6 +548,7 @@ ENV     EXOTEL_ACCOUNT_SID EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_API_BASE_URL E
         EXOTEL_AUTH_JSON EXOTEL_MCP_URL EXOTEL_CONFIG_DIR`;
 
 const SUBHELP = {
+  completion: require('../lib/completion').COMPLETION_USAGE,
   call: CALL_USAGE,
   config: require('../lib/config').CONFIG_USAGE,
   numbers: platform.USAGE.NUMBERS_USAGE,
@@ -561,7 +565,7 @@ const SUBHELP = {
 };
 
 const COMMANDS = ['init', 'login', 'logout', 'whoami', 'doctor', 'config', 'call', 'balance', 'numbers', 'calls', 'campaigns', 'voicebot', 'voice-ai',
-  'integrate', 'leg', 'bridge', 'events', 'exoml', 'applet', 'trunk', 'api', 'mcp', 'skill', 'ask', 'explain', 'docs', 'help'];
+  'integrate', 'leg', 'bridge', 'events', 'exoml', 'applet', 'trunk', 'api', 'mcp', 'skill', 'ask', 'explain', 'docs', 'completion', 'help'];
 
 const HOME = () => {
   const ui = require('../lib/ui');
@@ -592,7 +596,8 @@ async function main(argv) {
   const { pos, flags, names } = parseArgs(argv);
   if (flags.json) setJson(true);
   const [cmd, sub, ...rest] = pos;
-  if (flags.version) return out({ version: pkg.version }, pkg.version);
+  // Plain version unless --json is asked for explicitly (scripts and package managers parse it).
+  if (flags.version) return void process.stdout.write(flags.json ? `${JSON.stringify({ version: pkg.version })}\n` : `${pkg.version}\n`);
   // Help is always plain text, piped or not. `exotel <cmd> --help` and `exotel help <cmd>` both work.
   const helpFor = cmd === 'help' ? sub : (flags.help ? cmd : null);
   if (helpFor) {
@@ -672,6 +677,7 @@ async function main(argv) {
     }
     case 'call': return cmdCall(sub, flags);
     case 'config': return require('../lib/config').cmd(sub, rest);
+    case 'completion': return require('../lib/completion').cmd(sub);
     case 'tools':
     case 'tool':
       throw new CliError(`"exotel ${cmd}" moved to "exotel mcp ${cmd}".`, EXIT.USAGE);

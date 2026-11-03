@@ -25,6 +25,7 @@ const SUBCOMMANDS = {
   integrate: ['elevenlabs', 'bolna'],
   config: ['list', 'show', 'get', 'set', 'unset'],
   docs: ['search', 'show', 'refresh'],
+  completion: ['zsh', 'bash', 'fish'],
 };
 
 function legVerbs() {
@@ -39,13 +40,20 @@ let known;
 function knownFlags() {
   if (known) return known;
   known = new Set(['json', 'yes', 'y', 'help', 'h', 'version', 'quiet', 'dry-run']);
-  const root = path.join(__dirname, '..');
-  const files = [path.join(root, 'bin', 'exotel.js')];
-  for (const dir of ['lib', path.join('lib', 'commands')]) {
-    // This file is excluded: it must never teach itself flags from its own comments or messages.
-    for (const f of fs.readdirSync(path.join(root, dir))) if (f.endsWith('.js') && f !== 'validate.js') files.push(path.join(root, dir, f));
+  let src;
+  try {
+    const root = path.join(__dirname, '..');
+    const files = [path.join(root, 'bin', 'exotel.js')];
+    for (const dir of ['lib', path.join('lib', 'commands')]) {
+      // This file is excluded: it must never teach itself flags from its own comments or messages.
+      for (const f of fs.readdirSync(path.join(root, dir))) if (f.endsWith('.js') && f !== 'validate.js') files.push(path.join(root, dir, f));
+    }
+    src = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  } catch {
+    // Single-file binary: no source on disk; the build embedded the same list.
+    for (const f of require('./generated.json').flags) known.add(f);
+    return known;
   }
-  const src = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   for (const m of src.matchAll(/--([a-z][a-z0-9-]*[a-z0-9])/g)) known.add(m[1]);
   for (const m of src.matchAll(/flags\[['"]([a-z][a-z0-9-]+)['"]\]|flags\.([a-z][a-zA-Z0-9]*)\b/g)) known.add(m[1] || m[2]);
   // ExoML one-liners map flag names to XML attributes: attrs(f, { 'storage-url': 'storageURL', engine: … })

@@ -16,6 +16,7 @@ test('every relative require() resolves', () => {
   const broken = [];
   for (const f of files) {
     for (const m of fs.readFileSync(f, 'utf8').matchAll(/require\('(\.{1,2}\/[^']+)'\)/g)) {
+      if (m[1] === './generated.json') continue; // only exists inside the single-file binary build
       try { require.resolve(path.resolve(path.dirname(f), m[1])); } catch { broken.push(`${path.relative(LIB, f)} → ${m[1]}`); }
     }
   }

@@ -13,6 +13,18 @@ server in every agent it finds (backing up each config file), and installs the E
 
 Requires Node.js 18+. No dependencies.
 
+## Install
+
+| How | Command | Needs |
+|-----|---------|-------|
+| npm | `npm install -g exotel-cli` (or run once: `npx exotel-cli init`) | Node.js 18+ |
+| Homebrew (macOS, Linux) | `brew install exotel/tap/exotel` | nothing else, includes tab-completion |
+| Single file | download `exotel-<version>-<os>-<arch>` from the GitHub release, put `exotel` on your PATH | nothing else |
+
+Tab-completion for npm installs: `exotel completion zsh > "${fpath[1]}/_exotel"` (or `bash`, `fish`; see `exotel help completion`).
+
+Building the binary yourself: `npm run build:binary` → `dist/exotel` (Node 25.5+ to build; the result needs no Node).
+
 ## Your first call in one command
 
 ```bash
