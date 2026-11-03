@@ -401,8 +401,14 @@ async function cmdInit(flags) {
     steps.mcp ? (steps.mcp.length ? steps.mcp.map((r) => `${/added|replaced|would/.test(r.status) ? '✔' : r.status === 'exists' ? '•' : '✘'} MCP → ${r.client}: ${r.status}${r.hint ? ` (${r.hint})` : ''}${r.error ? ` — ${r.error}` : ''}`).join('\n') : '• MCP: no agent clients detected (use --client)') : null,
     steps.skills ? `✔ Skills: ${steps.skills.filter((r) => /installed|would/.test(r.status)).length} installed, ${steps.skills.filter((r) => r.status === 'exists').length} already present` : null,
     '',
-    'Next: restart your agent (Claude Code: /mcp), then ask it for example:',
-    '  "Create an Exotel VoiceBot that confirms tomorrow\'s appointment, then test-call +91XXXXXXXXXX"',
+    'Next steps:',
+    '  1. Start your coding agent in your project folder (for Claude Code: type `claude` and press Enter).',
+    '     Already running? Quit it and start it again so it picks up Exotel.',
+    '  2. Inside the agent, check Exotel shows "connected" (Claude Code: type /mcp inside it, not in this shell).',
+    '  3. Ask it in plain words, for example:',
+    '     "What is my Exotel balance and which phone numbers do I have?"',
+    '     "Create an Exotel VoiceBot that confirms tomorrow\'s appointment, then test-call +91XXXXXXXXXX"',
+    '  Prefer the terminal? Try: exotel balance · exotel numbers list · exotel ask "connect my bot to a call"',
   ].filter((x) => x !== null).join('\n'));
 }
 
