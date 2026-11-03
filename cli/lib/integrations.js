@@ -187,7 +187,7 @@ async function call(p, flags) {
   const r = await http(p, req.method, req.path, req.body);
   const id = p === 'elevenlabs' ? r.conversation_id : (r.execution_id || r.id);
   if (!flags.wait || !id) return out({ ok: r.success !== false, platform: p, id, response: r }, `Call placed. id: ${id}\nNext: exotel integrate ${p} result --id ${id}`);
-  info(`Call placed (${id}). Waiting for it to finish…`);
+  require('./progress').info(`✔ ${p} accepted the call (id ${id}). Your phone should ring in a few seconds; answer it.`);
   return result(p, { ...flags, id }, { poll: true });
 }
 
@@ -196,12 +196,18 @@ async function result(p, flags, { poll = false } = {}) {
   if (!id) throw new CliError('Pass --id <conversation_id | execution_id>.', EXIT.USAGE);
   const deadline = Date.now() + Number(flags['wait-timeout'] || 300) * 1000;
   let d;
+  const t0 = Date.now();
+  let last = null;
+  let lastPrint = t0;
+  const say = (m) => require('./progress').info(m);
+  const clock = () => { const s = Math.round((Date.now() - t0) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   for (;;) {
     d = p === 'elevenlabs' ? await http(p, 'GET', `/v1/convai/conversations/${encodeURIComponent(id)}`) : await http(p, 'GET', `/executions/${encodeURIComponent(id)}`);
     const st = String(d.status || '').toLowerCase();
     if (!poll || /^(done|failed|completed|call-disconnected|no-answer|busy|error|stopped|canceled)$/.test(st) || Date.now() > deadline) break;
-    info(`  status: ${st || 'unknown'}`);
-    await sleep(8000);
+    if (st !== last) { say(`  [${clock()}] ${st || 'waiting'}`); last = st; lastPrint = Date.now(); }
+    else if (Date.now() - lastPrint >= 15000) { say(`  [${clock()}] still ${st || 'waiting'}…`); lastPrint = Date.now(); }
+    await sleep(3000);
   }
   let turns;
   let summary;

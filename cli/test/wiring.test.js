@@ -44,3 +44,25 @@ test('event receiver: localhost only, Basic auth enforced when configured', asyn
     server.close();
   }
 });
+
+test('call progress: prints each status change, ends with a plain result and next steps', async () => {
+  const progress = require('../lib/progress');
+  const seq = ['queued', 'ringing', 'ringing', 'in-progress', 'no-answer'];
+  const lines = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (s) => { lines.push(String(s)); return true; };
+  let r;
+  try {
+    r = await progress.follow(async () => ({ status: seq.shift(), data: {} }), { intervalMs: 1, timeoutSec: 5 });
+  } finally {
+    process.stderr.write = orig;
+  }
+  assert.strictEqual(r.status, 'no-answer');
+  const text = lines.join('');
+  for (const s of ['queued at Exotel', 'ringing…', 'in progress']) assert.ok(text.includes(s), `missing "${s}" in ${text}`);
+  assert.strictEqual((text.match(/ringing…/g) || []).length, 1, 'repeated statuses are not reprinted');
+  const sum = progress.summary({ status: r.status, callSid: 'CA1', next: progress.nextSteps(r.status, 'CA1', { voicebot: true }) });
+  assert.match(sum, /^✘ Nobody answered/);
+  assert.match(sum, /exotel explain no-answer/);
+  assert.match(progress.summary({ status: 'completed', callSid: 'CA2', duration: 42, next: progress.nextSteps('completed', 'CA2', { voicebot: true }) }), /✔ Call completed\. Duration: 42s\.[\s\S]*voicebot transcript --call-sid CA2/);
+});

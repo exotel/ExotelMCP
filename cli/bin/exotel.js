@@ -13,7 +13,7 @@ const platform = require('../lib/platform');
 const pkg = require('../package.json');
 const { EXIT, CliError, setJson, isJson, out, info, interactive, ask, confirm: confirmKind } = require('../lib/io');
 
-const BOOLEAN_FLAGS = new Set([
+const BOOLEAN_FLAGS = new Set(['quiet', 
   'json', 'yes', 'y', 'dry-run', 'force', 'project', 'help', 'h', 'version', 'no-verify', 'wait', 'reveal',
   'record', 'no-skills', 'no-mcp', 'show', 'sms', 'amd', 'async-amd', 'no-record', 'key-stdin', 'offline', 'list', 'refresh', 'ai', 'details', 'absorb-dtmf', 'password-stdin', 'api-token-stdin',
 ]);
@@ -329,29 +329,32 @@ function findStatus(data) {
 }
 
 async function waitForCall(callSid, statusTool, flags) {
-  const deadline = Date.now() + Number(flags.timeout || 300) * 1000;
-  let last = null;
-  while (Date.now() < deadline) {
+  const progress = require('../lib/progress');
+  const r = await progress.follow(async () => {
     const res = await runTool(statusTool, { callSid }, { ...flags, 'dry-run': false }, { quiet: true });
-    last = res.data !== undefined ? res.data : res.text;
-    const status = findStatus(res.data);
-    info(`  status: ${status || 'unknown'}`);
-    if (status && TERMINAL.test(status)) return { status, details: last };
-    await new Promise((r) => setTimeout(r, 10000));
-  }
-  return { status: 'timeout', details: last };
+    return { status: findStatus(res.data), data: res.data !== undefined ? res.data : res.text };
+  }, { timeoutSec: Number(flags.timeout || flags['wait-timeout'] || 300) });
+  return { status: r.status, seconds: r.seconds, details: r.data };
 }
 
-async function placeAndMaybeWait(tool, args, flags, statusTool) {
+async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call', voicebot = false } = {}) {
+  const progress = require('../lib/progress');
+  if (!flags['dry-run']) progress.info(`Placing ${label}…`);
   const res = await runTool(tool, args, flags, { quiet: true });
   if (res.dryRun) return out(res.preview);
   const callSid = findCallSid(res.data);
   const result = { ok: res.ok, tool, callSid, response: res.data !== undefined ? res.data : res.text };
-  if (res.ok && callSid && flags.wait) {
-    info(`Call placed: ${callSid}. Waiting for it to finish…`);
-    result.final = await waitForCall(callSid, statusTool, flags);
+  if (!res.ok || !callSid) {
+    process.exitCode = EXIT.ERROR;
+    return out(result, (d) => `✘ Exotel did not place the call.\n${typeof d.response === 'string' ? d.response : JSON.stringify(d.response, null, 2)}\nCheck the caller ID is an ExoPhone on your account (exotel numbers list) and the number format (+91…).`);
   }
-  out(result, (d) => `${d.ok ? 'Call placed' : 'Call failed'}${d.callSid ? `: ${d.callSid}` : ''}${d.final ? `\nFinal status: ${d.final.status}` : ''}${d.ok ? '' : `\n${typeof d.response === 'string' ? d.response : JSON.stringify(d.response, null, 2)}`}`);
+  if (!flags.wait) {
+    return out(result, () => `✔ Exotel accepted the call. CallSid: ${callSid}\nYour phone should ring in a few seconds.\nFollow it: exotel calls get --call-sid ${callSid}   (or add --wait next time to watch it live)`);
+  }
+  progress.info(`✔ Exotel accepted the call (CallSid ${callSid}). Your phone should ring in a few seconds; answer it.`);
+  result.final = await waitForCall(callSid, statusTool, flags);
+  if (result.final.status !== 'completed') process.exitCode = EXIT.ERROR;
+  out(result, () => progress.summary({ status: result.final.status, callSid, next: progress.nextSteps(result.final.status, callSid, { voicebot }) }));
 }
 
 async function cmdVoicebot(sub, flags) {
@@ -363,7 +366,7 @@ async function cmdVoicebot(sub, flags) {
     if (!callerId) throw new CliError('Pass --caller-id (an ExoPhone on the account; see `exotel numbers list`).', EXIT.USAGE);
     return placeAndMaybeWait('exotel_voicebot_place_call', {
       toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '',
-    }, flags, 'exotel_voicebot_call_status');
+    }, flags, 'exotel_voicebot_call_status', { label: `a VoiceBot test call to ${flags.to} from ${callerId}`, voicebot: true });
   }
   const vb = require('../lib/voicebot');
   if (sub === 'create') return vb.create(flags);

@@ -243,27 +243,30 @@ async function voiceAi(sub, flags) {
     form['StatusCallbackEvents[]'] = ev.split(',');
   } else if (form.StatusCallback) form['StatusCallbackEvents[]'] = ['terminal'];
 
+  if (!flags['dry-run']) require('../progress').info(`Placing a call to ${to} from ${callerId} → ${target}…`);
   const res = await run(flags, {
     kind: 'spend', summary: `Call ${to} from ${callerId} and connect it to ${target}`,
     request: { method: 'POST', path: '/v1/Accounts/{sid}/Calls/connect.json', form }, quiet: !!flags.wait,
   });
   if (res.status === 403) info('403: Connect Voice AI may not be enabled on this account. Ask Exotel support to enable it.');
-  if (!flags.wait || !res.ok || res.dryRun) return res;
+  if (!flags.wait || !res.ok || res.dryRun) {
+    const sid = res.ok && res.data && res.data.Call && res.data.Call.Sid;
+    if (sid && !flags.wait && !res.dryRun) info(`✔ Exotel accepted the call (CallSid ${sid}). Your phone should ring in a few seconds.\n  Follow it: exotel calls get --call-sid ${sid}   (or add --wait to watch it live)`);
+    return res;
+  }
   const callSid = res.data && res.data.Call && res.data.Call.Sid;
   if (!callSid) return out({ ok: true, data: res.data });
-  info(`Call placed: ${callSid}. Waiting for it to finish…`);
-  const deadline = Date.now() + Number(flags['wait-timeout'] || 300) * 1000;
-  let last;
-  while (Date.now() < deadline) {
-    const r = await rest.send(rest.buildRequest(a, { path: `/v1/Accounts/{sid}/Calls/${encodeURIComponent(callSid)}.json` }));
-    last = r.data;
-    const st = last && last.Call && last.Call.Status;
-    info(`  status: ${st || 'unknown'}`);
-    if (st && /^(completed|failed|busy|no-answer|canceled)$/.test(st)) break;
-    await new Promise((r2) => setTimeout(r2, 8000));
-  }
-  const c = (last && last.Call) || {};
-  out({ ok: true, callSid, final: last }, () => `Call ${callSid}: ${c.Status || 'timeout'}${c.Duration ? `, ${c.Duration}s` : ''}${c.RecordingUrl ? `\nRecording: ${c.RecordingUrl}` : ''}`);
+  require('../progress').info(`✔ Exotel accepted the call (CallSid ${callSid}). Your phone should ring in a few seconds; answer it.`);
+  const progress = require('../progress');
+  const r = await progress.follow(async () => {
+    const x = await rest.send(rest.buildRequest(a, { path: `/v1/Accounts/{sid}/Calls/${encodeURIComponent(callSid)}.json` }));
+    return { status: x.data && x.data.Call && x.data.Call.Status, data: x.data };
+  }, { timeoutSec: Number(flags['wait-timeout'] || 300) });
+  const c = (r.data && r.data.Call) || {};
+  if (r.status !== 'completed') process.exitCode = EXIT.ERROR;
+  const next = progress.nextSteps(r.status, callSid, { voicebot: !!flags.flow });
+  if (c.RecordingUrl) next.unshift(`exotel calls recording --call-sid ${callSid}    download the recording`);
+  out({ ok: r.status === 'completed', callSid, status: r.status, final: r.data }, () => progress.summary({ status: r.status, callSid, duration: c.Duration, next }));
   return res;
 }
 
