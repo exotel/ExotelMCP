@@ -17,8 +17,20 @@ function checkBasic(header, user, pass) {
 }
 
 /** Local receiver: acks immediately (200), then prints/forwards the event. */
+/** Basic auth for the event receiver (EXOTEL_EVENTS_USER / EXOTEL_EVENTS_PASS); warns when it is off. */
+function authFromEnv() {
+  const basicUser = process.env.EXOTEL_EVENTS_USER;
+  const basicPass = process.env.EXOTEL_EVENTS_PASS;
+  if (!basicUser || !basicPass) {
+    require('./io').info('Note: the event receiver accepts unauthenticated POSTs. Anyone with your tunnel URL could send fake events.\n'
+      + '  Set EXOTEL_EVENTS_USER and EXOTEL_EVENTS_PASS, and ask Exotel support to send them as Basic auth on your event endpoint.');
+    return {};
+  }
+  return { basicUser, basicPass };
+}
+
 function listen({ port = 8080, host = '127.0.0.1', basicUser, basicPass, onEvent, logFile, wsProxyPort }) {
-  const seen = new Set();
+  const seen = new Set(); // event_sid de-duplication; bounded below
   const server = http.createServer((req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(405, { Allow: 'POST' });
@@ -46,7 +58,10 @@ function listen({ port = 8080, host = '127.0.0.1', basicUser, basicPass, onEvent
       }
       const sid = req.headers['x-exotel-event-sid'] || event.event_sid;
       const duplicate = sid && seen.has(sid);
-      if (sid) seen.add(sid);
+      if (sid) {
+        seen.add(sid);
+        if (seen.size > 10000) seen.delete(seen.values().next().value);
+      }
       const record = {
         received_at: new Date().toISOString(),
         request_id: req.headers['x-exotel-request-id'] || null,
@@ -242,4 +257,4 @@ function scaffold(lang, dir, { force = false } = {}) {
   return { file, status: 'created' };
 }
 
-module.exports = { listen, summarize, scaffold, TEMPLATES, EXOTEL_SOURCE_IPS, checkBasic };
+module.exports = { authFromEnv, listen, summarize, scaffold, TEMPLATES, EXOTEL_SOURCE_IPS, checkBasic };

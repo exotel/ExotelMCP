@@ -67,7 +67,8 @@ async function recording(flags) {
   if (flags['dry-run']) return out({ dryRun: true, recordingUrl: url, out: outPath });
   // Recording URLs are served from Exotel storage; some need the account's Basic auth.
   let res = await fetch(url, { signal: AbortSignal.timeout(60000) });
-  if (res.status === 401 || res.status === 403) res = await fetch(url, { headers: { Authorization: `Basic ${a.token}` }, signal: AbortSignal.timeout(60000) });
+  const exotelHost = /(^|\.)exotel\.(com|in)$/i.test(new URL(url).hostname);
+  if ((res.status === 401 || res.status === 403) && exotelHost && new URL(url).protocol === 'https:') res = await fetch(url, { headers: { Authorization: `Basic ${a.token}` }, signal: AbortSignal.timeout(60000) });
   if (!res.ok) throw new CliError(`Download failed (HTTP ${res.status}). Recording URLs are time-limited; download within the retention period.`, EXIT.ERROR);
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(outPath, buf);

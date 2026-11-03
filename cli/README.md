@@ -99,3 +99,15 @@ cd cli && npm test           # unit + CLI tests, no network
 node bin/exotel.js doctor    # live checks
 npm pack                     # bundles ../skills into the package
 ```
+
+## Security notes
+
+- Event receiver (`events listen`, `voice-ai … --listen`, `voice-ai inbound`): listens on `127.0.0.1` only. Set
+  `EXOTEL_EVENTS_USER` / `EXOTEL_EVENTS_PASS` to require Basic auth, and ask Exotel support to send those credentials
+  on your event endpoint; otherwise anyone with your tunnel URL can post fake events.
+- Your bot's public wss URL: add a shared secret (`BOT_TOKEN` in `examples/exotel-voice-agent`).
+- `exotel calls recording` sends your Exotel credentials only to `*.exotel.com` / `*.exotel.in` over HTTPS.
+- `exotel integrate elevenlabs setup` gives ElevenLabs your Exotel API key and token (ElevenLabs needs them to place
+  calls); it asks first. Use a separate API key for it so you can revoke it on its own.
+- `claude mcp add` receives the MCP Authorization header as a command argument for a moment during `exotel init`;
+  other clients' config files are written with mode 600.

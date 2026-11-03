@@ -197,7 +197,7 @@ function bridge(sub, flags) {
 }
 
 async function eventsCmd(sub, flags) {
-  const ev = require('./events');
+  const ev = require('../events');
   if (sub === 'scaffold') {
     const r = ev.scaffold(need(flags, 'lang', /^(node|python)$/, 'node or python'), flags.dir && flags.dir !== true ? flags.dir : '.', { force: !!flags.force });
     out(r, () => `${r.status === 'created' ? '✔ Created' : '• Exists (use --force)'} ${r.file}\nRun it, put it behind HTTPS, then: exotel leg create … --events https://<your-host>/`);
@@ -208,9 +208,9 @@ async function eventsCmd(sub, flags) {
     const logFile = flags.log && flags.log !== true ? String(flags.log) : undefined;
     const server = await ev.listen({
       port, host: flags.host && flags.host !== true ? String(flags.host) : '127.0.0.1',
-      basicUser: process.env.EXOTEL_EVENTS_USER, basicPass: process.env.EXOTEL_EVENTS_PASS, logFile,
+      ...ev.authFromEnv(), logFile,
       wsProxyPort: flags['ws-proxy'] ? Number(need(flags, 'ws-proxy', /^\d{2,5}$/, 'local bot port')) : undefined,
-      onEvent: (r) => (require('./io').isJson() ? process.stdout.write(JSON.stringify(r) + '\n') : process.stdout.write(ev.summarize(r) + '\n')),
+      onEvent: (r) => (require('../io').isJson() ? process.stdout.write(JSON.stringify(r) + '\n') : process.stdout.write(ev.summarize(r) + '\n')),
     });
     info(`Listening for Exotel events on http://${server.address().address}:${server.address().port}/ (acks 200 immediately).
 Exotel needs a public HTTPS URL: expose this port (e.g. \`ngrok http ${port}\` or \`cloudflared tunnel --url http://localhost:${port}\`)

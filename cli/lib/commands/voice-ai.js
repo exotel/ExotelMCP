@@ -114,9 +114,9 @@ async function voiceAiViaLegs(flags) {
   let legSid = null;
   let sayDone = false;
   if (port) {
-    const ev = require('./events');
+    const ev = require('../events');
     server = await ev.listen({
-      port, host: '0.0.0.0', wsProxyPort: flags['ws-proxy'] ? Number(need(flags, 'ws-proxy', /^\d{2,5}$/)) : undefined,
+      port, host: '127.0.0.1', ...ev.authFromEnv(), wsProxyPort: flags['ws-proxy'] ? Number(need(flags, 'ws-proxy', /^\d{2,5}$/)) : undefined,
       onEvent: async (rec) => {
         const e = rec.event || {};
         const d = e.data || {};
@@ -167,9 +167,9 @@ async function voiceAiInbound(flags) {
   await confirm('live', `Route inbound calls on ${number} to ${events} (Legs events) and stream them to ${url}`, flags);
   const act = (leg, xml, tag) => rest.send(rest.buildRequest(a, { method: 'POST', host: 'cpaas', path: `${P}/${leg}/actions`, json: { action_custom_param: tag, exoml: xml } }));
   const handled = new Set();
-  const ev = require('./events');
+  const ev = require('../events');
   const server = await ev.listen({
-    port, host: '0.0.0.0', wsProxyPort: flags['ws-proxy'] ? Number(flags['ws-proxy']) : undefined,
+    port, host: '127.0.0.1', ...ev.authFromEnv(), wsProxyPort: flags['ws-proxy'] ? Number(need(flags, 'ws-proxy', /^\d{2,5}$/, 'local bot port')) : undefined,
     onEvent: async (rec) => {
       if (rec.duplicate) return;
       const e = rec.event || {};

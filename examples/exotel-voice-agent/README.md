@@ -82,3 +82,11 @@ Your phone rings; answer and you hear yourself. Then swap `/echo` for `/booking`
 - Tests: `test_local.py` (echo, fake Exotel call) and `test_ai_mock.py` (AI path at 8 and 16 kHz against a fake OpenAI
   Realtime server: resampling, chunk sizes, both barge-in cases, save_booking to records.jsonl and webhook, end_call,
   transcript, logging). Not yet tested on a live call or against the real OpenAI API.
+
+## Security
+
+- **Protect the public URL.** Set `BOT_TOKEN=<long random string>` and put `?token=<same value>` in the stream URL you
+  give Exotel (e.g. `wss://<host>/booking?sample-rate=8000&token=…`). Connections without it are closed (1008).
+  Without a token, anyone who finds your tunnel URL can open AI sessions billed to your OpenAI key.
+- The server listens on `127.0.0.1` (tunnels forward to localhost). Set `HOST=0.0.0.0` only inside a container.
+- `records.jsonl` and `transcripts/` hold callers' numbers and words: keep them out of git and delete them when done.

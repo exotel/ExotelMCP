@@ -17,6 +17,7 @@ Outbound chunks: multiple of 320 bytes, 3,200-100,000 bytes.
 """
 import asyncio
 import base64
+import hmac
 import json
 import logging
 import os
@@ -37,6 +38,10 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-realtime")
 OPENAI_VOICE = os.getenv("OPENAI_VOICE", "marin")
 OPENAI_URL = os.getenv("OPENAI_REALTIME_URL", f"wss://api.openai.com/v1/realtime?model={OPENAI_MODEL}")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()          # optional connector (CRM / Zapier / Sheets)
+# Shared secret: when set, Exotel must connect with ?token=<BOT_TOKEN> in the stream URL. Without it, anyone who
+# finds your public wss URL can open AI sessions billed to your OpenAI key.
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+HOST = os.getenv("HOST", "127.0.0.1")                      # tunnels (ngrok, cloudflared) forward to localhost
 DEFAULT_USE_CASE = os.getenv("USE_CASE", "receptionist")
 AI_RATE = 24000                                             # OpenAI Realtime PCM rate
 # Caller-side transcript for the logs. Without a hint the model guesses the language per utterance and can
@@ -390,6 +395,12 @@ END_CALL_TOOL = {
 
 async def handler(ws):
     path = getattr(getattr(ws, "request", None), "path", None) or getattr(ws, "path", "/")
+    if BOT_TOKEN:
+        given = (parse_qs(urlparse(path).query).get("token") or [""])[0]
+        if not hmac.compare_digest(given.encode(), BOT_TOKEN.encode()):
+            log.warning("rejected connection: missing or wrong ?token=")
+            await ws.close(code=1008, reason="unauthorized")
+            return
     session = CallSession(ws, path)
     try:
         await session.run()
@@ -402,9 +413,10 @@ async def handler(ws):
 
 async def main():
     mode = "OpenAI Realtime + echo" if OPENAI_API_KEY else "echo only (set OPENAI_API_KEY for AI)"
-    log.info("🚀 Exotel voice agent on ws://0.0.0.0:%s  [%s]", PORT, mode)
-    log.info("   paths: /echo /receptionist /booking /lead   webhook=%s", WEBHOOK_URL or "off")
-    async with websockets.serve(handler, "0.0.0.0", PORT, max_size=None, ping_interval=20):
+    log.info("🚀 Exotel voice agent on ws://%s:%s  [%s]", HOST, PORT, mode)
+    log.info("   paths: /echo /receptionist /booking /lead   webhook=%s   token=%s",
+             urlparse(WEBHOOK_URL).hostname if WEBHOOK_URL else "off", "required" if BOT_TOKEN else "off (set BOT_TOKEN)")
+    async with websockets.serve(handler, HOST, PORT, max_size=2**20, ping_interval=20):
         await asyncio.Future()
 
 
