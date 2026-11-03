@@ -1,6 +1,6 @@
 {
   "name": "exotel-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Agent-first CLI for Exotel: log in once, wire the Exotel MCP server into Claude Code, Cursor, Codex, VS Code, Windsurf or Claude Desktop, install Exotel agent skills, and call any Exotel MCP tool with JSON output, --dry-run and spend confirmation.",
   "license": "MIT",
   "type": "commonjs",

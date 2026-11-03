@@ -104,7 +104,12 @@ async function cmdLogin(flags) {
       verification = { ok: false, error: e.message };
     }
     if (!verification.ok && (verification.status === 401 || verification.status === 403)) {
-      throw new CliError(`Exotel rejected these credentials (HTTP ${verification.status}). Check the SID, key, token and region.`, EXIT.AUTH, { verification });
+      const said = String(verification.body || '').replace(/\s+/g, ' ').slice(0, 160);
+      const portal = /api\.in\./.test(apiDomain) ? 'my.in.exotel.com' : 'my.exotel.com';
+      throw new CliError(`Exotel rejected these credentials (HTTP ${verification.status})${said ? `: ${said}` : ''}\n`
+        + `  • Each API key has its own token: copy both from the same row on https://${portal}/${accountSid}/apisettings/site#api-credentials\n`
+        + `  • Check the region: your dashboard is ${portal} → region ${/api\.in\./.test(apiDomain) ? 'in' : 'sg'}\n`
+        + '  • A new or regenerated key must be active (only account Admins can see and manage keys)', EXIT.AUTH, { verification });
     }
   }
   const file = flags['dry-run'] ? null : creds.save(auth);
@@ -420,8 +425,10 @@ CALLS, RECORDINGS, CAMPAIGNS  → exotel calls --help, exotel campaigns --help
 
 PHONE NUMBERS (ExoPhones)
   exotel numbers list | get --exophone-sid <sid>
-  exotel numbers update --exophone-sid <sid> --voice-url <flow url>   ~  changes live routing
-  Buying / releasing numbers: coming soon. Contact Exotel support for now.
+  exotel numbers available [--type landline|mobile|tollfree --region KA]   search numbers you can buy
+  exotel numbers buy --number <number> [--app-id <flow>]               $  one-time + monthly charges
+  exotel numbers update --exophone-sid <sid> --app-id <flow>           ~  changes live routing
+  exotel numbers release --exophone-sid <sid>                          !  permanent
 
 SIP TRUNKING (Dynamic SIP trunks)
   exotel trunk setup --name <n> --number <E.164> --ip <IPv4> --uri <host:port>   create + configure in one go

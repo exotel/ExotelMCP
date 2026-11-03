@@ -52,7 +52,7 @@ function ask(question, { secret = false, def } = {}) {
 }
 
 const KIND_LABEL = {
-  spend: 'BILLED / CONTACTS A REAL PERSON',
+  spend: 'BILLED (charges your Exotel account)',
   destructive: 'CANNOT BE UNDONE',
   live: 'CHANGES LIVE CALL ROUTING',
 };

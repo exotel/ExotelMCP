@@ -26,7 +26,7 @@ One-line ExoML actions on a live leg (all POST /legs/<leg_sid>/actions):
   exotel leg dial --leg-sid <sid> --to <num> --exophone <num>   |  send-digits --leg-sid <sid> --digits 1234#
   exotel leg monitor --leg-sid <sid> (--monitor-leg <sid> | --to <supervisor>) [--rx muted|enabled]  |  stop-monitor
   exotel leg refer --leg-sid <sid> --events <new endpoint>
-Inbound calls without a flow: exotel leg inbound --number <LP DID> --events https://…   ~
+Inbound calls without a flow: exotel leg inbound --number <LP DID> --events https://…   (prints the setup steps)
 exotel leg action --leg-sid <leg_sid> (--file flow.xml | --xml '<Flow>…</Flow>') [--param <tag>]
 
 Bridges (join legs into one conversation)
@@ -134,11 +134,11 @@ function leg(sub, flags) {
     return run(flags, { kind: 'read', summary: `Events for leg ${flags.leg}`, request: { host: 'cpaas', path: `${P}/${id}/external_events`, query: { event_name: opt(flags, 'name', /^[a-z_]+$/) } } });
   }
   if (sub === 'inbound') {
-    // Map a DID to your event endpoint so inbound calls arrive as leg_incoming events (no App Bazaar flow).
+    // Attaching a DID to an event endpoint has no public API: Exotel support does it (AgentStream "what to use when", Inbound B).
     const number = need(flags, 'number', /^\+?\d{6,15}$/, 'the DID (LP number from Exotel support)');
     const url = need(flags, 'events', /^https:\/\/\S+$/, 'your HTTPS event endpoint (https://…)');
-    return run(flags, { kind: 'live', summary: `Send inbound calls on ${number} to ${url} as Legs events (replaces the number's current inbound handling)`,
-      request: { method: 'POST', host: 'cpaas', path: '/v2/accounts/{sid}/callback', json: { phonenumber: number, callbackurl: url } } });
+    const steps = inboundSteps(number, url);
+    return out({ ok: true, number, events: url, viaSupport: true, steps }, steps.join('\n'));
   }
   if (LEG_VERBS[sub]) {
     const xml = LEG_VERBS[sub](flags);
@@ -225,4 +225,17 @@ Ctrl+C to stop.`);
   throw new CliError(LEG_USAGE.slice(LEG_USAGE.indexOf('Events')), EXIT.USAGE);
 }
 
-module.exports = { leg, bridge, eventsCmd, LEG_USAGE, LEG_VERBS };
+/** Inbound ExoML without a flow: the DID is attached to your event endpoint by Exotel support (no public API yet). */
+function inboundSteps(number, url) {
+  return [
+    `Inbound calls on ${number} without an App Bazaar flow (ExoML):`,
+    `1. Ask Exotel support to attach ${number} to your HTTPS event endpoint ${url}`,
+    '   (Legs / Programmable Voice inbound; docs: docs.exotel.com/exotel-agentstream/agentstream-what-to-use-when, "Inbound B").',
+    '   Include your Account SID and, if you use one, the Basic-auth user/password for the endpoint.',
+    '2. Run your endpoint, or let the CLI handle calls: exotel voice-ai inbound --number … --stream-url wss://… --events … --listen <port>',
+    '3. Call the number: on leg_incoming send <Answer/>, on leg_answered send <StartStream …/> (the CLI does both).',
+    'Prefer no support step? Use a flow instead: exotel voicebot attach --number … --app-id <flow with a Voicebot applet>.',
+  ];
+}
+
+module.exports = { inboundSteps, leg, bridge, eventsCmd, LEG_USAGE, LEG_VERBS };

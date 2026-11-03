@@ -20,7 +20,7 @@ before anything that costs money.
 - A computer with **Node.js 18 or later**.
 - For your own bot: a public `wss://` address for it (while testing, a tunnel such as ngrok).
 
-New numbers are provided by Exotel support. Real-time call control (Legs API) needs an LP-enabled API key and
+Find and buy numbers with `exotel numbers available` and `exotel numbers buy` (Indian numbers need approved KYC). Real-time call control (Legs API) needs an LP-enabled API key and
 an LP number from Exotel support.
 
 ## Step 1: Connect

@@ -26,7 +26,7 @@ exotel docs show https://developer.exotel.com/docs/agentstream/connect-voice-ai 
 | Product | Commands | Docs |
 |---------|----------|------|
 | Account | `exotel balance` | Voice v1 → Balance |
-| Phone numbers (ExoPhones) | `exotel numbers list \| get \| update` (buying/releasing: coming soon, via Exotel support today) | ExoPhones API |
+| Phone numbers (ExoPhones) | `exotel numbers available \| buy \| list \| get \| update \| release` | ExoPhones API |
 | SIP trunking | `exotel trunk setup` (all steps at once), or `create \| map-number \| set-number-mode \| whitelist-ip \| destination \| credentials add\|list\|delete \| caller-id \| delete` | Dynamic SIP Trunking |
 | **Your own voice bot (standard)** | `exotel voice-ai connect --to … --stream-url wss://…`, or `--app-id <app_id>` for an App Bazaar flow with a Voicebot applet | Connect Voice AI API |
 | Exotel VoiceBot | `exotel voicebot list \| test-call \| transcript` | VoiceBot |

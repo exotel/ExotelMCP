@@ -154,7 +154,8 @@ async function voiceAiViaLegs(flags) {
 }
 
 async function voiceAiInbound(flags) {
-  // Inbound without a flow: register the DID to the event endpoint, then answer each call and stream it to the bot.
+  // Inbound without a flow: Exotel support attaches the DID to the event endpoint (no public API); the CLI answers
+  // each call and streams it to the bot.
   const a = auth();
   const number = need(flags, 'number', /^\+?\d{6,15}$/, 'your LP number (DID) from Exotel support');
   const url = need(flags, 'stream-url', /^wss?:\/\/\S{1,590}$/, 'bot wss:// URL');
@@ -162,9 +163,9 @@ async function voiceAiInbound(flags) {
   const port = Number(need(flags, 'listen', /^\d{2,5}$/, 'local port behind the --events URL'));
   const greeting = flags.greeting && flags.greeting !== true ? String(flags.greeting) : '';
   const P = '/v2/accounts/{sid}/legs';
-  const reg = { method: 'POST', host: 'cpaas', path: '/v2/accounts/{sid}/callback', json: { phonenumber: number, callbackurl: events } };
-  if (flags['dry-run']) return out({ dryRun: true, kind: 'live', register: rest.preview(rest.buildRequest(a, reg)), onLegIncoming: '<Flow><Answer/></Flow>', onLegAnswered: `<Flow><StartStream streamType="bidirectional" streamUrl="${xa(url)}"/></Flow>` });
-  await confirm('live', `Route inbound calls on ${number} to ${events} (Legs events) and stream them to ${url}`, flags);
+  const setup = require('./legs').inboundSteps(number, events);
+  if (flags['dry-run']) return out({ dryRun: true, setup, onLegIncoming: '<Flow><Answer/></Flow>', onLegAnswered: `<Flow><StartStream streamType="bidirectional" streamUrl="${xa(url)}"/></Flow>` });
+  info(`${setup[0]}\n${setup[1]}\n${setup[2]}`);
   const act = (leg, xml, tag) => rest.send(rest.buildRequest(a, { method: 'POST', host: 'cpaas', path: `${P}/${leg}/actions`, json: { action_custom_param: tag, exoml: xml } }));
   const handled = new Set();
   const ev = require('../events');
@@ -183,19 +184,14 @@ async function voiceAiInbound(flags) {
       }
     },
   });
-  const r = await rest.send(rest.buildRequest(a, reg));
-  if (!r.ok) {
-    server.close();
-    throw new CliError(`Registering ${number} failed (HTTP ${r.status}${r.code ? `, code ${r.code}` : ''}): ${r.hint || r.message || JSON.stringify(r.data).slice(0, 200)}`, EXIT.ERROR, { data: r.data });
-  }
-  info(`✔ ${number} → ${events}. Listening on :${port}. Call ${number} now; Ctrl+C to stop.`);
+  info(`Listening on 127.0.0.1:${port} (expose it at ${events}). Once support has attached ${number}, call it; Ctrl+C to stop.`);
   await new Promise((resolve) => {
     const stop = () => server.close(resolve);
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
     if (flags['wait-timeout']) setTimeout(stop, Number(flags['wait-timeout']) * 1000);
   });
-  return out({ ok: true, number, events, callsHandled: handled.size }, `Stopped. Calls handled: ${handled.size}. Note: ${number} still points to ${events} until you register another endpoint.`);
+  return out({ ok: true, number, events, callsHandled: handled.size, setup }, `Stopped. Calls handled: ${handled.size}. ${number} stays attached to ${events} until Exotel support changes it.`);
 }
 
 async function voiceAi(sub, flags) {

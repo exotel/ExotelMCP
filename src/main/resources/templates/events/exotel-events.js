@@ -35,7 +35,7 @@ async function handle(event) {
   const leg = event.data && event.data.leg_sid;
   switch (event.event_name) {
     case 'leg_incoming':
-      // Inbound call on a DID registered to this endpoint (POST /v2/accounts/<sid>/callback): answer it.
+      // Inbound call on a DID that Exotel support attached to this endpoint: answer it.
       await legAction(leg, '<Flow><Answer/></Flow>', 'answer');
       break;
     case 'leg_answered':

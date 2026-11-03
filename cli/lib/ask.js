@@ -156,7 +156,7 @@ const INTENTS = [
     match: [/\b(buy|purchase|get|new|release|provision)\b.*\b(number|exophone|did|toll ?free)\b/, /\bexophone\b/],
     api: 'ExoPhones API: /v2_beta/Accounts/{sid}/IncomingPhoneNumbers',
     steps: ['exotel numbers list | get --exophone-sid <sid>', 'Route to a flow: exotel numbers update --exophone-sid <sid> --voice-url <flow url>'],
-    gotchas: ['Buying/releasing numbers from the CLI is coming soon: get numbers from Exotel support (KYC applies).'],
+    gotchas: ['Buy: exotel numbers available, then exotel numbers buy --number … (billed; Indian numbers need approved KYC). Release: exotel numbers release (permanent).'],
     query: 'exophone numbers',
   },
   {
@@ -173,7 +173,7 @@ const INTENTS = [
     match: [/\b(event|events|webhook|status ?callback|callback)\b/],
     api: 'Voice v1 StatusCallback (answered/terminal); Legs events to an HTTPS endpoint (2xx within ~1 s, 3 retries)',
     steps: ['exotel events listen --port 8787   (local receiver)', 'exotel events scaffold --lang node|python'],
-    gotchas: ['Inbound Legs events: register the DID with exotel leg inbound --number … --events …'],
+    gotchas: ['Inbound without a flow: Exotel support attaches the DID to your HTTPS event endpoint (no public API); exotel leg inbound prints the steps.'],
     query: 'status callback events https endpoint',
   },
   {

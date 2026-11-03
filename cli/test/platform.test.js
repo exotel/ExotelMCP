@@ -127,15 +127,22 @@ test('billed, destructive and live-routing actions need --yes', async () => {
   }
 });
 
-test('reads do not need --yes; number purchase is "coming soon"', async () => {
+test('numbers: available (read), buy ($), release (!), update by --app-id', async () => {
   const b = await cli(['balance', '--dry-run']);
   assert.strictEqual(b.json.request.url, 'https://api.in.exotel.com/v1/Accounts/acme1/Balance.json');
-  for (const sub of ['buy', 'available', 'release']) {
-    const r = await cli(['numbers', sub, '--number', '+918000000001', '--yes']);
-    assert.strictEqual(r.code, 2);
-    assert.match(r.json.error, /coming soon.*Exotel support/s);
-    assert.strictEqual(r.json.coming_soon, true);
-  }
+  const av = await cli(['numbers', 'available', '--type', 'mobile', '--region', 'ka', '--contains', '80', '--dry-run']);
+  assert.strictEqual(av.json.request.url, 'https://api.in.exotel.com/v2_beta/Accounts/acme1/AvailablePhoneNumbers/IN/Mobile?InRegion=ka&Contains=80');
+  const buy = await cli(['numbers', 'buy', '--number', '+918000000001', '--app-id', '31549', '--dry-run']);
+  assert.strictEqual(buy.json.kind, 'spend');
+  assert.strictEqual(buy.json.request.method, 'POST');
+  assert.match(buy.json.request.body, /PhoneNumber=%2B918000000001&VoiceUrl=http%3A%2F%2Fmy\.exotel\.com%2Facme1%2Fexoml%2Fstart_voice%2F31549/);
+  assert.strictEqual((await cli(['numbers', 'buy', '--number', '+918000000001'])).code, 3);   // billed: needs --yes
+  const rel = await cli(['numbers', 'release', '--exophone-sid', 'PN1', '--dry-run']);
+  assert.strictEqual(rel.json.kind, 'destructive');
+  assert.strictEqual(rel.json.request.method, 'DELETE');
+  assert.strictEqual((await cli(['numbers', 'release', '--exophone-sid', 'PN1'])).code, 3);   // permanent: needs --yes
+  const both = await cli(['numbers', 'update', '--exophone-sid', 'PN1', '--app-id', '1', '--voice-url', 'https://x.example.com', '--dry-run']);
+  assert.strictEqual(both.code, 2);
   const u = await cli(['numbers', 'update', '--sid', 'PN1', '--name', 'Support', '--dry-run']);
   assert.strictEqual(u.json.request.method, 'PUT');
   assert.strictEqual(u.json.request.body, 'FriendlyName=Support');
@@ -385,11 +392,15 @@ test('leg one-liners build valid ExoML for every documented action', async () =>
   }
 });
 
-test('leg inbound registers a DID to an event endpoint; bridge rejects leg-only actions', async () => {
-  const r = await cli(['leg', 'inbound', '--number', '08000000001', '--events', 'https://ev.example.com/events', '--dry-run']);
-  assert.strictEqual(r.json.request.url, 'https://cpaas-api.in.exotel.com/v2/accounts/acme1/callback');
-  assert.deepStrictEqual(r.json.request.body, { phonenumber: '08000000001', callbackurl: 'https://ev.example.com/events' });
-  assert.strictEqual(r.json.kind, 'live');
+test('leg inbound gives support steps (no undocumented API call); bridge rejects leg-only actions', async () => {
+  const r = await cli(['leg', 'inbound', '--number', '08000000001', '--events', 'https://ev.example.com/events']);
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.json.viaSupport, true);
+  assert.strictEqual(r.json.request, undefined);
+  assert.match(r.json.steps.join('\n'), /Exotel support to attach 08000000001 to your HTTPS event endpoint https:\/\/ev\.example\.com\/events/);
+  const v = await cli(['voice-ai', 'inbound', '--number', '08000000001', '--stream-url', 'wss://bot.example.com/echo', '--events', 'https://ev.example.com/events', '--listen', '8799', '--dry-run']);
+  assert.strictEqual(v.json.register, undefined);
+  assert.match(v.json.onLegAnswered, /StartStream/);
   const bad = await cli(['bridge', 'action', '--bridge', 'B1', '--xml', '<Flow><Mute/></Flow>', '--yes']);
   assert.strictEqual(bad.code, 2);
 });

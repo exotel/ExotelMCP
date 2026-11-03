@@ -46,14 +46,14 @@ exotel voice-ai connect --via legs --exophone <LP number> --to <E.164> \
   --stream-url wss://<public>/echo?sample-rate=8000 --events https://<public>/events --listen 8787 --ws-proxy 8786 \
   [--greeting "Connecting you"]
 
-# inbound on a DID: registers DID → endpoint (POST /v2/accounts/{sid}/callback), answers and streams each call
+# inbound on a DID: Exotel support attaches the DID to your HTTPS event endpoint (no public API for this step);
+# then the CLI answers and streams each call
+exotel leg inbound --number <LP DID> --events https://…     # prints the exact request to send to support
 exotel voice-ai inbound --number <LP DID> --stream-url wss://<public>/echo --events https://<public>/events --listen 8787 --ws-proxy 8786
-# or only the registration:
-exotel leg inbound --number <LP DID> --events https://…
 ```
 
-Registering a DID replaces how its inbound calls are handled: confirm with the user and tell them how to
-undo it (register another endpoint, or ask support).
+Attaching a DID to an event endpoint replaces how its inbound calls are handled. Exotel support does it; for a
+fully self-serve inbound bot use a flow instead (`exotel voicebot attach --number … --app-id <flow>`).
 
 ## Actions (one-liners; all ExoML)
 

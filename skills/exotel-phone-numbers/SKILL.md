@@ -1,6 +1,6 @@
 ---
 name: exotel-phone-numbers
-description: See and configure Exotel phone numbers (ExoPhones - virtual landline, mobile, toll-free numbers), point them at a call flow, and check account balance. Buying or releasing numbers is coming soon to the CLI and done via Exotel support today. Use when the user needs a caller ID, wants incoming calls routed to a flow or bot, needs a new number, or asks about Exotel balance.
+description: Find, buy, release, see and configure Exotel phone numbers (ExoPhones - virtual landline, mobile, toll-free numbers), point them at a call flow, and check account balance. Use when the user needs a caller ID, wants incoming calls routed to a flow or bot, needs a new number, or asks about Exotel balance.
 ---
 
 # Exotel phone numbers (ExoPhones)
@@ -15,11 +15,14 @@ request and `--json` for machine-readable output.
 | Route incoming calls/SMS | `exotel numbers update --exophone-sid <sid> --voice-url <flow URL> [--sms-url …]` | **Changes live routing** immediately |
 | Rename | `exotel numbers update --exophone-sid <sid> --name <label>` | |
 | Balance | `exotel balance` | Check before bulk calling |
-| **New number / release a number** | Coming soon in the CLI | Today: ask Exotel support (hello@exotel.com) or the account manager |
+| Find numbers to buy | `exotel numbers available --type landline\|mobile\|tollfree [--region KA] [--contains 80]` | Read-only |
+| **Buy a number** | `exotel numbers buy --number <number> [--app-id <flow>]` | **Billed** (one-time + monthly). Indian numbers need approved KYC |
+| Route to a flow by app id | `exotel numbers update --exophone-sid <sid> --app-id <flow>` | Builds the flow URL for you |
+| **Release a number** | `exotel numbers release --exophone-sid <sid>` | **Permanent**; the number may go to another account |
 
 ## Rules
 
-- Re-routing needs the user's explicit yes; the CLI enforces it (`--yes` or a prompt; exit code 3
+- Buying, re-routing and releasing need the user's explicit yes; the CLI enforces it (`--yes` or a prompt; exit code 3
   otherwise). Never pass `--yes` on the user's behalf without asking.
 - Before re-routing a number, run `numbers get` and tell the user what it currently points to.
 - The flow URL for `--voice-url` looks like `https://my.<cluster>.exotel.com/<account_sid>/exoml/start_voice/<flow_id>`

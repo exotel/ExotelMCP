@@ -41,7 +41,7 @@ CLI (does exactly this): `exotel voice-ai connect --via legs --exophone <LP> --t
 ## 3. Inbound voice bot on a DID
 
 ```
-exotel leg inbound --number <LP DID> --events https://…        (once)
+(once) Exotel support attaches the DID to your event endpoint — exotel leg inbound --number … --events … prints the steps
 leg_incoming → <Flow><Answer/></Flow> → leg_answered → <Flow><StartStream …/></Flow>
 ```
 

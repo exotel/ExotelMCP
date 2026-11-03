@@ -18,7 +18,7 @@ from memory: the portals sometimes disagree, and `ask` records which one the liv
 
 | The user wants to… | Skill | Main interface |
 |--------------------|-------|----------------|
-| See or route phone numbers; check balance (buying numbers: coming soon, via Exotel support) | `exotel-phone-numbers` | `exotel numbers …`, `exotel balance` |
+| Find, buy, route or release phone numbers; check balance | `exotel-phone-numbers` | `exotel numbers …`, `exotel balance` |
 | SMS, WhatsApp, a simple call, click-to-call, connect a caller to a flow | `exotel-messaging-and-calls` | MCP tools |
 | An AI voice bot hosted by Exotel | `exotel-voicebot-quickstart` | MCP tools |
 | Their own voice bot (OpenAI, Gemini, Sarvam, Pipecat…) on calls | `exotel-connect-voice-ai` | `exotel voice-ai connect`, `exotel voice-ai setup` |

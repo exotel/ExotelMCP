@@ -123,7 +123,7 @@ exotel voice-ai connect --via legs --exophone <LP number> --to +91XXXXXXXXXX \
 Expect, in order: `leg_connecting → leg_ringing → leg_answered`, then `Say 202`, `StartStream 202`,
 `stream_started`; you hear the greeting then yourself. Ends with `leg_terminated`.
 
-Inbound (changes how calls to the DID are handled — confirm first):
+Inbound: first ask Exotel support to attach the LP number to your HTTPS event endpoint (`exotel leg inbound --number … --events …` prints the request). Then:
 ```bash
 exotel voice-ai inbound --number <LP number> --stream-url "wss://<host>/echo?sample-rate=8000" \
   --events "https://<host>/events" --listen 8787 --ws-proxy 8786
