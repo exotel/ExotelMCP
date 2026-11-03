@@ -179,10 +179,62 @@ public class SetupTools {
             + "- Send WhatsApp messages (`exotel_whatsapp_send_message`) — needs `whatsapp_from`\n\n";
     }
 
+    @Tool(name = "exotel_events_endpoint_guide",
+          description = "Helps build the endpoint that receives Exotel real-time call events (Legs / Bridges / ExoML). "
+              + "Works without credentials. Parameters: 'transport' = 'https' (the only supported transport); "
+              + "'language' = 'node' (default) or 'python'. For https returns the documented HTTP contract "
+              + "(POST JSON, 2xx ack within ~1 s, retries, Basic Auth, source IPs, payload fields) plus a complete, "
+              + "dependency-free starter server that acks, de-duplicates retries and calls the ExoML actions API. "
+              + "Write the returned code to a file in the user's project. Pass the endpoint's public https URL as "
+              + "leg_event_endpoint (Create Leg) or bridge_event_endpoint (Create Bridge). Read-only.")
+    public String eventsEndpointGuide(String transport, String language) {
+        String t = (transport == null || transport.isBlank()) ? "https" : transport.trim().toLowerCase();
+        String lang = (language == null || language.isBlank()) ? "node" : language.trim().toLowerCase();
+        if (!t.equals("https")) return "Error: Exotel call events are delivered over HTTPS only; use transport='https'";
+        String file = lang.equals("python") ? "exotel_events.py" : lang.equals("node") ? "exotel-events.js" : null;
+        if (file == null) return "Error: language must be 'node' or 'python'";
+        String code;
+        try (java.io.InputStream in = getClass().getResourceAsStream("/templates/events/" + file)) {
+            if (in == null) return "Error: template not packaged: " + file;
+            code = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            return "Error: could not read template: " + e.getMessage();
+        }
+        return "# HTTPS event endpoint for Exotel real-time call events\n\n"
+            + "## Contract\n"
+            + "- Exotel sends POST, Content-Type application/json, User-Agent Exotel-Hermix/<version>.\n"
+            + "- Headers: X-Exotel-Event-Sid (= event_sid), X-Exotel-Request-Id (<event_sid>-<attempt 1..3>), "
+            + "Authorization: Basic … only if Basic Auth was configured by Exotel support.\n"
+            + "- Reply any 2xx within ~1 second. The body is ignored. Do slow work after acknowledging.\n"
+            + "- Retries: up to 3 attempts on 408, 429, 5xx, timeouts, connection errors; then the event is dropped. "
+            + "De-duplicate on event_sid. Do not use 429 for backpressure.\n"
+            + "- Body: event_sid, event_type (leg_lifecycle_event | leg_action_event | bridge_lifecycle_event | "
+            + "bridge_action_event), event_name (leg_ringing, leg_answered, leg_terminated, leg_failed_to_create, "
+            + "gather_success, play_completed, recording_available, bridge_created, …), event_timestamp, action_sid, "
+            + "action_custom_parameter, event_data (action/error details), data (leg_sid, account_sid, state, …).\n"
+            + "- The next call step is NOT in the HTTP reply: send ExoML to POST "
+            + "https://cpaas-api.in.exotel.com/v2/accounts/{account_sid}/legs/{leg_sid}/actions.\n"
+            + "- Production: valid public TLS certificate. Optionally allow only Exotel source IPs "
+            + "35.154.174.161, 13.233.217.51, 98.130.5.99.\n\n"
+            + "## Register it\n"
+            + "- Outbound / API calls: pass the https URL as leg_event_endpoint (Create Leg) or "
+            + "bridge_event_endpoint (Create Bridge).\n"
+            + "- Inbound calls on an ExoPhone: share the URL with Exotel support to attach it to the number.\n\n"
+            + "## Local development\n"
+            + "Run the server, expose it with an HTTPS tunnel (e.g. ngrok or cloudflared), and use that URL. "
+            + "`exotel events listen` (Exotel CLI) prints events without writing code.\n\n"
+            + "## Starter code: " + file + "\n\n```" + (lang.equals("python") ? "python" : "javascript") + "\n"
+            + code + "```\n";
+    }
+
     private String configSnippet() {
         return "---\n\n"
             + "## Quick Start\n\n"
-            + "Use `exotel_build_config` to generate a ready-to-paste config for your client.\n"
+            + "Fastest path (Node.js 18+): the user runs `npx @exotel/cli init` in a terminal. It prompts for the API key, "
+            + "token and account SID, checks them, registers this MCP server in Claude Code, Cursor, Codex, VS Code, "
+            + "Windsurf and Claude Desktop, and installs the Exotel agent skills. Never ask the user to paste tokens into chat.\n\n"
+            + "Agent skills only: `npx @exotel/cli skill install all` (or `npx skills add exotel/ExotelMCP`).\n\n"
+            + "Manual: use `exotel_build_config` to generate a ready-to-paste config for your client.\n"
             + "Example: ask me to \"build config for cursor with voicebot and cqa\"\n";
     }
 }

@@ -1,0 +1,29 @@
+{
+  "name": "@exotel/cli",
+  "version": "0.1.0",
+  "description": "Agent-first CLI for Exotel: log in once, wire the Exotel MCP server into Claude Code, Cursor, Codex, VS Code, Windsurf or Claude Desktop, install Exotel agent skills, and call any Exotel MCP tool with JSON output, --dry-run and spend confirmation.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "exotel": "bin/exotel.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "skills/",
+    "README.md"
+  ],
+  "scripts": {
+    "prepack": "node scripts/bundle-skills.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/exotel/ExotelMCP.git",
+    "directory": "cli"
+  },
+  "keywords": ["exotel", "mcp", "voice", "sms", "voicebot", "agent", "claude", "cursor", "codex"]
+}
