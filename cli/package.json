@@ -25,5 +25,23 @@
     "url": "git+https://github.com/exotel/ExotelMCP.git",
     "directory": "cli"
   },
-  "keywords": ["exotel", "mcp", "voice", "sms", "voicebot", "agent", "claude", "cursor", "codex"]
+  "keywords": [
+    "exotel",
+    "mcp",
+    "voice",
+    "sms",
+    "voicebot",
+    "agent",
+    "claude",
+    "cursor",
+    "codex"
+  ],
+  "homepage": "https://developer.exotel.com/docs/mcp-server/overview",
+  "bugs": {
+    "url": "https://github.com/exotel/ExotelMCP/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Exotel"
 }

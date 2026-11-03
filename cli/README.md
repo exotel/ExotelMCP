@@ -62,7 +62,7 @@ exotel skill install exotel-sip-trunking --agent claude --project
 exotel skill install all --dir ./my-agent/skills
 ```
 
-The skills also live in [`/skills`](../skills), so `npx skills add exotel/ExotelMCP` works too.
+The skills also live in [`/skills`](https://github.com/exotel/ExotelMCP/tree/main/skills), so `npx skills add exotel/ExotelMCP` works too.
 
 ## Safety, built for agents
 
