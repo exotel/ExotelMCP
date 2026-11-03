@@ -347,7 +347,7 @@ test('voice-ai setup: WSS URL + manual flow steps, never a made-up app id', asyn
 });
 
 test('voice-ai connect --via legs: create leg; on leg_answered send ExoML Say + StartStream', async () => {
-  const r = await cli(['voice-ai', 'connect', '--via', 'legs', '--to', '+919876543210', '--exophone', '02048566332',
+  const r = await cli(['voice-ai', 'connect', '--via', 'legs', '--to', '+919876543210', '--exophone', '08000000001',
     '--stream-url', 'wss://bot.example.com/echo?sample-rate=8000&x=1', '--events', 'https://ev.example.com/events', '--listen', '8787', '--greeting', 'Please hold', '--dry-run']);
   assert.strictEqual(r.code, 0, r.stdout);
   assert.strictEqual(r.json.steps[0].request.url, 'https://cpaas-api.in.exotel.com/v2/accounts/acme1/legs');
@@ -355,7 +355,7 @@ test('voice-ai connect --via legs: create leg; on leg_answered send ExoML Say + 
   assert.deepStrictEqual(r.json.steps.map((s) => s.when), ['now', 'on leg_answered', 'on leg_answered', 'on stream_started']);
   assert.strictEqual(r.json.steps[2].request.body.exoml, '<Flow><StartStream streamType="bidirectional" streamUrl="wss://bot.example.com/echo?sample-rate=8000&amp;x=1"/></Flow>');
   assert.strictEqual(r.json.steps[3].request.body.exoml, '<Flow><StopSay/></Flow>');
-  assert.strictEqual((await cli(['voice-ai', 'connect', '--via', 'legs', '--to', '+919876543210', '--exophone', '02048566332', '--stream-url', 'wss://x'])).code, 2, 'needs --events');
+  assert.strictEqual((await cli(['voice-ai', 'connect', '--via', 'legs', '--to', '+919876543210', '--exophone', '08000000001', '--stream-url', 'wss://x'])).code, 2, 'needs --events');
 });
 
 test('leg one-liners build valid ExoML for every documented action', async () => {
@@ -386,9 +386,9 @@ test('leg one-liners build valid ExoML for every documented action', async () =>
 });
 
 test('leg inbound registers a DID to an event endpoint; bridge rejects leg-only actions', async () => {
-  const r = await cli(['leg', 'inbound', '--number', '02048566332', '--events', 'https://ev.example.com/events', '--dry-run']);
+  const r = await cli(['leg', 'inbound', '--number', '08000000001', '--events', 'https://ev.example.com/events', '--dry-run']);
   assert.strictEqual(r.json.request.url, 'https://cpaas-api.in.exotel.com/v2/accounts/acme1/callback');
-  assert.deepStrictEqual(r.json.request.body, { phonenumber: '02048566332', callbackurl: 'https://ev.example.com/events' });
+  assert.deepStrictEqual(r.json.request.body, { phonenumber: '08000000001', callbackurl: 'https://ev.example.com/events' });
   assert.strictEqual(r.json.kind, 'live');
   const bad = await cli(['bridge', 'action', '--bridge', 'B1', '--xml', '<Flow><Mute/></Flow>', '--yes']);
   assert.strictEqual(bad.code, 2);
