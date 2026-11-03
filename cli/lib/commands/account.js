@@ -10,6 +10,12 @@ function balance(flags) {
   return run(flags, {
     kind: 'read', summary: 'Account balance',
     request: { path: '/v1/Accounts/{sid}/Balance.json' },
+    render: (d) => {
+      const amt = Number(d && d.Balance && d.Balance.Amount);
+      const india = /api\.in\./.test(require('../core').requireAuth().api_domain || '');
+      const money = Number.isFinite(amt) ? amt.toLocaleString(india ? 'en-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '?';
+      return `Balance: ${require('../ui').c.bold(`${india ? '₹' : ''}${money}`)}${india ? '' : ' (account currency)'}`;
+    },
   });
 }
 

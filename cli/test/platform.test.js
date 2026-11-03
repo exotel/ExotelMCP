@@ -189,10 +189,28 @@ test('api fallback expands {sid} and never sends credentials in the preview', as
   assert.ok(!r.stdout.includes(AUTH.token));
 });
 
-test('old "exotel call" points to "exotel mcp call"', async () => {
-  const r = await cli(['call', 'exotel_sms_send_single']);
+test('exotel call: guided call; without a terminal it names the exact flags; typos get a suggestion', async () => {
+  const r = await cli(['call', '+919876543210']);
   assert.strictEqual(r.code, 2);
-  assert.match(r.json.error, /exotel mcp call/);
+  assert.match(r.json.error, /--bot-id[\s\S]*--app-id[\s\S]*--stream-url/);
+  const d = await cli(['call', '+919876543210', '--stream-url', 'wss://bot.example.com/echo', '--caller-id', '08000000001', '--dry-run']);
+  assert.strictEqual(d.json.kind, 'spend');
+  assert.match(d.json.request.url, /Calls\/connect\.json$/);
+  const t = await cli(['numbr', 'list']);
+  assert.match(t.json.error, /Did you mean "exotel numbers"\?/);
+  const old = await cli(['tools']);
+  assert.match(old.json.error, /exotel mcp tools/);
+});
+
+test('ui: generic pretty-printer makes tables from API JSON; config stores defaults', () => {
+  const ui = require('../lib/ui');
+  const txt = ui.pretty({ http_code: 200, response: [{ id: 'b1', name: 'Asha', status: 'active', account_id: 'x' }] });
+  assert.match(txt, /NAME\s+ID\s+STATUS/);
+  assert.match(txt, /Asha\s+b1\s+active/);
+  assert.doesNotMatch(txt, /account_id|ACCOUNT/);
+  assert.match(ui.pretty({ Balance: { Amount: 12.5 } }), /Balance\.Amount\s+12\.5/);
+  assert.strictEqual(ui.suggest('numbr', ['numbers', 'calls']), 'numbers');
+  assert.strictEqual(ui.suggest('zzzzzz', ['numbers', 'calls']), null);
 });
 
 test('path segments are validated', () => {

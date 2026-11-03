@@ -203,7 +203,7 @@ async function voiceAi(sub, flags) {
   const to = need(flags, 'to', /^\+?\d{6,15}$/, 'E.164, e.g. +919876543210');
   const direct = flags['stream-url'] !== undefined;
   const viaFlow = flags.flow !== undefined || flags['flow-url'] !== undefined;
-  if (direct === viaFlow) throw new CliError(`Pass exactly one of --stream-url (your bot) or --flow (App Bazaar flow).\n\n${VOICE_AI_USAGE}`, EXIT.USAGE);
+  if (direct === viaFlow) throw new CliError(`Say what should answer the call: --stream-url wss://… (your own bot) or --app-id <flow id> (an App Bazaar flow).\nOr just run: exotel call   (it asks you step by step)`, EXIT.USAGE);
   const callerId = opt(flags, 'caller-id', /^\+?\d{6,15}$/) || a.caller_id;
   if (!callerId) throw new CliError('Pass --caller-id (an ExoPhone on your account; see `exotel numbers list`).', EXIT.USAGE);
 
@@ -246,7 +246,7 @@ async function voiceAi(sub, flags) {
   if (!flags['dry-run']) require('../progress').info(`Placing a call to ${to} from ${callerId} → ${target}…`);
   const res = await run(flags, {
     kind: 'spend', summary: `Call ${to} from ${callerId} and connect it to ${target}`,
-    request: { method: 'POST', path: '/v1/Accounts/{sid}/Calls/connect.json', form }, quiet: !!flags.wait,
+    request: { method: 'POST', path: '/v1/Accounts/{sid}/Calls/connect.json', form }, quiet: !!flags.wait && !flags['dry-run'],
   });
   if (res.status === 403) info('403: Connect Voice AI may not be enabled on this account. Ask Exotel support to enable it.');
   if (!flags.wait || !res.ok || res.dryRun) {

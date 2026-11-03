@@ -63,14 +63,17 @@ async function run(flags, { kind, summary, request, render, quiet = false, notFo
     return { dryRun: true, ok: true };
   }
   if (['live', 'spend', 'destructive'].includes(kind)) await confirm(kind, summary, flags);
-  const res = await rest.send(req);
+  const ui = require('./ui');
+  const res = await ui.spin(summary || 'Talking to Exotel…', rest.send(req));
   if (res.status === 404 && notFoundHint) res.hint = notFoundHint;
   if (request.host === 'cpaas' && (res.status === 401 || res.status === 403)) {
     res.hint = 'Legs / ExoML need an LP-enabled API key + token and an LP number from Exotel support. If you have them, check the leg/bridge SID belongs to this account.';
   }
   if (!quiet) {
     out({ ok: res.ok, status: res.status, ...(res.code !== undefined ? { code: res.code } : {}), ...(res.message ? { message: res.message } : {}), ...(res.hint ? { hint: res.hint } : {}), data: res.data },
-      () => (res.ok ? (render ? render(res.data) : JSON.stringify(res.data, null, 2)) : `HTTP ${res.status}${res.hint ? ` — ${res.hint}` : ''}\n${typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2)}`));
+      () => (res.ok
+        ? (render ? render(res.data) : ui.pretty(res.data))
+        : `${ui.c.red('✘')} ${res.message || `Exotel returned HTTP ${res.status}`}${res.code !== undefined ? ui.c.dim(` (code ${res.code})`) : ''}${res.hint ? `\n  ${res.hint}` : ''}\n${ui.c.dim(typeof res.data === 'string' ? res.data.slice(0, 600) : JSON.stringify(res.data).slice(0, 600))}\n${ui.c.dim(`Explain a code: exotel explain ${res.code ?? res.status}`)}`));
   }
   if (!res.ok) process.exitCode = EXIT.ERROR;
   return res;

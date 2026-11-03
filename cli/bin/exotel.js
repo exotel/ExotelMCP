@@ -15,7 +15,7 @@ const { EXIT, CliError, setJson, isJson, out, info, interactive, ask, confirm: c
 
 const BOOLEAN_FLAGS = new Set(['quiet', 
   'json', 'yes', 'y', 'dry-run', 'force', 'project', 'help', 'h', 'version', 'no-verify', 'wait', 'reveal',
-  'record', 'no-skills', 'no-mcp', 'show', 'sms', 'amd', 'async-amd', 'no-record', 'key-stdin', 'offline', 'list', 'refresh', 'ai', 'details', 'absorb-dtmf', 'password-stdin', 'api-token-stdin',
+  'record', 'no-wait', 'no-skills', 'no-mcp', 'show', 'sms', 'amd', 'async-amd', 'no-record', 'key-stdin', 'offline', 'list', 'refresh', 'ai', 'details', 'absorb-dtmf', 'password-stdin', 'api-token-stdin',
 ]);
 
 function parseArgs(argv) {
@@ -279,10 +279,10 @@ function shapeArgs(tool, args) {
   return { args: shaped, filled };
 }
 
-async function runTool(name, rawArgs, flags, { quiet = false } = {}) {
+async function runTool(name, rawArgs, flags, { quiet = false, spinText } = {}) {
   const { auth } = requireAuth();
   const client = new McpClient(auth);
-  const tool = (await getTools(client)).find((t) => t.name === name);
+  const tool = (await require('../lib/ui').spin('Connecting to Exotel…', getTools(client))).find((t) => t.name === name);
   if (!tool) throw new CliError(`No tool named ${name} on ${serverUrl()}. See: exotel mcp tools --filter <text>`, EXIT.USAGE);
   const { args, filled } = shapeArgs(tool, rawArgs);
   const safety = classify(name);
@@ -294,9 +294,10 @@ async function runTool(name, rawArgs, flags, { quiet = false } = {}) {
   if (safety !== 'safe') {
     await confirm(`${name} ${JSON.stringify(args)}`, flags, safety);
   }
-  const res = unwrapResult(await client.callTool(name, args));
+  const ui = require('../lib/ui');
+  const res = unwrapResult(await ui.spin(spinText || (quiet ? 'Working…' : `Running ${name}…`), client.callTool(name, args)));
   if (!quiet) {
-    out({ ok: res.ok, tool: name, result: res.data !== undefined ? res.data : res.text, defaultedToEmpty: filled }, () => (res.data !== undefined ? JSON.stringify(res.data, null, 2) : res.text));
+    out({ ok: res.ok, tool: name, result: res.data !== undefined ? res.data : res.text, defaultedToEmpty: filled }, () => (res.data !== undefined ? ui.pretty(res.data) : res.text));
   }
   if (!res.ok) process.exitCode = EXIT.ERROR;
   return res;
@@ -337,10 +338,12 @@ async function waitForCall(callSid, statusTool, flags) {
   return { status: r.status, seconds: r.seconds, details: r.data };
 }
 
-async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call', voicebot = false } = {}) {
+async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call', voicebot = false, confirmText } = {}) {
   const progress = require('../lib/progress');
+  // Ask in plain words first (not the raw tool JSON), then say what is happening.
+  if (!flags['dry-run'] && confirmText) await confirm(confirmText, flags, 'spend');
   if (!flags['dry-run']) progress.info(`Placing ${label}…`);
-  const res = await runTool(tool, args, flags, { quiet: true });
+  const res = await runTool(tool, args, confirmText ? { ...flags, yes: true } : flags, { quiet: true });
   if (res.dryRun) return out(res.preview);
   const callSid = findCallSid(res.data);
   const result = { ok: res.ok, tool, callSid, response: res.data !== undefined ? res.data : res.text };
@@ -357,16 +360,74 @@ async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call'
   out(result, () => progress.summary({ status: result.final.status, callSid, next: progress.nextSteps(result.final.status, callSid, { voicebot }) }));
 }
 
+async function listBots(flags) {
+  const res = await runTool('exotel_voicebot_list_all', { status: '', limit: '100', offset: '0' }, { ...flags, 'dry-run': false }, { quiet: true });
+  return require('../lib/ui').findRows(res.data) || [];
+}
+
+const CALL_USAGE = `exotel call [phone number]          guided: asks what should answer and places the call
+  --bot-id <name or id>              an Exotel VoiceBot
+  --app-id <flow id>                 an App Bazaar flow (IVR, Voicebot applet…)
+  --stream-url wss://…               your own bot (Connect Voice AI)
+  --caller-id <ExoPhone>  --record  --no-wait  --yes`;
+
+/** `exotel call`: one command for a test call; asks for anything missing (pickers), then follows the call live. */
+async function cmdCall(numberArg, flags) {
+  const ui = require('../lib/ui');
+  const guided = require('../lib/guided');
+  if (numberArg && !flags.to) flags.to = numberArg;
+  let mode = flags.bot ? 'bot' : flags.flow ? 'flow' : flags['stream-url'] ? 'wss' : null;
+  if (!mode) {
+    if (!interactive()) throw new CliError(`Say what should answer the call.\n${CALL_USAGE}`, EXIT.USAGE);
+    mode = await ui.select('What should answer the call?', [
+      { label: 'An Exotel VoiceBot', value: 'bot', hint: 'AI agent hosted by Exotel' },
+      { label: 'An App Bazaar flow', value: 'flow', hint: 'IVR or Voicebot applet; you need the flow id' },
+      { label: 'Your own bot', value: 'wss', hint: 'a wss:// WebSocket URL (OpenAI, ElevenLabs, Pipecat…)' },
+    ]);
+  }
+  if (flags.wait === undefined && !flags['no-wait']) flags.wait = true;
+  if (mode === 'bot') return cmdVoicebot('test-call', flags);
+  flags.to = await guided.to(flags);
+  if (mode === 'flow' && !flags.flow) {
+    if (!interactive()) throw new CliError('Pass --app-id <flow id>', EXIT.USAGE);
+    flags.flow = (await ask('Flow id (App Bazaar → your flow; the number at the end of …/start_voice/<id>)')).trim();
+  }
+  if (mode === 'wss' && !flags['stream-url']) {
+    if (!interactive()) throw new CliError('Pass --stream-url wss://…', EXIT.USAGE);
+    flags['stream-url'] = (await ask('Your bot WebSocket URL (wss://…, must be reachable from the internet)')).trim();
+  }
+  flags['caller-id'] = await guided.callerId(flags);
+  return platform.voiceAi('connect', flags);
+}
+
 async function cmdVoicebot(sub, flags) {
-  if (sub === 'list') return runTool('exotel_voicebot_list_all', { status: flags.status || '', limit: String(flags.limit || 20), offset: String(flags.offset || 0) }, flags);
+  if (sub === 'list') {
+    const res = await runTool('exotel_voicebot_list_all', { status: flags.status || '', limit: String(flags.limit || 50), offset: String(flags.offset || 0) }, flags, { quiet: true, spinText: 'Loading your VoiceBots…' });
+    const ui = require('../lib/ui');
+    const bots = (ui.findRows(res.data) || []).sort((x, y) => String(y.date_created || '').localeCompare(String(x.date_created || '')));
+    const def = require('../lib/config').get('bot');
+    return out({ ok: res.ok, count: bots.length, voicebots: bots },
+      () => `${ui.table(bots, [
+        { key: 'name', label: 'NAME', max: 34, fmt: (v, r) => `${v || ''}${r.id === def ? ui.c.cyan(' (default)') : ''}` },
+        { key: 'status', label: 'STATUS', fmt: ui.statusColor },
+        { key: 'date_created', label: 'CREATED', fmt: (v) => String(v || '').slice(0, 16).replace('T', ' ') },
+        { key: 'id', label: 'BOT ID' },
+      ])}\n${ui.c.dim('Call one: exotel call   ·   or: exotel voicebot test-call --bot-id <name or id>')}`);
+  }
   if (sub === 'test-call') {
-    if (!flags.bot || !flags.to) throw new CliError('Usage: exotel voicebot test-call --bot-id <voiceBotId> --to <E.164> [--caller-id <ExoPhone>] [--record] [--wait] [--yes]', EXIT.USAGE);
-    const { auth } = requireAuth();
-    const callerId = flags['caller-id'] || auth.caller_id;
-    if (!callerId) throw new CliError('Pass --caller-id (an ExoPhone on the account; see `exotel numbers list`).', EXIT.USAGE);
+    const guided = require('../lib/guided');
+    flags.bot = await guided.bot(flags, () => listBots(flags));
+    flags.to = await guided.to(flags);
+    const callerId = await guided.callerId(flags);
+    if (flags.wait === undefined && !flags['no-wait'] && interactive()) flags.wait = true;
     return placeAndMaybeWait('exotel_voicebot_place_call', {
       toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '',
-    }, flags, 'exotel_voicebot_call_status', { label: `a VoiceBot test call to ${flags.to} from ${callerId}`, voicebot: true });
+    }, flags, 'exotel_voicebot_call_status', {
+      label: `a VoiceBot test call to ${flags.to} from ${callerId}`,
+      voicebot: true,
+      confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}`
+        + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; change it with --caller-id or: exotel config set caller-id <ExoPhone>)`),
+    });
   }
   const vb = require('../lib/voicebot');
   if (sub === 'create') return vb.create(flags);
@@ -424,6 +485,8 @@ NOT SURE WHICH API?
   exotel explain <code|word> | explain --list            what a status / error code means (e.g. 408, 1012, no-answer, 23005)
 
 GET STARTED
+  exotel call [number]        place a test call; asks what to connect (VoiceBot, flow or your wss bot)
+  exotel config               saved defaults: your number, caller ID, default bot
   exotel init                 log in, connect your coding agents (MCP), install Exotel skills
   exotel login | logout | whoami | doctor
   exotel balance              account balance
@@ -480,6 +543,8 @@ ENV     EXOTEL_ACCOUNT_SID EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_API_BASE_URL E
         EXOTEL_AUTH_JSON EXOTEL_MCP_URL EXOTEL_CONFIG_DIR`;
 
 const SUBHELP = {
+  call: CALL_USAGE,
+  config: require('../lib/config').CONFIG_USAGE,
   numbers: platform.USAGE.NUMBERS_USAGE,
   trunk: platform.USAGE.TRUNK_USAGE,
   leg: platform.USAGE.LEG_USAGE,
@@ -491,6 +556,34 @@ const SUBHELP = {
   voicebot: require('../lib/voicebot').USAGE,
   integrate: require('../lib/integrations').USAGE,
   voiceai: platform.USAGE.VOICE_AI_USAGE,
+};
+
+const COMMANDS = ['init', 'login', 'logout', 'whoami', 'doctor', 'config', 'call', 'balance', 'numbers', 'calls', 'campaigns', 'voicebot', 'voice-ai',
+  'integrate', 'leg', 'bridge', 'events', 'exoml', 'applet', 'trunk', 'api', 'mcp', 'skill', 'ask', 'explain', 'docs', 'help'];
+
+const HOME = () => {
+  const ui = require('../lib/ui');
+  const b = (s) => ui.c.bold(s);
+  const loggedIn = !!creds.load();
+  return `${b(`Exotel CLI ${pkg.version}`)}  ${ui.c.dim('phone calls, voice bots and numbers from your terminal')}
+
+${b('Start here')}
+  ${loggedIn ? ui.c.green('✔ logged in') + ui.c.dim(' (exotel whoami)') : 'exotel init           log in and connect your coding agent'}
+  exotel call           place a test call — it asks you what to connect, step by step
+  exotel balance        your account balance
+  exotel numbers list   your Exotel phone numbers
+
+${b('Build')}
+  exotel voicebot …     Exotel-hosted AI voice agents     exotel voice-ai …   your own bot over WebSocket
+  exotel calls …        call logs and recordings           exotel campaigns …  outbound campaigns
+  exotel numbers …      search, buy, route numbers         exotel leg …        call control with ExoML
+
+${b('Stuck?')}
+  exotel ask "how do I connect my bot to a call"     which API to use, with the exact command
+  exotel explain 408                                  what a status or error code means
+  exotel doctor                                       check your setup
+
+${ui.c.dim('All commands: exotel help all   ·   Help for one: exotel help <command>   ·   Machine output: --json')}`;
 };
 
 async function main(argv) {
@@ -505,7 +598,9 @@ async function main(argv) {
     const text = SUBHELP[helpFor] || (lines.length ? lines.map((l) => l.trim()).join('\n') : null);
     if (text) return void process.stdout.write(`${text}\n`);
   }
-  if (!cmd || flags.help || cmd === 'help') return void process.stdout.write(HELP + '\n');
+  if (cmd === 'help' && sub === 'all') return void process.stdout.write(HELP + '\n');
+  if (!cmd || cmd === 'help') return void process.stdout.write((process.stdout.isTTY ? HOME() : HELP) + '\n');
+  if (flags.help) return void process.stdout.write(HELP + '\n');
   switch (cmd) {
     case 'init': return cmdInit(flags);
     case 'login': return cmdLogin(flags);
@@ -572,13 +667,15 @@ async function main(argv) {
       }
       throw new CliError('Usage: exotel docs search <words>   |   exotel docs show <url>   |   exotel docs refresh', EXIT.USAGE);
     }
+    case 'call': return cmdCall(sub, flags);
+    case 'config': return require('../lib/config').cmd(sub, rest);
     case 'tools':
     case 'tool':
-    case 'call':
-      throw new CliError(`"exotel ${cmd}" moved to "exotel mcp ${cmd}" (it runs an MCP tool; it does not place a phone call).`, EXIT.USAGE);
+      throw new CliError(`"exotel ${cmd}" moved to "exotel mcp ${cmd}".`, EXIT.USAGE);
     default: {
       const clean = String(cmd).replace(/[.,;:!?'"`]+$/, '');
-      const hint = clean !== cmd ? ` Did you mean "exotel ${clean}"? (a punctuation mark was copied with it)` : ' Run: exotel --help';
+      const near = require('../lib/ui').suggest(clean, COMMANDS);
+      const hint = clean !== cmd ? ` Did you mean "exotel ${clean}"? (a punctuation mark was copied with it)` : near ? ` Did you mean "exotel ${near}"?` : ' Run: exotel --help';
       throw new CliError(`Unknown command "${cmd}".${hint}`, EXIT.USAGE);
     }
   }

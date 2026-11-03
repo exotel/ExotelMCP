@@ -13,6 +13,22 @@ server in every agent it finds (backing up each config file), and installs the E
 
 Requires Node.js 18+. No dependencies.
 
+## Your first call in one command
+
+```bash
+npm install -g exotel-cli
+exotel init        # paste Account SID, API key, API token once
+exotel call        # asks what should answer (VoiceBot, App Bazaar flow or your wss bot), who to call, then follows the call live
+```
+
+`exotel call` picks from your VoiceBots and ExoPhones, remembers your phone number and caller ID
+(`exotel config`), asks before anything billed, and ends with what happened and the next command
+(transcript, call record, `exotel explain <status>`). Every prompt has a flag, so scripts and agents
+never get asked: `exotel call +9198XXXXXXXX --bot-id Asha --caller-id <ExoPhone> --yes`.
+
+Output is a readable table in a terminal and JSON when piped or with `--json`. Typos get a
+"did you mean". `NO_COLOR=1` turns colours off; `--quiet` hides progress.
+
 ## Not sure which API?
 
 ```bash

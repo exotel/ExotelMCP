@@ -34,6 +34,17 @@ function routing(flags) {
   };
 }
 
+const flowOf = (u) => {
+  const m = /\/exoml\/start(?:_voice)?\/(\d+)/.exec(u || '');
+  return m ? `flow ${m[1]}` : (u ? u.replace(/^https?:\/\//, '').slice(0, 40) : 'not routed');
+};
+const NUMBER_COLS = [
+  { key: 'phone_number', label: 'NUMBER' },
+  { key: 'friendly_name', label: 'NAME', max: 28 },
+  { key: 'voice_url', label: 'CALLS GO TO', fmt: flowOf },
+  { key: 'sid', label: 'EXOPHONE SID' },
+];
+
 /** ExoPhone SID from --exophone-sid, or by looking the phone number up across all pages (--number). */
 async function resolveSid(flags) {
   if (flags.sid && flags.sid !== true) return { sid: rest.seg(flags.sid, 'exophone-sid'), label: String(flags.sid) };
@@ -51,10 +62,18 @@ async function numbers(sub, flags) {
       if (flags.all) {
         const all = await require('../voicebot').listAllNumbers(requireAuth());
         return out({ ok: true, count: all.length, numbers: all.map((n) => ({ sid: n.sid, phone_number: n.phone_number, friendly_name: n.friendly_name, voice_url: n.voice_url })) },
-          () => `${all.map((n) => `${n.sid}  ${n.phone_number}  ${n.friendly_name || ''}  ${n.voice_url || '(no flow)'}`).join('\n')}\n${all.length} ExoPhones`);
+          () => `${require('../ui').table(all, NUMBER_COLS)}\n${all.length} ExoPhones`);
       }
       const page = opt(flags, 'page', /^\d{1,4}$/);
-      return run(flags, { kind: 'read', summary: 'List ExoPhones', request: { path: BASE, query: { Page: page ? Math.max(1, Number(page)) : undefined, PageSize: opt(flags, 'page-size', /^([1-9]\d?|100)$/, '1–100') } } });
+      return run(flags, {
+        kind: 'read', summary: 'List ExoPhones', request: { path: BASE, query: { Page: page ? Math.max(1, Number(page)) : undefined, PageSize: opt(flags, 'page-size', /^([1-9]\d?|100)$/, '1–100') } },
+        render: (d) => {
+          const ui = require('../ui');
+          const rows = (d && d.incoming_phone_numbers) || [];
+          const more = d && d.next_page_uri && rows.length ? `\n${ui.c.dim(`More: exotel numbers list --page ${Number(d.page || page || 1) + 1}   ·   everything: exotel numbers list --all`)}` : '';
+          return ui.table(rows, NUMBER_COLS) + more;
+        },
+      });
     }
     case 'get': {
       const { sid, label } = await resolveSid(flags);
