@@ -230,10 +230,10 @@ public class SetupTools {
     private String configSnippet() {
         return "---\n\n"
             + "## Quick Start\n\n"
-            + "Fastest path (Node.js 18+): the user runs `npx @exotel/cli init` in a terminal. It prompts for the API key, "
+            + "Fastest path (Node.js 18+): the user runs `npx exotel-cli init` in a terminal. It prompts for the API key, "
             + "token and account SID, checks them, registers this MCP server in Claude Code, Cursor, Codex, VS Code, "
             + "Windsurf and Claude Desktop, and installs the Exotel agent skills. Never ask the user to paste tokens into chat.\n\n"
-            + "Agent skills only: `npx @exotel/cli skill install all` (or `npx skills add exotel/ExotelMCP`).\n\n"
+            + "Agent skills only: `npx exotel-cli skill install all` (or `npx skills add exotel/ExotelMCP`).\n\n"
             + "Manual: use `exotel_build_config` to generate a ready-to-paste config for your client.\n"
             + "Example: ask me to \"build config for cursor with voicebot and cqa\"\n";
     }

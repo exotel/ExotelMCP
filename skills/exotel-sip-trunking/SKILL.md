@@ -5,7 +5,7 @@ description: Connect a SIP system (PBX, SBC, FreeSWITCH, Asterisk, Kamailio, Liv
 
 # Exotel SIP trunking
 
-Commands below are the `exotel` CLI (`npx @exotel/cli …` if it is not installed; log in once with
+Commands below are the `exotel` CLI (`npx exotel-cli …` if it is not installed; log in once with
 `exotel login`). Every command takes `--dry-run` (show the exact request) and `--json`.
 
 ## Before you start

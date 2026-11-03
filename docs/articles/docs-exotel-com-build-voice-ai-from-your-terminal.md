@@ -26,7 +26,7 @@ an LP number from Exotel support.
 ## Step 1: Connect
 
 ```bash
-npx @exotel/cli init
+npx exotel-cli init
 ```
 
 Enter your Account SID, API key and API token when asked. The CLI checks them, connects any coding agents it

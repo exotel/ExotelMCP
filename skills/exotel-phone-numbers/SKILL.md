@@ -5,7 +5,7 @@ description: See and configure Exotel phone numbers (ExoPhones - virtual landlin
 
 # Exotel phone numbers (ExoPhones)
 
-Commands are the `exotel` CLI (`npx @exotel/cli …` if not installed). Add `--dry-run` to preview any
+Commands are the `exotel` CLI (`npx exotel-cli …` if not installed). Add `--dry-run` to preview any
 request and `--json` for machine-readable output.
 
 | Need | Command | Notes |

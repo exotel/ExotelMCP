@@ -18,7 +18,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 ## Coding-agent quick start
 
 ```bash
-npx @exotel/cli init
+npx exotel-cli init
 ```
 
 Prompts for your Exotel API credentials, connects this MCP server to Claude Code / Cursor / Codex /

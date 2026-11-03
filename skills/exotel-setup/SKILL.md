@@ -38,7 +38,7 @@ from memory: the portals sometimes disagree, and `ask` records which one the liv
 
 **CLI or MCP?** Both use the same Exotel login. `exotel init` sets up both. Use whichever the skill
 names. MCP tools appear in the agent as `exotel_*`; CLI commands run in a terminal. If the CLI is not
-installed, prefix commands with `npx @exotel/cli`.
+installed, prefix commands with `npx exotel-cli`.
 
 ## Connecting
 
@@ -58,7 +58,7 @@ If Node.js 18+ is installed, have the user run this in their terminal (it prompt
 they type them; you never see or handle them):
 
 ```bash
-npx @exotel/cli init
+npx exotel-cli init
 ```
 
 `init` asks for the API key, token and account SID, checks them against the Exotel API, saves them

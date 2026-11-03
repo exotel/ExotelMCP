@@ -1,10 +1,10 @@
-# @exotel/cli
+# exotel-cli
 
 Exotel from the terminal, built for coding agents. One command connects Claude Code, Cursor, Codex,
 VS Code, Windsurf or Claude Desktop to your Exotel account and teaches the agent the Exotel workflows.
 
 ```bash
-npx @exotel/cli init
+npx exotel-cli init
 ```
 
 `init` asks for your Account SID, API key and API token (my.exotel.com → Settings → API Settings),
