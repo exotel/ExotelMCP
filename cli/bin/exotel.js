@@ -573,7 +573,11 @@ async function main(argv) {
     case 'tool':
     case 'call':
       throw new CliError(`"exotel ${cmd}" moved to "exotel mcp ${cmd}" (it runs an MCP tool; it does not place a phone call).`, EXIT.USAGE);
-    default: throw new CliError(`Unknown command "${cmd}". Run exotel --help.`, EXIT.USAGE);
+    default: {
+      const clean = String(cmd).replace(/[.,;:!?'"`]+$/, '');
+      const hint = clean !== cmd ? ` Did you mean "exotel ${clean}"? (a punctuation mark was copied with it)` : ' Run: exotel --help';
+      throw new CliError(`Unknown command "${cmd}".${hint}`, EXIT.USAGE);
+    }
   }
 }
 
