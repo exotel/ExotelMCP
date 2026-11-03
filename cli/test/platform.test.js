@@ -355,7 +355,8 @@ test('MCP server event templates match the CLI scaffolds', () => {
   const ev = require('../lib/events');
   for (const t of Object.values(ev.TEMPLATES)) {
     const res = path.join(__dirname, '..', '..', 'src', 'main', 'resources', 'templates', 'events', t.file);
-    assert.strictEqual(fs.readFileSync(res, 'utf8'), t.content, `${t.file} is out of sync: regenerate from cli/lib/events.js`);
+    // Compare without line-ending differences (git on Windows checks files out with CRLF).
+    assert.strictEqual(fs.readFileSync(res, 'utf8').replace(/\r\n/g, '\n'), t.content, `${t.file} is out of sync: regenerate from cli/lib/events.js`);
   }
 });
 

@@ -69,7 +69,7 @@ test('credentials save with mode 600 and load back', () => {
   delete process.env.EXOTEL_ACCOUNT_SID;
   delete process.env.EXOTEL_AUTH_JSON;
   const file = creds.save({ token: 'x', account_sid: 's' });
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600); // Windows has no POSIX modes
   assert.deepStrictEqual(creds.load().auth, { token: 'x', account_sid: 's' });
   assert.ok(creds.remove());
   assert.strictEqual(creds.load(), null);
