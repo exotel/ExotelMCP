@@ -61,3 +61,13 @@ bin/
 # Ignore generated docs
 /target/site/
 
+
+# CLI
+cli/node_modules/
+cli/skills/
+cli/*.tgz
+
+# The CLI entry point is source, not a build output
+!cli/bin/
+examples/exotel-voice-agent/records.jsonl
+examples/exotel-voice-agent/transcripts/

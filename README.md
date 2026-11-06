@@ -15,6 +15,25 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - 🔐 **Secure Authentication**: Per-user token-based authentication via Authorization header
 - 🤖 **Claude AI Integration**: Direct integration with Claude through MCP protocol
 
+## Coding-agent quick start
+
+```bash
+npx exotel-cli init
+```
+
+Prompts for your Exotel API credentials, connects this MCP server to Claude Code / Cursor / Codex /
+VS Code / Windsurf / Claude Desktop, and installs the Exotel agent skills
+([`skills/`](skills), also installable with `npx skills add exotel/ExotelMCP`).
+
+The same `exotel` CLI also covers APIs this MCP server does not: phone numbers (search/buy/route),
+Dynamic SIP trunking, Legs/Bridges and ExoML, AgentStream calls, balance, flow-webhook testing, and
+`exotel api` for any other REST endpoint. Details: [`cli/README.md`](cli/README.md).
+
+Bring your own voice bot instead of Exotel VoiceBot? Start from `examples/exotel-voice-agent` (echo + OpenAI
+Realtime receptionist / booking / lead agents over WSS), then use Connect Voice AI (`exotel voice-ai connect`, MCP tool
+`exotel_connect_voice_ai`, skill `exotel-connect-voice-ai`) and
+[exotel/Agent-Stream](https://github.com/exotel/Agent-Stream).
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -306,6 +325,14 @@ Initiate a voice call to any phone number using your registered Exotel number.
 Call +919999999999 from my registered number
 ```
 
+#### Connect Voice AI: Call Your Own Voice Bot
+The standard way to put your own bot on a phone call: Exotel dials the number and streams the audio bidirectionally (16-bit PCM over WebSocket) to your bot's wss:// URL — OpenAI Realtime, ElevenLabs, Gemini Live, Sarvam, Pipecat and more. Reference bridges: [exotel/Agent-Stream](https://github.com/exotel/Agent-Stream). Tool: `exotel_connect_voice_ai`. To route through an App Bazaar flow with a Voicebot applet instead, use `exotel_voice_connect_to_call_flow`.
+
+**Example**:
+```
+Call +919999999999 and connect it to my bot at wss://my-bot.ngrok-free.app/?sample-rate=8000
+```
+
 #### Connect Two Numbers
 Bridge two phone numbers in a single call, connecting them together.
 
@@ -512,6 +539,14 @@ Create a new VoiceBot by describing its personality and purpose in natural langu
 **Example**:
 ```
 Create a VoiceBot that handles customer support for Acme Corp. It should be friendly, help with order tracking, and offer to escalate to a human agent if needed.
+```
+
+#### Find a Call's Transcript
+Map the Call SID from a bot call to its VoiceBot session (`exotel_voicebot_find_session_by_call_sid`), then fetch the transcript (`exotel_voicebot_transcript_get`).
+
+**Example**:
+```
+Show me the transcript of call 3c5b...19ap
 ```
 
 #### Place Outbound Bot Call
