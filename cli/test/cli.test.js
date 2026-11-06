@@ -130,7 +130,11 @@ test('token appears in exactly one place: install writes none; logout removes en
   const { spawnSync } = require('child_process');
   const home = tmp();
   // A PATH without `claude`, so this test can never touch the developer's real Claude Code setup.
-  const env = { ...process.env, HOME: home, PATH: path.dirname(process.execPath), EXOTEL_CONFIG_DIR: path.join(home, '.config', 'exotel'), NODE_NO_WARNINGS: '1' };
+  // Windows: the home directory comes from USERPROFILE (not HOME), app configs from APPDATA, and the search path
+  // may be spelled "Path"; sandbox all of them so the test never touches the developer's real agent configs.
+  const base = { ...process.env };
+  for (const k of Object.keys(base)) if (/^path$/i.test(k)) delete base[k];
+  const env = { ...base, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), PATH: path.dirname(process.execPath), EXOTEL_CONFIG_DIR: path.join(home, '.config', 'exotel'), NODE_NO_WARNINGS: '1' };
   for (const k of Object.keys(env)) if (/^EXOTEL_/.test(k) && k !== 'EXOTEL_CONFIG_DIR') delete env[k];
   delete env.CODEX_HOME; // set by another test; this one uses the sandbox home
   const bin = path.join(__dirname, '..', 'bin', 'exotel.js');
