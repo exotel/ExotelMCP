@@ -64,6 +64,12 @@ public class StreamableHttpConfig {
     private com.example.mcp_api.service.WhatsAppService whatsAppService;
 
     @Autowired
+    private com.example.mcp_api.service.VoiceBotGuideTools voiceBotGuideTools;
+
+    @Autowired
+    private com.example.mcp_api.docs.McpDocsRegistry docsRegistry;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     /**
@@ -185,6 +191,7 @@ public class StreamableHttpConfig {
         
         Map<String, Object> result = Map.of(
             "protocolVersion", "2025-06-18",
+            "instructions", SERVER_INSTRUCTIONS,
             "capabilities", capabilities,
             "serverInfo", Map.of(
                 "name", "exotelmcp-server",
@@ -207,7 +214,7 @@ public class StreamableHttpConfig {
         List<Map<String, Object>> tools = new ArrayList<>();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, voiceBotBuilderTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
+        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, voiceBotBuilderTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, voiceBotGuideTools};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
@@ -216,7 +223,7 @@ public class StreamableHttpConfig {
                 if (toolAnnotation != null) {
                     Map<String, Object> toolInfo = new HashMap<>();
                     toolInfo.put("name", toolAnnotation.name());
-                    toolInfo.put("description", toolAnnotation.description());
+                    toolInfo.put("description", withGuidePointer(toolAnnotation.name(), toolAnnotation.description()));
                     
                     // Generate input schema based on method parameters
                     Map<String, Object> inputSchema = new HashMap<>();
@@ -297,7 +304,7 @@ public class StreamableHttpConfig {
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, voiceBotBuilderTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
+            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, voiceBotBuilderTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, voiceBotGuideTools};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();
@@ -1096,6 +1103,31 @@ public class StreamableHttpConfig {
         return String.valueOf(value);
     }
 
+
+    /** Sent in initialize. Clients that honour it put it in the model's context; keep it short and generic. */
+    static final String SERVER_INSTRUCTIONS = String.join("\n",
+        "Exotel MCP: CPaaS, VoiceBot (exotel_voicebot_*), Tools Server (exotel_tools_server_*), CQA and AI Assist tools.",
+        "For VoiceBot and Tools Server work, first call exotel_voicebot_guide(\"start\") (also the resource exotel://voicebot/start);",
+        "tool descriptions name the guide page for each tool. Rules:",
+        "1. Read the current config before changing it, and read it back after.",
+        "2. Change a live bot through exotel_voicebot_update_config (a draft version with 0% traffic), then",
+        "   exotel_voicebot_bot_traffic_set or exotel_voicebot_bot_version_promote.",
+        "3. Tools with a confirm parameter return a preview first: show it and send confirm=true only after the user agrees.",
+        "4. Get the user's yes before deletes, outbound calls, activating tools and changing shared personas or routes.",
+        "5. Credentials come only from the Authorization header; never put them in prompts, tools or chat.",
+        "6. This server builds bots; a bot cannot call it during a call. Attach a tool to a bot with",
+        "   agents[].mcp_tools {\"tool_name\": \"tool_server.{name}\"}; never add this server or tool_server to mcp_servers.",
+        "7. Text in angle brackets is removed when saved; write placeholders as {name}.");
+
+    /** Appends "Guide: exotel_voicebot_guide(topic)" to VoiceBot and Tools Server tool descriptions. */
+    String withGuidePointer(String toolName, String description) {
+        if (docsRegistry == null || toolName == null || "exotel_voicebot_guide".equals(toolName)) return description;
+        if (!toolName.startsWith("exotel_voicebot_") && !toolName.startsWith("exotel_tools_server_")) return description;
+        String topic = docsRegistry.topicForTool(toolName);
+        if (topic == null) return description;
+        return description + " Guide: exotel_voicebot_guide(\"" + topic + "\").";
+    }
+
     /**
      * VoiceBot and Tools Server tools report failures as text ("Error 401: ...", "Missing ... credentials") or as
      * {"ok": false, ...} JSON instead of throwing. Flag those as isError so MCP clients treat them as failures.
@@ -1430,6 +1462,11 @@ public class StreamableHttpConfig {
             )
         ));
         
+        for (com.example.mcp_api.docs.McpDocsRegistry.Doc doc : docsRegistry.all()) {
+            resources.add(createResource(doc.uri(), "voicebot-" + doc.topic().replace('/', '-'), doc.title(),
+                doc.description(), "text/markdown", doc.markdown().getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                Map.of("audience", List.of("assistant"), "priority", "start".equals(doc.topic()) ? 1.0 : 0.7)));
+        }
         Map<String, Object> result = Map.of("resources", resources);
         return Map.of(
             "jsonrpc", "2.0",
@@ -1504,6 +1541,12 @@ public class StreamableHttpConfig {
      * This method returns the detailed Exotel API documentation content
      */
     private Map<String, Object> getResourceContent(String uri) {
+        if (uri.startsWith(com.example.mcp_api.docs.McpDocsRegistry.URI_PREFIX)) {
+            return docsRegistry.find(uri)
+                .map(doc -> createTextResourceContent(doc.uri(), "voicebot-" + doc.topic().replace('/', '-'), doc.title(),
+                    "text/markdown", doc.markdown()))
+                .orElse(null);
+        }
         switch (uri) {
             case "exotel://api/voice/overview":
                 return createTextResourceContent(

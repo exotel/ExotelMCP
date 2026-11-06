@@ -258,6 +258,8 @@ public class VoiceBotBuilderTools {
             JsonNode cfg = parseJsonArg(configJson, "configJson");
             Map<String, Object> invalid = validateBotCreateConfig(cfg);
             if (invalid != null) return invalid;
+            Map<String, Object> wiring = mcpWiringProblem(cfg);
+            if (wiring != null) return wiring;
             List<String> warnings = new ArrayList<>(tagWarnings(cfg));
             warnings.addAll(botCreateWarnings(cfg));
 
@@ -352,6 +354,8 @@ public class VoiceBotBuilderTools {
             JsonNode data = parseJsonArg(dataJson, "dataJson");
             Map<String, Object> invalid = validateVersionData(data, false);
             if (invalid != null) return invalid;
+            Map<String, Object> wiring = mcpWiringProblem(data);
+            if (wiring != null) return wiring;
 
             ObjectNode body = MAPPER.createObjectNode();
             body.put("source_version", source);
@@ -516,6 +520,8 @@ public class VoiceBotBuilderTools {
             JsonNode assistant = parseJsonArg(assistantJson, "assistantJson");
             Map<String, Object> invalid = validateAssistantCreate(assistant);
             if (invalid != null) return invalid;
+            Map<String, Object> wiring = mcpWiringProblem(assistant);
+            if (wiring != null) return wiring;
             List<String> warnings = new ArrayList<>(tagWarnings(assistant));
             if (!assistant.hasNonNull("llm_config")) {
                 warnings.add("DEFAULT_LLM: llm_config is omitted, so Java uses the account's default LLM mapping.");
@@ -2178,5 +2184,72 @@ public class VoiceBotBuilderTools {
         }
         op.putObject("responses").putObject("200").put("description", "The route's JSON response");
         return spec;
+    }
+
+    // ============================ MCP WIRING GUARD ============================
+    // This server manages bots. A bot cannot call it during a call: it needs a caller's credentials and has no
+    // call-time tools. Bots reach their tools through agents[].mcp_tools "tool_server.{name}"; the platform adds the
+    // tool_server MCP connection itself, so callers must never add it (or this server) to mcp_servers.
+
+    private static final Pattern MCP_TOOL_NAME = Pattern.compile("^[A-Za-z0-9_-]+\\.[A-Za-z0-9_.-]+$");
+
+    /** True for this management server's own hosts (production and any exotel-mcp* deployment). */
+    static boolean isManagementMcpHost(String host) {
+        if (host == null) return false;
+        String h = host.toLowerCase(Locale.ROOT);
+        return h.equals("mcp.exotel.com") || h.startsWith("exotel-mcp") || h.startsWith("exotelmcp");
+    }
+
+    /** Null when the payload's mcp_servers / mcp_tools are wired the way the platform expects; else an error result. */
+    static Map<String, Object> mcpWiringProblem(JsonNode root) {
+        List<String> problems = new ArrayList<>();
+        collectMcpWiring(root, "", problems, 0);
+        if (problems.isEmpty()) return null;
+        return error("MCP_WIRING_REJECTED",
+                "This payload wires MCP in a way bots cannot use: " + problems + ".",
+                "Attach a tools-server tool to an agent with agents[].mcp_tools [{\"tool_name\": \"tool_server.{name}\", "
+                        + "\"name\": \"{name}\"}] and do not add tool_server or this Exotel MCP server to mcp_servers. "
+                        + "Read exotel_voicebot_guide(\"objects/assistant\").", null, null);
+    }
+
+    private static void collectMcpWiring(JsonNode node, String path, List<String> out, int depth) {
+        if (node == null || depth > 32) return;
+        if (node.isObject()) {
+            for (Map.Entry<String, JsonNode> e : node.properties()) {
+                String key = e.getKey();
+                String child = path.isEmpty() ? key : path + "." + key;
+                JsonNode value = e.getValue();
+                if ("mcp_servers".equals(key) && value.isArray()) {
+                    for (int i = 0; i < value.size(); i++) checkMcpServer(value.get(i), child + "[" + i + "]", out);
+                } else if ("mcp_tools".equals(key) && value.isArray()) {
+                    for (int i = 0; i < value.size(); i++) {
+                        String toolName = value.get(i).path("tool_name").asText("");
+                        if (!MCP_TOOL_NAME.matcher(toolName).matches()) {
+                            out.add(child + "[" + i + "].tool_name '" + toolName + "' is not server.tool (e.g. tool_server.get_order_status)");
+                        }
+                    }
+                }
+                collectMcpWiring(value, child, out, depth + 1);
+            }
+        } else if (node.isArray()) {
+            for (int i = 0; i < node.size(); i++) collectMcpWiring(node.get(i), path + "[" + i + "]", out, depth + 1);
+        }
+    }
+
+    private static void checkMcpServer(JsonNode server, String path, List<String> out) {
+        String name = server.path("name").asText("");
+        if ("tool_server".equalsIgnoreCase(name.trim())) {
+            out.add(path + " adds tool_server, which the platform adds itself");
+        }
+        String url = server.path("url").asText("");
+        if (!url.isBlank()) {
+            try {
+                if (isManagementMcpHost(new URI(url.trim()).getHost())) {
+                    out.add(path + " points at the Exotel MCP management server (" + url.trim() + "), which bots cannot call");
+                }
+            } catch (URISyntaxException e) {
+                out.add(path + ".url is not a valid URL");
+            }
+        }
     }
 }
