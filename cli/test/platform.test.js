@@ -424,9 +424,13 @@ test('leg inbound gives support steps (no undocumented API call); bridge rejects
   assert.strictEqual(bad.code, 2);
 });
 
-test('Legs host follows region (Singapore documented as cpaas-api.exotel.com)', () => {
-  assert.strictEqual(rest.hosts({ api_domain: 'https://api.exotel.com' }).cpaas, 'https://cpaas-api.exotel.com');
+test('Legs host is Mumbai only: Singapore accounts get a clear error, never a guessed host', () => {
   assert.strictEqual(rest.hosts({ api_domain: 'https://api.in.exotel.com' }).cpaas, 'https://cpaas-api.in.exotel.com');
+  assert.strictEqual(rest.hosts({ api_domain: 'https://api.exotel.com' }).cpaas, null);
+  assert.throws(() => rest.buildRequest({ api_domain: 'https://api.exotel.com', account_sid: 'a', token: 't' }, { host: 'cpaas', path: '/v2/accounts/{sid}/legs' }),
+    /only on Mumbai/);
+  assert.strictEqual(rest.buildRequest({ api_domain: 'https://api.exotel.com', account_sid: 'a', token: 't' }, { host: 'api', path: '/v1/Accounts/{sid}/Calls.json' }).url,
+    'https://api.exotel.com/v1/Accounts/a/Calls.json');
 });
 
 // ---------------------------------------------------------------- ask / docs (offline)

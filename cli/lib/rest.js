@@ -18,11 +18,11 @@ const TRUNK_ERRORS = {
 
 function hosts(auth) {
   const api = (auth.api_domain || 'https://api.in.exotel.com').replace(/\/$/, '');
-  // ExoML / Legs / Bridges host as published on docs.exotel.com ("Authentication & Base URL").
-  // Only the Mumbai host is documented; override with EXOTEL_CPAAS_BASE_URL or cpaas_base_url if Exotel gives you another.
-  // developer.exotel.com/docs/agentstream/programmable-voice: Mumbai cpaas-api.in.exotel.com, Singapore cpaas-api.exotel.com.
-  const cpaas = (process.env.EXOTEL_CPAAS_BASE_URL || auth.cpaas_base_url
-    || (/api\.in\.exotel\.com/.test(api) ? 'https://cpaas-api.in.exotel.com' : 'https://cpaas-api.exotel.com')).replace(/\/$/, '');
+  // ExoML / Legs / Bridges run only in Mumbai (cpaas-api.in.exotel.com); there is no Singapore Legs host.
+  // EXOTEL_CPAAS_BASE_URL or cpaas_base_url override it if Exotel gives you another host.
+  const cpaasOverride = process.env.EXOTEL_CPAAS_BASE_URL || auth.cpaas_base_url;
+  const cpaas = cpaasOverride ? cpaasOverride.replace(/\/$/, '')
+    : (/api\.in\.exotel\.com/.test(api) ? 'https://cpaas-api.in.exotel.com' : null);
   // Exotel-hosted VoiceBot API (voicebot.in.exotel.com for Mumbai accounts, voicebot.sg.exotel.com for Singapore).
   const voicebot = (process.env.EXOTEL_VOICEBOT_BASE_URL || auth.voicebot_base_url
     || (/api\.in\.exotel\.com/.test(api) ? 'https://voicebot.in.exotel.com/voicebot/api' : 'https://voicebot.sg.exotel.com/voicebot/api')).replace(/\/$/, '');
@@ -45,6 +45,10 @@ function seg(v, name) {
 function buildRequest(auth, { method = 'GET', host = 'api', path, query, json, form }) {
   const h = hosts(auth);
   const base = h[host];
+  if (!base && host === 'cpaas') {
+    throw new CliError('Legs, Bridges and ExoML are available only on Mumbai (India) accounts. This login is for Singapore (api.exotel.com). '
+      + 'Log in with a Mumbai account (exotel login --region in), or use Connect Voice AI / a Voicebot flow instead.', EXIT.USAGE);
+  }
   if (!base) throw new Error(`Unknown host ${host}`);
   const url = new URL(base + expandPath(path, auth, host));
   for (const [k, v] of Object.entries(query || {})) {
