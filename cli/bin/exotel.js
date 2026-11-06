@@ -512,7 +512,8 @@ GET STARTED
   exotel config               saved defaults: your number, caller ID, default bot
   exotel completion zsh|bash|fish   tab-completion for your shell
   exotel init                 log in, connect your coding agents (MCP), install Exotel skills
-  exotel login | logout | whoami | doctor
+  exotel login | whoami | doctor
+  exotel logout               delete saved credentials and remove Exotel from your agents' configs
   exotel balance              account balance
 
 CALLS, RECORDINGS, CAMPAIGNS  → exotel calls --help, exotel campaigns --help
@@ -555,16 +556,18 @@ FLOW WEBHOOKS (your Dynamic URLs)
 EVERYTHING ELSE
   exotel api <GET|POST|PUT|DELETE> </path/with/{sid}> [--host api|cpaas] [--query …] [--data '{json}'] [--form …]
   exotel mcp tools [--filter text] | mcp tool <name> | mcp call <tool> key=value…   (VoiceBot, SMS, WhatsApp, CQA, AI Assist…)
-  exotel mcp install | config | clients
+  exotel mcp install | config | clients   connect agents; they run "exotel mcp proxy", so their configs hold no token
   exotel skill list | install
 
   $ = billed or rings a real phone   ~ = changes live routing   ! = cannot be undone
-  These need --yes (or a "y" at the prompt). Without it the CLI stops with exit code 3.
+  Every command that changes your account (and every marked one) asks first: --yes (or a "y" at the
+  prompt). Without it the CLI stops with exit code 3. Read-only commands never ask.
 
 FLAGS   --json  --dry-run  --yes/-y  --force
 EXIT    0 ok · 1 error · 2 usage · 3 confirmation needed · 4 not logged in
 ENV     EXOTEL_ACCOUNT_SID EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_API_BASE_URL EXOTEL_CALLER_ID
-        EXOTEL_AUTH_JSON EXOTEL_MCP_URL EXOTEL_CONFIG_DIR`;
+        EXOTEL_AUTH_JSON EXOTEL_MCP_URL EXOTEL_CONFIG_DIR
+        EXOTEL_ALLOW_CUSTOM_HOST=1 (credentials go only to https://*.exotel.com / *.exotel.in otherwise)`;
 
 const SUBHELP = {
   completion: require('../lib/completion').COMPLETION_USAGE,
