@@ -128,15 +128,20 @@ public class SetupTools {
             + "**Credentials needed:**\n"
             + "- `voicebot_api_key` — VoiceBot Dashboard → Settings → API Keys\n"
             + "- `voicebot_api_token` — Same page as above\n"
-            + "- `voicebot_account_id` — Your VoiceBot account identifier\n"
+            + "- `voicebot_account_id` — Your VoiceBot account identifier (case-sensitive)\n"
+            + "- `voicebot_base_url` — (optional) defaults to https://voicebot.in.exotel.com/voicebot/api/v2\n"
+            + "- `te_base_url` — (optional, for exotel_voicebot_te_* Tools Extension tools) your Tools Extension URL ending in /voicebot\n"
             + "- `calls_api_key` — my.exotel.com → API Settings (for placing calls)\n"
             + "- `calls_api_token` — Same page as above\n"
             + "- `calls_account_id` — Your Exotel account SID\n\n"
             + "**What you can do:**\n"
             + "- Create and manage voice bots\n"
             + "- Place outbound AI-powered calls\n"
-            + "- Configure bot personas and TTS voices\n"
-            + "- Get call transcripts and session details\n\n";
+            + "- Version bots safely: draft, test, promote or split traffic\n"
+            + "- Configure assistants, personas, voices and webhooks\n"
+            + "- Attach tools (HTTP APIs, lookup tables, knowledge bases, Tools Extension routes)\n"
+            + "- Read conversations and transcripts\n\n"
+            + "Start with `exotel_voicebot_guide` (topic \"start\") for how-tos, use-case playbooks and known problems.\n\n";
     }
 
     private String cqaGuide(AuthCredentials creds) {

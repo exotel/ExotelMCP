@@ -240,7 +240,7 @@ public class VoiceBotService {
     }
 
     @Tool(name = "exotel_voicebot_delete",
-          description = "Deletes a VoiceBot permanently by its ID. This action cannot be undone. Always confirm with the user before calling this tool.")
+          description = "Deletes a VoiceBot by its ID (a soft delete: the bot stops taking calls and no tool restores it). Always confirm with the user before calling this tool.")
     public String deleteVoiceBot(String voiceBotId) {
         logger.info("Deleting VoiceBot: {}", sanitizeForLog(voiceBotId));
         try {
