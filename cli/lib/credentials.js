@@ -144,6 +144,7 @@ function apiKeyPair(auth) {
 /** Best-effort credential check against the Exotel CPaaS API (read-only call-list endpoint). */
 async function verify(auth, { timeoutMs = 15000 } = {}) {
   const url = `${auth.api_domain.replace(/\/$/, '')}/v1/Accounts/${encodeURIComponent(auth.account_sid)}/Calls.json?PageSize=1`;
+  require('./rest').assertExotelHost(url);
   const res = await fetch(url, {
     headers: { Authorization: `Basic ${auth.token}`, Accept: 'application/json' },
     signal: AbortSignal.timeout(timeoutMs),

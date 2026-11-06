@@ -728,3 +728,25 @@ test('starter servers survive junk input and refuse requests without the secret'
     srv.close();
   }
 });
+
+test('credentials are only ever sent to Exotel over HTTPS', async () => {
+  const rest = require('../lib/rest');
+  const { McpClient } = require('../lib/mcp');
+  const creds = require('../lib/credentials');
+  const before = process.env.EXOTEL_ALLOW_CUSTOM_HOST;
+  delete process.env.EXOTEL_ALLOW_CUSTOM_HOST;
+  try {
+    for (const u of ['https://evil.example.com/x', 'http://api.in.exotel.com/x', 'https://exotel.com.evil.io/x', 'https://notexotel.com/x']) {
+      assert.throws(() => rest.assertExotelHost(u), /Refusing to send your Exotel credentials/, u);
+    }
+    for (const u of ['https://api.in.exotel.com/v1', 'https://mcp.exotel.com/mcp', 'https://cpaas-api.in.exotel.com/v2', 'https://x.exotel.in/']) rest.assertExotelHost(u);
+    const req = { method: 'GET', url: 'https://evil.example.com/v1/Accounts/a/Calls.json', headers: { Authorization: 'Basic abc' } };
+    await assert.rejects(rest.send(req), /Refusing/);
+    await assert.rejects(new McpClient({ token: 't' }, { url: 'https://evil.example.com/mcp' }).post({ jsonrpc: '2.0', id: 1, method: 'tools/list' }).catch((e) => { throw e; }), /Refusing/);
+    await assert.rejects(creds.verify({ api_domain: 'https://evil.example.com', account_sid: 'a', token: 't' }), /Refusing/);
+    process.env.EXOTEL_ALLOW_CUSTOM_HOST = '1';
+    rest.assertExotelHost('http://127.0.0.1:9999/mcp');
+  } finally {
+    if (before === undefined) delete process.env.EXOTEL_ALLOW_CUSTOM_HOST; else process.env.EXOTEL_ALLOW_CUSTOM_HOST = before;
+  }
+});

@@ -40,6 +40,7 @@ class McpClient {
       'MCP-Protocol-Version': PROTOCOL_VERSION,
     };
     if (this.sessionId) headers['Mcp-Session-Id'] = this.sessionId;
+    require('./rest').assertExotelHost(this.url);
     const res = await fetch(this.url, {
       method: 'POST',
       headers,

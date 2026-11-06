@@ -87,7 +87,23 @@ function approve(req) {
   return req;
 }
 
+/**
+ * Credentials only ever go to Exotel over HTTPS (*.exotel.com / *.exotel.in). A typo, a copied command or a
+ * misled agent cannot send the API key and token to another host. Self-hosted MCP or test servers:
+ * EXOTEL_ALLOW_CUSTOM_HOST=1.
+ */
+function assertExotelHost(url) {
+  let u;
+  try { u = new URL(url); } catch { throw new CliError(`Invalid URL: ${url}`, EXIT.USAGE); }
+  if (process.env.EXOTEL_ALLOW_CUSTOM_HOST === '1') return;
+  if (u.protocol !== 'https:' || !/(^|\.)exotel\.(com|in)$/i.test(u.hostname)) {
+    throw new CliError(`Refusing to send your Exotel credentials to ${u.protocol}//${u.host}: only https://*.exotel.com or *.exotel.in. `
+      + 'Check the region / api_domain (exotel whoami). For a self-hosted server set EXOTEL_ALLOW_CUSTOM_HOST=1. Nothing was sent.', EXIT.USAGE);
+  }
+}
+
 async function send(req, { timeoutMs = 30000 } = {}) {
+  if (req.headers && Object.keys(req.headers).some((h) => h.toLowerCase() === 'authorization')) assertExotelHost(req.url);
   // Safety net: no request that changes anything leaves the CLI unless a command asked the user first.
   if (req.method && req.method !== 'GET' && !req.approved) {
     throw new CliError(`Internal safety check: ${req.method} ${String(req.url).replace(/\?.*/, '')} was not confirmed. Nothing was sent.`, EXIT.ERROR);
@@ -119,4 +135,4 @@ async function send(req, { timeoutMs = 30000 } = {}) {
   return result;
 }
 
-module.exports = { approve, hosts, expandPath, seg, buildRequest, preview, send, TRUNK_ERRORS };
+module.exports = { approve, hosts, expandPath, seg, buildRequest, preview, send, TRUNK_ERRORS, assertExotelHost };

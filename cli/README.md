@@ -127,6 +127,8 @@ exotel trunk setup --name ci_trunk --number +91… --ip 203.0.113.10 --dry-run
 
 Environment variables override the saved file. `EXOTEL_AUTH_JSON` passes the full MCP header object;
 `EXOTEL_MCP_URL` points at a self-hosted MCP server.
+Credentials are only ever sent over HTTPS to `*.exotel.com` / `*.exotel.in`; for a self-hosted or test server, also set
+`EXOTEL_ALLOW_CUSTOM_HOST=1`.
 
 ## Develop
 
