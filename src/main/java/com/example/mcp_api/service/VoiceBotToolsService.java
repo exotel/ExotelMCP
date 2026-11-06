@@ -177,7 +177,7 @@ public class VoiceBotToolsService {
     @Tool(name = "exotel_tools_server_tenant_create",
           description = "Creates a new tenant on the Exotel Tools Server. "
               + "Params: tenantId (unique string ID), name (human-readable name). "
-              + "After creating, call exotel_tools_server_tenant_spawn to activate it.")
+              + "Create it once per account; the tenant id is the account SID.")
     public String createTenant(String tenantId, String name) {
         logger.info("Creating Tools Server tenant: {}", sanitize(tenantId));
         try {
@@ -196,41 +196,6 @@ public class VoiceBotToolsService {
         } catch (HttpClientErrorException e) { return errorMsg("exotel_tools_server_tenant_create", e);
         } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_tenant_create", e);
         } catch (Exception e) { return "Error creating tenant: " + e.getMessage(); }
-    }
-
-    @Tool(name = "exotel_tools_server_tenant_spawn",
-          description = "Spawns (activates) a tenant so it can start serving tool calls to VoiceBots. "
-              + "Call this after creating a tenant or after exotel_tools_server_tenant_terminate to bring it back online.")
-    public String spawnTenant(String tenantId) {
-        logger.info("Spawning Tools Server tenant: {}", sanitize(tenantId));
-        try {
-            String authErr = requireAuth(); if (authErr != null) return authErr;
-            if (tenantId == null || tenantId.isBlank()) return "Error: tenantId is required";
-            String url = getBaseUrl() + "/tools/api/v1/tenants/" + tenantId + "/spawn";
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST,
-                    new HttpEntity<>(jsonHeaders()), String.class);
-            String body = response.getBody();
-            return (body != null && !body.isBlank()) ? body : "Tenant '" + tenantId + "' spawned successfully.";
-        } catch (HttpClientErrorException e) { return errorMsg("exotel_tools_server_tenant_spawn", e);
-        } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_tenant_spawn", e);
-        } catch (Exception e) { return "Error spawning tenant: " + e.getMessage(); }
-    }
-
-    @Tool(name = "exotel_tools_server_tenant_terminate",
-          description = "Terminates (deactivates) a tenant on the Tools Server. The tenant stops serving tool calls. Use exotel_tools_server_tenant_spawn to reactivate.")
-    public String terminateTenant(String tenantId) {
-        logger.info("Terminating Tools Server tenant: {}", sanitize(tenantId));
-        try {
-            String authErr = requireAuth(); if (authErr != null) return authErr;
-            if (tenantId == null || tenantId.isBlank()) return "Error: tenantId is required";
-            String url = getBaseUrl() + "/tools/api/v1/tenants/" + tenantId + "/terminate";
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST,
-                    new HttpEntity<>(jsonHeaders()), String.class);
-            String body = response.getBody();
-            return (body != null && !body.isBlank()) ? body : "Tenant '" + tenantId + "' terminated successfully.";
-        } catch (HttpClientErrorException e) { return errorMsg("exotel_tools_server_tenant_terminate", e);
-        } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_tenant_terminate", e);
-        } catch (Exception e) { return "Error terminating tenant: " + e.getMessage(); }
     }
 
     // ======================== TOOLS CRUD ========================
@@ -290,7 +255,7 @@ public class VoiceBotToolsService {
               + "\"servers\":[{\"url\":\"https://api.example.com\"}],\"paths\":{\"/price\":{\"get\":"
               + "{\"parameters\":[{\"name\":\"product_id\",\"in\":\"query\",\"schema\":{\"type\":\"string\"}}],"
               + "\"responses\":{\"200\":{\"description\":\"OK\"}}}}}}\n"
-              + "After creation, attach this tool to a VoiceBot assistant using exotel_voicebot_assistant_push_version.")
+              + "The tool starts inactive: test it with exotel_tools_server_tool_version_test, activate it with exotel_tools_server_tool_update, then attach it to an agent's mcp_tools with exotel_voicebot_update_config.")
     public String createTool(String name, String type, String description, String definitionJson) {
         logger.info("Creating tool: {} type={}", sanitize(name), sanitize(type));
         try {

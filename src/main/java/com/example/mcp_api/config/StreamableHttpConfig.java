@@ -373,6 +373,8 @@ public class StreamableHttpConfig {
             if (toolResult == null) {
                 toolResult = "Unknown tool: " + toolName;
                 isError = true;
+            } else if (isFailureResult(toolName, toolResult.toString())) {
+                isError = true;
             }
             
             // Format the result for MCP response
@@ -1093,6 +1095,29 @@ public class StreamableHttpConfig {
         }
         return String.valueOf(value);
     }
+
+    /**
+     * VoiceBot and Tools Server tools report failures as text ("Error 401: ...", "Missing ... credentials") or as
+     * {"ok": false, ...} JSON instead of throwing. Flag those as isError so MCP clients treat them as failures.
+     */
+    static boolean isFailureResult(String toolName, String text) {
+        if (toolName == null || text == null) return false;
+        if (!toolName.startsWith("exotel_voicebot_") && !toolName.startsWith("exotel_tools_server_")) return false;
+        String t = text.stripLeading();
+        if (t.startsWith("Error") || t.startsWith("Missing ") || t.startsWith("Tool execution failed")) return true;
+        if (t.startsWith("{")) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode n = FAILURE_MAPPER.readTree(t);
+                return n.path("ok").isBoolean() && !n.path("ok").asBoolean();
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper FAILURE_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private static String camelToSnake(String camel) {
         if (camel == null || camel.isBlank()) return camel;

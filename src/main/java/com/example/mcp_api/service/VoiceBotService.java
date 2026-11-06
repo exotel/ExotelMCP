@@ -239,24 +239,6 @@ public class VoiceBotService {
         } catch (Exception e) { return "Error listing VoiceBots: " + e.getMessage(); }
     }
 
-    @Tool(name = "exotel_voicebot_get_details",
-          description = "Gets full details of a single VoiceBot by its ID. Returns name, status, supported_languages, assistant_config, voice_config, asr_config, and version history.")
-    public String getVoiceBot(String voiceBotId) {
-        logger.info("Getting VoiceBot: {}", sanitizeForLog(voiceBotId));
-        try {
-            String authErr = requireVoiceBotCreds();
-            if (authErr != null) return authErr;
-            validateId(voiceBotId, "voiceBotId");
-            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
-            HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
-            return safeBody(response);
-        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_get_details", e);
-        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_get_details", e);
-        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
-        } catch (Exception e) { return "Error getting VoiceBot: " + e.getMessage(); }
-    }
-
     @Tool(name = "exotel_voicebot_delete",
           description = "Deletes a VoiceBot permanently by its ID. This action cannot be undone. Always confirm with the user before calling this tool.")
     public String deleteVoiceBot(String voiceBotId) {
