@@ -284,11 +284,11 @@ public class VoiceBotBuilderTools {
 
     @Tool(name = "exotel_voicebot_get_details",
           description = "Read a bot back with every field. Without version: GET {v1}/accounts/{account}/voicebots/{botId}, "
-              + "the stable version in v1 shape and the only read that returns greeting_message, filler/nudge/PII config, "
-              + "interruption settings, the full webhook_config and the LCI ids (conversation_assistant_id, "
-              + "insights_assistant_id). With version (vN): GET {v2}/accounts/{account}/voicebots/{botId}/versions/{version}, "
-              + "that version's status, is_stable, traffic_percentage, assistant_version and full config including the "
-              + "resolved assistant. Secret values (API keys, auth configs, tokens) come back as <redacted>.")
+              + "the stable version in v1 shape and the only read that returns user_speech_timeout_seconds, interruption "
+              + "settings, the LCI ids (conversation_assistant_id, insights_assistant_id) and assistant_config input/output. "
+              + "With version (vN): GET {v2}/accounts/{account}/voicebots/{botId}/versions/{version}, that version's status, "
+              + "is_stable, traffic_percentage, assistant_version and config (greeting, filler, nudge, webhooks) including "
+              + "the resolved assistant. Secret values (API keys, auth configs, tokens) come back as <redacted>.")
     public String botGetFull(
             @ToolParam(description = "Bot id (UUID).") String botId,
             @ToolParam(required = false, description = "Optional version such as v3. Omit it to read the stable version "
