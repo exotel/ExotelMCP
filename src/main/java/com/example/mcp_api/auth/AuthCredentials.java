@@ -38,6 +38,7 @@ public class AuthCredentials {
     private String voicebotApiToken;
     private String voicebotAccountId;
     private String voicebotBaseUrl;
+    private String teBaseUrl;
 
     // Calls API (for bot dialing)
     private String callsApiKey;
@@ -124,6 +125,7 @@ public class AuthCredentials {
             creds.voicebotApiToken = textField(root, "voicebot_api_token");
             creds.voicebotAccountId = textField(root, "voicebot_account_id");
             creds.voicebotBaseUrl = textField(root, "voicebot_base_url");
+            creds.teBaseUrl = textField(root, "te_base_url");
 
             // Calls
             creds.callsApiKey = textField(root, "calls_api_key");
@@ -265,6 +267,11 @@ public class AuthCredentials {
 
     public String effectiveVoicebotBaseUrl(String defaultUrl) {
         return voicebotBaseUrl != null ? voicebotBaseUrl : defaultUrl;
+    }
+
+    /** Tools Extension stamp base (e.g. https://<te-host>/voicebot); falls back to the server default. */
+    public String effectiveTeBaseUrl(String defaultUrl) {
+        return teBaseUrl != null ? teBaseUrl : defaultUrl;
     }
 
     public String effectiveCallsBaseUrl(String defaultUrl) {

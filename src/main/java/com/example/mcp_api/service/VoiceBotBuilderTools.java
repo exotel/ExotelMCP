@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -164,6 +165,12 @@ public class VoiceBotBuilderTools {
 
     @Value("${exotel.voicebot.base.url:https://voicebot.in.exotel.com/voicebot/api/v2}")
     private String defaultBaseUrl;
+
+    @Value("${exotel.voicebot.te.base.url:}")
+    private String defaultTeBaseUrl;
+
+    @Autowired
+    private VoiceBotToolsService toolsServerTools;
 
     @Value("${exotel.voicebot.builder.allowed-host-suffixes:.exotel.com,.exotel.in}")
     private String allowedHostSuffixesCsv;
@@ -1751,5 +1758,425 @@ public class VoiceBotBuilderTools {
 
     private static Set<String> orderedSet(String... values) {
         return Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(values)));
+    }
+
+    // ======================= TOOLS EXTENSION (TE) ROUTES =======================
+    // A route is a Camel YAML flow served at {te}/api/v1/accounts/{account}/published-routes/{path_suffix}.
+    // Management calls use the caller's own voicebot key; bots reach a route through a tools-server openapi tool.
+
+    static final Pattern TE_PATH_SUFFIX = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9/_-]{0,199}$");
+    static final Set<String> TE_METHODS = Set.of("GET", "POST", "PUT", "DELETE");
+    static final int TE_MAX_YAML_CHARS = 128_000;
+
+    /** TE management base for the caller: {te_base}/api/v1/accounts/{account}. */
+    private record TeConn(String accountBase, String publishedBase, Conn conn) {}
+
+    private TeConn teConnection() {
+        Conn conn = connection();
+        AuthCredentials creds = AuthContext.current();
+        String base = trimToNull(creds.effectiveTeBaseUrl(defaultTeBaseUrl));
+        if (base == null) {
+            throw new ToolError(error("TE_NOT_CONFIGURED",
+                    "No Tools Extension base URL: the envelope has no te_base_url and the server sets no default.",
+                    "Add te_base_url (https://<tools-extension-host>/voicebot) to the Authorization envelope.", null, null));
+        }
+        String problem = validateTeBaseUrl(base, allowedHostSuffixes);
+        if (problem != null) {
+            throw new ToolError(error("INVALID_BASE_URL", problem + ".",
+                    "Set te_base_url to the https Tools Extension URL ending in /voicebot.", null, null));
+        }
+        String root = teRoot(base);
+        String accountBase = root + "/api/v1/accounts/" + URLEncoder.encode(conn.account(), StandardCharsets.UTF_8);
+        return new TeConn(accountBase, accountBase + "/published-routes", conn);
+    }
+
+    /** https, an allowed Exotel host, no user info, query or fragment. Any path; /api/vN is stripped later. */
+    static String validateTeBaseUrl(String baseUrl, List<String> allowedHostSuffixes) {
+        URI uri;
+        try {
+            uri = new URI(baseUrl.trim());
+        } catch (URISyntaxException e) {
+            return "te_base_url is not a valid URL";
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())) return "te_base_url must use https";
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) return "te_base_url has no host";
+        String lowerHost = host.toLowerCase(Locale.ROOT);
+        boolean allowed = allowedHostSuffixes.stream().anyMatch(suffix ->
+                lowerHost.endsWith(suffix) || (suffix.startsWith(".") && lowerHost.equals(suffix.substring(1))));
+        if (!allowed) return "te_base_url host " + host + " is not an allowed Exotel host (" + allowedHostSuffixes + ")";
+        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            return "te_base_url must not carry user info, a query or a fragment";
+        }
+        return null;
+    }
+
+    /** The stamp root with any trailing slash or /api/vN removed. */
+    static String teRoot(String baseUrl) {
+        return baseUrl.trim().replaceAll("/+$", "").replaceFirst("/api/v\\d+$", "");
+    }
+
+    private static URI teUri(TeConn te, Map<String, String> query, String... segments) {
+        return buildUri(te.accountBase(), query, segments);
+    }
+
+    private static String requireTeMethod(String httpMethod) {
+        String m = trimToNull(httpMethod) == null ? null : httpMethod.trim().toUpperCase(Locale.ROOT);
+        if (m == null || !TE_METHODS.contains(m)) throw invalidParam("httpMethod must be one of " + TE_METHODS + ".");
+        return m;
+    }
+
+    static String requireTePathSuffix(String pathSuffix) {
+        String p = trimToNull(pathSuffix) == null ? null : pathSuffix.trim().replaceAll("^/+", "");
+        if (p == null || !TE_PATH_SUFFIX.matcher(p).matches() || p.contains("..") || p.contains("//")) {
+            throw invalidParam("pathSuffix must be letters, digits, / _ - (e.g. orders/status), at most 200 characters.");
+        }
+        return p;
+    }
+
+    private static String requireYaml(String yaml) {
+        String y = trimToNull(yaml);
+        if (y == null) throw invalidParam("yaml is required: a Camel route list starting with '- route:'.");
+        if (y.length() > TE_MAX_YAML_CHARS) throw invalidParam("yaml is longer than " + TE_MAX_YAML_CHARS + " characters.");
+        return y;
+    }
+
+    private static List<String> yamlTagWarnings(String yaml) {
+        Matcher m = TAG_PATTERN.matcher(yaml);
+        if (!m.find()) return List.of();
+        return List.of("TAG_STRIPPED: the API removes <tag>-shaped text before saving, so the stored YAML will lose it near \""
+                + snippet(yaml, m.start()) + "\". Use plain comparison operators and no angle-bracket placeholders.");
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_list",
+          description = "List the account's Tools Extension routes (custom HTTP flows written as Camel YAML): "
+              + "GET {te}/routes. Each route has id, name, http_method, path_suffix, status and current_version. "
+              + "Needs te_base_url in the envelope unless the server sets one.")
+    public String teRouteList(
+            @ToolParam(required = false, description = "Offset, default 0.") Integer offset,
+            @ToolParam(required = false, description = "Page size, 1-100, default 20.") Integer limit) {
+        return run("exotel_voicebot_te_route_list", () -> {
+            TeConn te = teConnection();
+            int off = offset == null ? 0 : Math.max(0, offset);
+            int lim = limit == null ? 20 : Math.min(100, Math.max(1, limit));
+            Upstream up = send(HttpMethod.GET, teUri(te, Map.of("offset", String.valueOf(off), "limit", String.valueOf(lim)),
+                    "routes"), te.conn(), null);
+            if (up.status() >= 400) return upstreamError(up.status(), up.body());
+            Map<String, Object> out = ok(up.status());
+            out.put("published_base", te.publishedBase());
+            putData(out, up.json());
+            return out;
+        });
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_get",
+          description = "Read one Tools Extension route: GET {te}/routes/{routeId}. With version (a number) it returns that "
+              + "version's YAML and changelog instead; with includeVersions=true it adds the version list. The route's "
+              + "published URL is {te}/published-routes/{path_suffix}.")
+    public String teRouteGet(
+            @ToolParam(description = "Route id (UUID).") String routeId,
+            @ToolParam(required = false, description = "Version number to read, e.g. 3.") Integer version,
+            @ToolParam(required = false, description = "true to also list every version.") Boolean includeVersions) {
+        return run("exotel_voicebot_te_route_get", () -> {
+            requireId(routeId, "routeId");
+            TeConn te = teConnection();
+            String id = routeId.trim();
+            Map<String, Object> out;
+            if (version != null) {
+                if (version < 1) throw invalidParam("version must be 1 or more.");
+                Upstream up = send(HttpMethod.GET, teUri(te, null, "routes", id, "versions", String.valueOf(version)), te.conn(), null);
+                if (up.status() >= 400) return upstreamError(up.status(), up.body());
+                out = ok(up.status());
+                putData(out, up.json());
+                return out;
+            }
+            Upstream up = send(HttpMethod.GET, teUri(te, null, "routes", id), te.conn(), null);
+            if (up.status() >= 400) return upstreamError(up.status(), up.body());
+            out = ok(up.status());
+            JsonNode route = unwrap(up.json());
+            String suffix = textOrNull(route, "path_suffix");
+            if (suffix != null) out.put("published_url", te.publishedBase() + "/" + suffix);
+            putData(out, route);
+            if (Boolean.TRUE.equals(includeVersions)) {
+                Upstream vs = send(HttpMethod.GET, teUri(te, null, "routes", id, "versions"), te.conn(), null);
+                out.put("versions", vs.status() >= 400 ? upstreamError(vs.status(), vs.body()) : unwrap(vs.json()));
+            }
+            return out;
+        });
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_create",
+          description = "Create a Tools Extension route: POST {te}/routes with name, http_method, path_suffix and Camel YAML. "
+              + "Version 1 is ACTIVE and served at once at {te}/published-routes/{path_suffix}; there is no publish step. "
+              + "The request body reaches the route as a string (unmarshal it before ${body[field]}); headers and query "
+              + "parameters arrive as ${header.NAME}. Test it with exotel_voicebot_te_route_test, then make it a bot tool "
+              + "with exotel_voicebot_te_route_attach_as_tool. The API strips <tag>-shaped text from the YAML.")
+    public String teRouteCreate(
+            @ToolParam(description = "Route name (unique in the account).") String name,
+            @ToolParam(description = "GET, POST, PUT or DELETE.") String httpMethod,
+            @ToolParam(description = "Path after /published-routes/, e.g. orders/status.") String pathSuffix,
+            @ToolParam(description = "Camel route YAML: a list with one '- route:' whose from.uri is direct:placeholder.") String yaml,
+            @ToolParam(required = false, description = "Changelog note for version 1.") String changeLog) {
+        return run("exotel_voicebot_te_route_create", () -> {
+            String n = trimToNull(name);
+            if (n == null || n.length() > 200) throw invalidParam("name is required (max 200 characters).");
+            String method = requireTeMethod(httpMethod);
+            String suffix = requireTePathSuffix(pathSuffix);
+            String y = requireYaml(yaml);
+            TeConn te = teConnection();
+            ObjectNode body = MAPPER.createObjectNode().put("name", n).put("http_method", method)
+                    .put("path_suffix", suffix).put("yaml", y)
+                    .put("change_log", trimToNull(changeLog) == null ? "Created through ExotelMCP" : changeLog.trim());
+            List<String> warnings = yamlTagWarnings(y);
+            Upstream up = send(HttpMethod.POST, teUri(te, null, "routes"), te.conn(), body);
+            if (up.status() >= 400) return withWarnings(upstreamError(up.status(), up.body()), warnings);
+            JsonNode route = unwrap(up.json());
+            Map<String, Object> out = ok(up.status());
+            out.put("route_id", textOrNull(route, "id"));
+            out.put("published_url", te.publishedBase() + "/" + suffix);
+            out.put("next_steps", List.of(
+                    "Test it: exotel_voicebot_te_route_test(routeId, bodyJson).",
+                    "Make it a bot tool: exotel_voicebot_te_route_attach_as_tool(routeId, toolName, description, inputSchemaJson)."));
+            putWarnings(out, warnings);
+            putData(out, route);
+            return out;
+        });
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_update",
+          description = "Save new YAML as the route's next version: PUT {te}/routes/{routeId}. The new version is live at once "
+              + "for every bot tool that calls this route. Requires confirm=true; without it nothing changes and the "
+              + "result is a preview with the current version. Roll back by updating again with an older version's YAML "
+              + "(exotel_voicebot_te_route_get with version).")
+    public String teRouteUpdate(
+            @ToolParam(description = "Route id (UUID).") String routeId,
+            @ToolParam(description = "The complete new Camel YAML.") String yaml,
+            @ToolParam(required = false, description = "Changelog note for this version.") String changeLog,
+            @ToolParam(required = false, description = "Optional new GET, POST, PUT or DELETE.") String httpMethod,
+            @ToolParam(required = false, description = "Optional new path suffix; callers of the old URL break.") String pathSuffix,
+            @ToolParam(required = false, description = "Must be true to save. Without it the tool only returns a preview; "
+                + "get the user's approval first.") Boolean confirm) {
+        return run("exotel_voicebot_te_route_update", () -> {
+            requireId(routeId, "routeId");
+            String y = requireYaml(yaml);
+            String method = trimToNull(httpMethod) == null ? null : requireTeMethod(httpMethod);
+            String suffix = trimToNull(pathSuffix) == null ? null : requireTePathSuffix(pathSuffix);
+            TeConn te = teConnection();
+            String id = routeId.trim();
+            List<String> warnings = yamlTagWarnings(y);
+            if (!Boolean.TRUE.equals(confirm)) {
+                Map<String, Object> preview = new LinkedHashMap<>();
+                Upstream cur = send(HttpMethod.GET, teUri(te, null, "routes", id), te.conn(), null);
+                if (cur.status() >= 400) return upstreamError(cur.status(), cur.body());
+                JsonNode route = unwrap(cur.json());
+                preview.put("current_version", route == null ? null : route.get("current_version"));
+                preview.put("current_method", textOrNull(route, "http_method"));
+                preview.put("current_path_suffix", textOrNull(route, "path_suffix"));
+                preview.put("new_yaml_chars", y.length());
+                if (method != null) preview.put("new_method", method);
+                if (suffix != null) preview.put("new_path_suffix", suffix);
+                Map<String, Object> gate = confirmGate(confirm, "save a new live version of Tools Extension route " + id, preview);
+                putWarnings(gate, warnings);
+                return gate;
+            }
+            ObjectNode body = MAPPER.createObjectNode().put("yaml", y)
+                    .put("change_log", trimToNull(changeLog) == null ? "Updated through ExotelMCP" : changeLog.trim());
+            if (method != null) body.put("http_method", method);
+            if (suffix != null) body.put("path_suffix", suffix);
+            Upstream up = send(HttpMethod.PUT, teUri(te, null, "routes", id), te.conn(), body);
+            if (up.status() >= 400) return withWarnings(upstreamError(up.status(), up.body()), warnings);
+            Map<String, Object> out = ok(up.status());
+            out.put("route_id", id);
+            putWarnings(out, warnings);
+            putData(out, unwrap(up.json()));
+            return out;
+        });
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_delete",
+          description = "Delete a Tools Extension route (soft delete): DELETE {te}/routes/{routeId}. Every bot tool that calls "
+              + "its URL starts failing at once. Requires confirm=true; without it the result is a preview of the route.")
+    public String teRouteDelete(
+            @ToolParam(description = "Route id (UUID).") String routeId,
+            @ToolParam(required = false, description = "Must be true to delete, after the user approves the preview.") Boolean confirm) {
+        return run("exotel_voicebot_te_route_delete", () -> {
+            requireId(routeId, "routeId");
+            TeConn te = teConnection();
+            String id = routeId.trim();
+            if (!Boolean.TRUE.equals(confirm)) {
+                Upstream cur = send(HttpMethod.GET, teUri(te, null, "routes", id), te.conn(), null);
+                if (cur.status() >= 400) return upstreamError(cur.status(), cur.body());
+                Map<String, Object> preview = new LinkedHashMap<>();
+                JsonNode route = unwrap(cur.json());
+                preview.put("name", textOrNull(route, "name"));
+                preview.put("path_suffix", textOrNull(route, "path_suffix"));
+                preview.put("current_version", route == null ? null : route.get("current_version"));
+                return confirmGate(confirm, "delete Tools Extension route " + id, preview);
+            }
+            Upstream up = send(HttpMethod.DELETE, teUri(te, null, "routes", id), te.conn(), null);
+            if (up.status() >= 400) return upstreamError(up.status(), up.body());
+            Map<String, Object> out = ok(up.status());
+            out.put("route_id", id);
+            out.put("deleted", true);
+            return out;
+        });
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_test",
+          description = "Run a route once with sample input: POST {te}/routes/{routeId}/runs with "
+              + "{\"body\": <bodyJson as a string>, \"headers\": {...}, \"query_params\": {...}}. Outbound calls in the route "
+              + "really happen (writes included). The result is the route's own output; on failure read the run trace "
+              + "with exotel_voicebot_te_runs_get(routeId).")
+    public String teRouteTest(
+            @ToolParam(description = "Route id (UUID).") String routeId,
+            @ToolParam(required = false, description = "Request body the route receives, as JSON, e.g. {\"order_id\":\"A-1001\"}.") Object bodyJson,
+            @ToolParam(required = false, description = "Headers as a JSON object, e.g. {\"X-Session-Id\":\"test-1\"}.") Object headersJson,
+            @ToolParam(required = false, description = "Query parameters as a JSON object.") Object queryParamsJson) {
+        return run("exotel_voicebot_te_route_test", () -> {
+            requireId(routeId, "routeId");
+            TeConn te = teConnection();
+            ObjectNode envelope = MAPPER.createObjectNode();
+            envelope.put("body", bodyJson == null ? "" : toJson(parseJsonArg(bodyJson, "bodyJson")));
+            if (headersJson != null) envelope.set("headers", requireObject(parseJsonArg(headersJson, "headersJson"), "headersJson"));
+            if (queryParamsJson != null) envelope.set("query_params", requireObject(parseJsonArg(queryParamsJson, "queryParamsJson"), "queryParamsJson"));
+            Upstream up = send(HttpMethod.POST, teUri(te, null, "routes", routeId.trim(), "runs"), te.conn(), envelope);
+            Map<String, Object> out = up.status() >= 400 ? upstreamError(up.status(), up.body()) : ok(up.status());
+            out.put("route_status", up.status());
+            if (up.json() != null) out.put("route_output", up.json());
+            else out.put("route_output_text", truncate(up.body() == null ? "" : up.body(), 20_000));
+            if (up.status() >= 400) out.put("next_step", "Read the failing step: exotel_voicebot_te_runs_get(routeId, includeSteps=true).");
+            return out;
+        });
+    }
+
+    private static JsonNode requireObject(JsonNode node, String name) {
+        if (node == null || !node.isObject()) throw invalidParam(name + " must be a JSON object.");
+        return node;
+    }
+
+    @Tool(name = "exotel_voicebot_te_runs_get",
+          description = "Read Tools Extension run traces. sessionId: every run during one call (GET {te}/runs?session_id=). "
+              + "routeId + runId: one run (GET {te}/routes/{routeId}/runs/{runId}), plus its per-step trace with "
+              + "includeSteps=true. routeId alone: the route's recent runs. Use it to find which step of a route failed.")
+    public String teRunsGet(
+            @ToolParam(required = false, description = "Route id (UUID).") String routeId,
+            @ToolParam(required = false, description = "Run id (UUID); needs routeId.") String runId,
+            @ToolParam(required = false, description = "Call session id, to list all runs of one call.") String sessionId,
+            @ToolParam(required = false, description = "true to include the per-step trace of runId (or of the latest run).") Boolean includeSteps) {
+        return run("exotel_voicebot_te_runs_get", () -> {
+            TeConn te = teConnection();
+            Map<String, Object> out;
+            if (trimToNull(sessionId) != null) {
+                requireId(sessionId, "sessionId");
+                Upstream up = send(HttpMethod.GET, teUri(te, Map.of("session_id", sessionId.trim()), "runs"), te.conn(), null);
+                if (up.status() >= 400) return upstreamError(up.status(), up.body());
+                out = ok(up.status());
+                putData(out, unwrap(up.json()));
+                return out;
+            }
+            requireId(routeId, "routeId");
+            String route = routeId.trim();
+            String runRef = trimToNull(runId);
+            if (runRef == null) {
+                Upstream up = send(HttpMethod.GET, teUri(te, null, "routes", route, "runs"), te.conn(), null);
+                if (up.status() >= 400) return upstreamError(up.status(), up.body());
+                out = ok(up.status());
+                putData(out, unwrap(up.json()));
+                return out;
+            }
+            requireId(runRef, "runId");
+            Upstream up = send(HttpMethod.GET, teUri(te, null, "routes", route, "runs", runRef), te.conn(), null);
+            if (up.status() >= 400) return upstreamError(up.status(), up.body());
+            out = ok(up.status());
+            putData(out, unwrap(up.json()));
+            if (Boolean.TRUE.equals(includeSteps)) {
+                Upstream st = send(HttpMethod.GET, teUri(te, null, "routes", route, "runs", runRef, "steps"), te.conn(), null);
+                out.put("steps", st.status() >= 400 ? upstreamError(st.status(), st.body()) : unwrap(st.json()));
+            }
+            return out;
+        });
+    }
+
+    @Tool(name = "exotel_voicebot_te_route_attach_as_tool",
+          description = "Wrap a Tools Extension route as a tools-server openapi tool so a bot agent can call it. Reads the "
+              + "route, builds an OpenAPI 3.0 definition (servers = {te}/published-routes, one operation on its path and "
+              + "method; inputs from inputSchemaJson as a JSON request body for POST/PUT, query parameters for GET/DELETE) "
+              + "and creates the tool with exotel_tools_server_tool_create. The tool starts inactive: test and activate it "
+              + "with the tools-server tools, then add {\"tool_name\": \"tool_server.<toolName>\", \"name\": \"<toolName>\"} "
+              + "to an agent's mcp_tools with exotel_voicebot_update_config. Works only while the stamp lets published "
+              + "routes be called without a token (tools-server openapi tools support basic auth only).")
+    public String teRouteAttachAsTool(
+            @ToolParam(description = "Route id (UUID).") String routeId,
+            @ToolParam(description = "Tool name the agent will see, e.g. get_order_status (letters, digits, _).") String toolName,
+            @ToolParam(description = "When the agent should call it and what it returns. The model reads this.") String description,
+            @ToolParam(description = "JSON Schema object for the inputs, e.g. {\"type\":\"object\",\"properties\":"
+                + "{\"order_id\":{\"type\":\"string\",\"description\":\"Order id the caller gives\"}},\"required\":[\"order_id\"]}.")
+            Object inputSchemaJson) {
+        return run("exotel_voicebot_te_route_attach_as_tool", () -> {
+            requireId(routeId, "routeId");
+            String name = trimToNull(toolName);
+            if (name == null || !name.matches("^[A-Za-z][A-Za-z0-9_]{0,63}$"))
+                throw invalidParam("toolName must start with a letter and use letters, digits and _ (max 64).");
+            String desc = trimToNull(description);
+            if (desc == null) throw invalidParam("description is required: the agent decides when to call the tool from it.");
+            JsonNode schema = requireObject(parseJsonArg(inputSchemaJson, "inputSchemaJson"), "inputSchemaJson");
+            TeConn te = teConnection();
+            Upstream cur = send(HttpMethod.GET, teUri(te, null, "routes", routeId.trim()), te.conn(), null);
+            if (cur.status() >= 400) return upstreamError(cur.status(), cur.body());
+            JsonNode route = unwrap(cur.json());
+            String method = textOrNull(route, "http_method");
+            String suffix = textOrNull(route, "path_suffix");
+            if (method == null || suffix == null) {
+                return error("UNEXPECTED_RESPONSE", "The route read back without http_method or path_suffix.",
+                        "Check the route with exotel_voicebot_te_route_get.", cur.status(), null);
+            }
+            ObjectNode definition = openApiForRoute(te.publishedBase(), suffix, method, name, desc, schema);
+            String created = toolsServerTools.createTool(name, "openapi", desc, toJson(definition));
+            Map<String, Object> out = ok(200);
+            out.put("route_id", routeId.trim());
+            out.put("published_url", te.publishedBase() + "/" + suffix);
+            out.put("tools_server_result", tryParse(created) != null ? tryParse(created) : created);
+            out.put("definition", definition);
+            out.put("next_steps", List.of(
+                    "Test the new tool version: exotel_tools_server_tool_version_test.",
+                    "Activate it: exotel_tools_server_tool_update(toolId, status=active, currentVersionId).",
+                    "Attach it to an agent: exotel_voicebot_update_config with assistant_config.agents[].mcp_tools "
+                            + "[{\"tool_name\":\"tool_server." + name + "\",\"name\":\"" + name + "\"}]."));
+            if (created != null && created.stripLeading().startsWith("Error")) out.put("ok", false);
+            return out;
+        });
+    }
+
+    /** One-operation OpenAPI 3.0 spec that calls a published route. Package-private for tests. */
+    static ObjectNode openApiForRoute(String publishedBase, String pathSuffix, String method, String toolName,
+                                      String description, JsonNode inputSchema) {
+        ObjectNode spec = MAPPER.createObjectNode();
+        spec.put("openapi", "3.0.0");
+        spec.putObject("info").put("title", toolName).put("version", "1.0.0");
+        spec.putArray("servers").addObject().put("url", publishedBase);
+        ObjectNode op = spec.putObject("paths").putObject("/" + pathSuffix).putObject(method.toLowerCase(Locale.ROOT));
+        op.put("operationId", toolName);
+        op.put("description", description);
+        if ("POST".equals(method) || "PUT".equals(method)) {
+            op.putObject("requestBody").put("required", true).putObject("content")
+                    .putObject("application/json").set("schema", inputSchema);
+        } else {
+            ArrayNode params = op.putArray("parameters");
+            JsonNode props = inputSchema.path("properties");
+            Set<String> required = new HashSet<>();
+            inputSchema.path("required").forEach(r -> required.add(r.asText()));
+            props.properties().forEach(e -> {
+                ObjectNode p = params.addObject();
+                p.put("name", e.getKey());
+                p.put("in", "query");
+                p.put("required", required.contains(e.getKey()));
+                if (e.getValue().has("description")) p.put("description", e.getValue().get("description").asText());
+                ObjectNode sch = e.getValue().deepCopy();
+                sch.remove("description");
+                p.set("schema", sch);
+            });
+        }
+        op.putObject("responses").putObject("200").put("description", "The route's JSON response");
+        return spec;
     }
 }
