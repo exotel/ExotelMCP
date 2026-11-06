@@ -43,7 +43,7 @@ public class AuthCredentials {
         CALLS("Calls credentials", "calls_api_key, calls_api_token, calls_account_id",
                 "calls_api_key", "calls_api_token", "calls_account_id", "calls_base_url"),
         VOICEBOT("VoiceBot credentials", "voicebot_api_key, voicebot_api_token, voicebot_account_id",
-                "voicebot_api_key", "voicebot_api_token", "voicebot_account_id", "voicebot_base_url"),
+                "voicebot_api_key", "voicebot_api_token", "voicebot_account_id", "voicebot_base_url", "te_base_url"),
         ADMIN("Admin credentials", "admin_username, admin_password, voicebot_account_id",
                 "admin_username", "admin_password"),
         CQA("CQA credentials", "cqa_api_key, cqa_account_id", "cqa_api_key", "cqa_account_id", "cqa_host"),
@@ -88,6 +88,7 @@ public class AuthCredentials {
     private String voicebotApiToken;
     private String voicebotAccountId;
     private String voicebotBaseUrl;
+    private String teBaseUrl;
 
     // Calls API (for bot dialing)
     private String callsApiKey;
@@ -177,6 +178,7 @@ public class AuthCredentials {
             creds.voicebotApiToken = creds.textField(root, "voicebot_api_token");
             creds.voicebotAccountId = creds.textField(root, "voicebot_account_id");
             creds.voicebotBaseUrl = creds.textField(root, "voicebot_base_url");
+            creds.teBaseUrl = creds.textField(root, "te_base_url");
 
             // Calls
             creds.callsApiKey = creds.textField(root, "calls_api_key");
@@ -297,6 +299,7 @@ public class AuthCredentials {
         hostField("api_domain", apiDomain);
         hostField("exotel_portal_url", exotelPortalUrl);
         hostField("voicebot_base_url", voicebotBaseUrl);
+        hostField("te_base_url", teBaseUrl);
         hostField("calls_base_url", callsBaseUrl);
         hostField("cqa_host", cqaHost);
         hostField("tools_server_base_url", toolsServerBaseUrl);
@@ -430,6 +433,12 @@ public class AuthCredentials {
     public String effectiveVoicebotBaseUrl(String defaultUrl) {
         return voicebotBaseUrl != null
             ? ExotelHostGuard.requireAllowedBaseUrl("voicebot_base_url", voicebotBaseUrl) : defaultUrl;
+    }
+
+    /** Tools Extension stamp base (e.g. https://<te-host>/voicebot); falls back to the server default. */
+    public String effectiveTeBaseUrl(String defaultUrl) {
+        return teBaseUrl != null
+            ? ExotelHostGuard.requireAllowedBaseUrl("te_base_url", teBaseUrl) : defaultUrl;
     }
 
     public String effectiveCallsBaseUrl(String defaultUrl) {
