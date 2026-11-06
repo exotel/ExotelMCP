@@ -228,7 +228,8 @@ public class VoiceBotAdminTools {
         logger.info("Listing TTS providers");
         try {
             String err = requireAuth(); if (err != null) return err;
-            String url = getV1BaseUrl() + "/accounts/" + getAccountId() + "/voice-providers";
+            // The API pages at 10 newest by default; ask for 100 so older providers are not silently missing.
+            String url = getV1BaseUrl() + "/accounts/" + getAccountId() + "/voice-providers?limit=100";
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
             return safeBody(response);
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_tts_list_providers", e);
