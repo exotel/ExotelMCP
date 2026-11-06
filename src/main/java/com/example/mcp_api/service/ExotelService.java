@@ -311,7 +311,7 @@ public class ExotelService {
     }
     
     @Tool(name = "exotel_voice_connect_to_call_flow", 
-          description = "Initiate a voice call to connect a number to a predefined call flow using the provided app ID. Requires app ID and from number. Authentication is handled automatically from the session.")
+          description = "Call a number and connect it to an App Bazaar call flow (app ID from App Bazaar > My Apps). Use this to put a voice bot on a call through a flow: the flow holds a Voicebot applet with the bot's wss URL, plus any other applets (greeting, Gather, Passthru, Connect). For a direct bot connection without a flow use exotel_connect_voice_ai. BILLED and rings a real phone: confirm with the user first. Requires appId and fromNumber (the number to call). Authentication is handled automatically from the session.")
     public String connectNumberToCallFlow(String appId, String fromNumber) {
         logger.info("Connecting call flow: {}", appId);
         try {
@@ -345,6 +345,100 @@ public class ExotelService {
         }
     }
     
+    private static final java.util.regex.Pattern STREAM_URL_PATTERN =
+        java.util.regex.Pattern.compile("^wss://[^\\s\"'<>]+$");
+    private static final java.util.regex.Pattern SAMPLE_RATE_PARAM =
+        java.util.regex.Pattern.compile("[?&]sample-rate=([^&]*)");
+
+    @Tool(name = "exotel_connect_voice_ai",
+          description = "Connect Voice AI: the standard way to put a voice bot on a phone call. Dials toNumber and streams the "
+              + "call audio bidirectionally (16-bit PCM over WebSocket) to the user's own bot at streamUrl "
+              + "(OpenAI Realtime, ElevenLabs, Gemini Live, Sarvam, Pipecat, etc.; reference bridges: github.com/exotel/Agent-Stream). "
+              + "BILLED and rings a real phone: confirm number, caller ID and URL with the user first. "
+              + "Required: toNumber (E.164), streamUrl (public wss:// URL under 600 chars; add ?sample-rate=8000|16000|24000). "
+              + "Optional (pass empty string to skip): callerId (ExoPhone; defaults to caller_id from credentials), "
+              + "record ('true'/'false'), recordingChannels ('single'/'dual'), timeLimit (seconds, max 14400), customField, "
+              + "statusCallback (https URL; if empty, Exotel MCP stores status so exotel_voice_get_call_status_callbacks works), "
+              + "statusCallbackEvents (comma list of answered,terminal,ringing; default terminal), streamName. "
+              + "To use an App Bazaar flow with a Voicebot applet instead, call exotel_voice_connect_to_call_flow. "
+              + "Returns the Exotel Call object; check it with exotel_voice_get_single_call_details. The call ends when the bot closes the socket.")
+    public String connectVoiceAi(String toNumber, String streamUrl, String callerId, String record, String recordingChannels,
+                                 String timeLimit, String customField, String statusCallback, String statusCallbackEvents,
+                                 String streamName) {
+        logger.info("Connect Voice AI call requested");
+        try {
+            if (toNumber == null || toNumber.isBlank()) return "{\"message\":\"toNumber is required\"}";
+            if (streamUrl == null || streamUrl.isBlank()) return "{\"message\":\"streamUrl is required\"}";
+            String url = streamUrl.trim();
+            if (url.length() >= 600) return "{\"message\":\"streamUrl must be under 600 characters\"}";
+            if (!STREAM_URL_PATTERN.matcher(url).matches())
+                return "{\"message\":\"streamUrl must start with wss:// (call audio is never sent unencrypted) and contain no spaces or quotes\"}";
+            java.util.regex.Matcher rate = SAMPLE_RATE_PARAM.matcher(url);
+            if (rate.find() && !Set.of("8000", "16000", "24000").contains(rate.group(1)))
+                return "{\"message\":\"sample-rate must be 8000, 16000 or 24000\"}";
+            if (notBlank(recordingChannels) && !Set.of("single", "dual").contains(recordingChannels.trim()))
+                return "{\"message\":\"recordingChannels must be single or dual\"}";
+            if (notBlank(timeLimit)) {
+                int tl;
+                try { tl = Integer.parseInt(timeLimit.trim()); } catch (NumberFormatException e) { tl = -1; }
+                if (tl < 1 || tl > 14400) return "{\"message\":\"timeLimit must be 1-14400 seconds\"}";
+            }
+            List<String> events = new ArrayList<>();
+            if (notBlank(statusCallbackEvents)) {
+                for (String ev : statusCallbackEvents.split(",")) {
+                    String e = ev.trim();
+                    if (!Set.of("answered", "terminal", "ringing").contains(e))
+                        return "{\"message\":\"statusCallbackEvents must be a comma list of answered, terminal, ringing\"}";
+                    events.add(e);
+                }
+            }
+            if (notBlank(statusCallback) && !statusCallback.trim().startsWith("https://"))
+                return "{\"message\":\"statusCallback must be an https URL\"}";
+
+            AuthData authData = parseAuthHeader(getCurrentAuthHeader());
+            String effectiveCallerId = notBlank(callerId) ? callerId.trim() : authData.callerId();
+            if (!notBlank(effectiveCallerId))
+                return "{\"message\":\"callerId is required (pass it, or set caller_id in the Authorization header)\"}";
+
+            boolean useOwnCallback = notBlank(statusCallback);
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("From", toNumber.trim());
+            data.put("CallerId", effectiveCallerId);
+            data.put("StreamType", "bidirectional");
+            data.put("StreamUrl", url);
+            data.put("Record", "true".equalsIgnoreCase(record) ? "true" : "false");
+            if (notBlank(recordingChannels)) data.put("RecordingChannels", recordingChannels.trim());
+            if (notBlank(timeLimit)) data.put("TimeLimit", timeLimit.trim());
+            if (notBlank(customField)) data.put("CustomField", customField.trim());
+            if (notBlank(streamName)) data.put("StreamName", streamName.trim());
+            if (useOwnCallback) {
+                data.put("StatusCallback", statusCallback.trim());
+                data.put("StatusCallbackEvents[]", events.isEmpty() ? List.of("terminal") : events);
+            } else {
+                data.put("StatusCallback", baseUrl + "/call-status/" + callbackId + "/" + authData.tokenMd5());
+                data.put("StatusCallbackContentType", "application/json");
+            }
+            String voiceUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls/connect.json";
+            String response = makeHttpRequest(voiceUrl, data, authData);
+            logger.info("Connect Voice AI response received");
+            if (!useOwnCallback) {
+                try {
+                    saveInitialVoiceCallback(response, authData.tokenMd5());
+                } catch (Exception e) {
+                    logger.error("Error saving initial voice callback", e);
+                }
+            }
+            return response;
+        } catch (Exception e) {
+            logger.error("Error placing Connect Voice AI call", e);
+            return "{\"message\":\"" + String.valueOf(e.getMessage()).replace("\"", "'") + "\"}";
+        }
+    }
+
+    private static boolean notBlank(String v) {
+        return v != null && !v.isBlank();
+    }
+
     // HTTP endpoint method (uses session-based auth) - calls the Tool method
     public Map<String, Object> getSmsCallbacksEndpoint(String toNumber) {
         return getSmsCallbacks(toNumber);
@@ -926,13 +1020,25 @@ public class ExotelService {
     }
     
     // Helper method to build form data
-    private String buildFormData(Map<String, ?> data) {
+    /**
+     * application/x-www-form-urlencoded body. Keys and values are percent-encoded (a raw '+' in "+91…" would
+     * otherwise arrive as a space, and '&' in an SMS body or stream URL would split the field). Collection
+     * values become repeated keys (e.g. StatusCallbackEvents[]=answered&StatusCallbackEvents[]=terminal).
+     * Null values are skipped.
+     */
+    static String buildFormData(Map<String, ?> data) {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, ?> entry : data.entrySet()) {
-            if (sb.length() > 0) {
-                sb.append("&");
+            Object value = entry.getValue();
+            if (value == null) continue;
+            Iterable<?> values = value instanceof Iterable<?> it ? it : List.of(value);
+            for (Object v : values) {
+                if (v == null) continue;
+                if (sb.length() > 0) sb.append('&');
+                sb.append(java.net.URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8))
+                  .append('=')
+                  .append(java.net.URLEncoder.encode(String.valueOf(v), StandardCharsets.UTF_8));
             }
-            sb.append(entry.getKey()).append("=").append(entry.getValue());
         }
         return sb.toString();
     }
@@ -1674,19 +1780,47 @@ public class ExotelService {
         }
     }
     
-    @Tool(name = "exotel_voice_get_single_call_details", description = "Get detailed information for a specific CallSid")
+    private static final java.util.regex.Pattern CALL_SID =
+        java.util.regex.Pattern.compile("^[A-Za-z0-9]{8,64}$");
+
+    @Tool(name = "exotel_voice_get_single_call_details",
+          description = "Get the current status and details of one call by its CallSid (status, from/to, start/end time, "
+              + "duration, price, recording URL). Reads live from the Exotel Calls API for the caller's own account. Read-only.")
     public String getCallDetails(String callSid) {
         if (callSid == null || callSid.trim().isEmpty()) {
             return "Error: CallSid is required";
         }
-        
-        Optional<VoiceCallback> callbackOpt = voiceCallbackRepository.findByCallSid(callSid);
-        if (!callbackOpt.isPresent()) {
-            return "No record found for CallSid: " + callSid;
+        String sid = callSid.trim();
+        if (!CALL_SID.matcher(sid).matches()) {
+            return "Error: CallSid must be 8-64 letters/digits";
         }
-        
+
+        AuthData authData;
+        try {
+            authData = parseAuthHeader(getCurrentAuthHeader());
+        } catch (Exception e) {
+            return "Error: credentials missing or invalid: " + e.getMessage();
+        }
+
+        // Source of truth: Exotel's Calls API, called with the requester's own credentials,
+        // so the result is always current and always scoped to their account.
+        try {
+            String url = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls/" + sid + ".json";
+            return makeGetRequest(url, authData);
+        } catch (Exception e) {
+            logger.warn("Live call lookup failed for {}: {}", sid, e.getMessage());
+        }
+
+        // Fallback: the locally stored status-callback record, only if it belongs to this user.
+        Optional<VoiceCallback> callbackOpt = voiceCallbackRepository.findByCallSid(sid)
+            .filter(cb -> authData.tokenMd5().equals(cb.getUserId()));
+        if (!callbackOpt.isPresent()) {
+            return "No record found for CallSid: " + sid;
+        }
+
         VoiceCallback callback = callbackOpt.get();
         StringBuilder result = new StringBuilder();
+        result.append("(Exotel API unreachable; showing last status callback received, may be stale)\n");
         result.append("Call Details for CallSid: ").append(callSid).append("\n");
         result.append("=====================================\n");
         result.append("Status: ").append(callback.getStatus()).append("\n");
