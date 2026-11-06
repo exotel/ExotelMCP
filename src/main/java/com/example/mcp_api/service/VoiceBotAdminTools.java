@@ -286,12 +286,79 @@ public class VoiceBotAdminTools {
         try {
             String err = requireAuth(); if (err != null) return err;
             validateId(sessionId, "sessionId");
-            String url = getBaseUrl() + "/accounts/" + getAccountId() + "/sessions/" + sessionId + "/transcript";
+            // /sessions/{id}/transcript returns 404 (verified live, Nov 2026); the conversation resource carries the transcript.
+            String url = getBaseUrl() + "/accounts/" + getAccountId() + "/voicebot-conversations/" + sessionId + "?fields=transcript";
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
             return safeBody(response);
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_transcript_get", e);
         } catch (HttpServerErrorException e) { return serverError("exotel_voicebot_transcript_get", e);
         } catch (Exception e) { return "Error: " + e.getMessage(); }
+    }
+
+    private static final Pattern CALL_SID_PATTERN = Pattern.compile("^[a-zA-Z0-9]{8,64}$");
+
+    @Tool(name = "exotel_voicebot_find_session_by_call_sid",
+          description = "Finds the VoiceBot conversation session for a phone call, given the Call SID returned by "
+              + "exotel_voicebot_place_call. Searches the most recent conversations (limit, default 50, max 200; offset for older pages). "
+              + "Returns the matching conversation record including its session id - pass that id to exotel_voicebot_transcript_get. "
+              + "Read-only.")
+    public String findSessionByCallSid(String callSid, String limit, String offset) {
+        logger.info("Finding session for call: {}", sanitize(callSid));
+        try {
+            String err = requireAuth(); if (err != null) return err;
+            if (callSid == null || !CALL_SID_PATTERN.matcher(callSid.trim()).matches())
+                return "Error: callSid is required and must be alphanumeric";
+            validateNumericParam(limit, "limit");
+            validateNumericParam(offset, "offset");
+            int lim = (limit == null || limit.isBlank()) ? 50 : Math.min(Integer.parseInt(limit), 200);
+            int off = (offset == null || offset.isBlank()) ? 0 : Integer.parseInt(offset);
+            String sid = callSid.trim();
+
+            String url = getBaseUrl() + "/accounts/" + getAccountId()
+                + "/voicebot-conversations?limit=" + lim + "&offset=" + off;
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+            JsonNode root = objectMapper.readTree(safeBody(response));
+
+            JsonNode match = findObjectWithCallSid(root, sid, 0);
+            if (match == null) {
+                return "{\"found\":false,\"call_sid\":\"" + sid + "\",\"searched\":" + lim + ",\"offset\":" + off
+                    + ",\"hint\":\"Not in this page. The call may still be in progress, or be older - retry with a larger offset.\"}";
+            }
+            ObjectNode compact = ((ObjectNode) match).deepCopy();
+            compact.remove("transcript");
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("found", true);
+            out.put("call_sid", sid);
+            out.set("conversation", compact);
+            out.put("next", "Pass the conversation's session id to exotel_voicebot_transcript_get.");
+            return objectMapper.writeValueAsString(out);
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_find_session_by_call_sid", e);
+        } catch (HttpServerErrorException e) { return serverError("exotel_voicebot_find_session_by_call_sid", e);
+        } catch (Exception e) { return "Error: " + e.getMessage(); }
+    }
+
+    /** Depth-first search for the first JSON object that has a *call_sid* / *callSid* field equal to sid. */
+    private JsonNode findObjectWithCallSid(JsonNode node, String sid, int depth) {
+        if (node == null || depth > 8) return null;
+        if (node.isObject()) {
+            var fields = node.fields();
+            while (fields.hasNext()) {
+                var f = fields.next();
+                String key = f.getKey().toLowerCase().replace("_", "");
+                if (key.endsWith("callsid") && f.getValue().isTextual() && sid.equalsIgnoreCase(f.getValue().asText()))
+                    return node;
+            }
+            for (JsonNode child : node) {
+                JsonNode hit = findObjectWithCallSid(child, sid, depth + 1);
+                if (hit != null) return hit;
+            }
+        } else if (node.isArray()) {
+            for (JsonNode child : node) {
+                JsonNode hit = findObjectWithCallSid(child, sid, depth + 1);
+                if (hit != null) return hit;
+            }
+        }
+        return null;
     }
 
     // ======================== BOT CONFIG TOOL ========================
