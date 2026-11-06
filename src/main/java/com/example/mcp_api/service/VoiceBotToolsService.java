@@ -11,6 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -735,5 +738,140 @@ public class VoiceBotToolsService {
         } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_corpus_delete", e);
         } catch (IllegalArgumentException e) { return "Error: " + e.getMessage();
         } catch (Exception e) { return "Error deleting corpus: " + e.getMessage(); }
+    }
+
+    // ======================== KNOWLEDGE CORPUS UPLOAD (text documents) ========================
+
+    static final int MAX_DOCS_PER_CALL = 10;
+    static final int MAX_DOC_BYTES_PER_CALL = 1024 * 1024;
+    private static final Pattern DOC_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}\\.(txt|md)$");
+    private static final Pattern CORPUS_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_\\- ]{1,255}$");
+
+    /** A text document the caller wrote, ready to send as one multipart file part. */
+    record TextDocument(String filename, byte[] content) {}
+
+    /**
+     * Parse [{"filename": "faq.md", "content": "..."}]. Text and markdown only: MCP carries no binary files, and
+     * base64 PDFs would cost the model far more context than the file is worth.
+     */
+    static List<TextDocument> parseTextDocuments(String documentsJson, String param) {
+        if (documentsJson == null || documentsJson.isBlank()) throw new IllegalArgumentException(param + " is required");
+        JsonNode arr;
+        try { arr = objectMapper.readTree(documentsJson); }
+        catch (Exception e) { throw new IllegalArgumentException(param + " is not valid JSON"); }
+        if (!arr.isArray() || arr.isEmpty())
+            throw new IllegalArgumentException(param + " must be a non-empty JSON array of {filename, content}");
+        if (arr.size() > MAX_DOCS_PER_CALL)
+            throw new IllegalArgumentException(param + " may hold at most " + MAX_DOCS_PER_CALL + " documents per call");
+        List<TextDocument> docs = new ArrayList<>();
+        Set<String> names = new HashSet<>();
+        long total = 0;
+        for (JsonNode d : arr) {
+            String filename = d.path("filename").asText("").trim();
+            String content = d.path("content").asText("");
+            if (!DOC_NAME_PATTERN.matcher(filename).matches())
+                throw new IllegalArgumentException("filename '" + filename + "' must end in .txt or .md and use only letters, digits, space, . _ -");
+            if (!names.add(filename)) throw new IllegalArgumentException("duplicate filename '" + filename + "'");
+            if (content.isBlank()) throw new IllegalArgumentException("content of '" + filename + "' is empty");
+            byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+            total += bytes.length;
+            docs.add(new TextDocument(filename, bytes));
+        }
+        if (total > MAX_DOC_BYTES_PER_CALL)
+            throw new IllegalArgumentException("documents total " + total + " bytes; the limit is " + MAX_DOC_BYTES_PER_CALL + " bytes per call. Split them across calls.");
+        return docs;
+    }
+
+    private void addDocumentParts(MultiValueMap<String, Object> form, String field, List<TextDocument> docs) {
+        for (TextDocument doc : docs) {
+            HttpHeaders partHeaders = new HttpHeaders();
+            partHeaders.setContentType(doc.filename().endsWith(".md")
+                    ? MediaType.parseMediaType("text/markdown") : MediaType.TEXT_PLAIN);
+            ByteArrayResource body = new ByteArrayResource(doc.content()) {
+                @Override public String getFilename() { return doc.filename(); }
+            };
+            form.add(field, new HttpEntity<>(body, partHeaders));
+        }
+    }
+
+    private HttpHeaders multipartHeaders() {
+        HttpHeaders headers = jsonHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        return headers;
+    }
+
+    @Tool(name = "exotel_tools_server_corpus_create",
+          description = "Creates a knowledge corpus (for a knowledge_base tool) from text documents the caller writes, such as an FAQ. "
+              + "Params: name (letters, digits, space, _ -), description (optional), documentsJson = JSON array "
+              + "[{\"filename\":\"faq.md\",\"content\":\"...\"}] with .txt or .md files, at most 10 documents and 1 MB in total per call, "
+              + "similarityTopK (optional, 1-100, default 10: chunks returned per query). Processing is asynchronous: poll "
+              + "exotel_tools_server_corpus_get until status is ready, then create a knowledge_base tool with "
+              + "exotel_tools_server_tool_create. Uploads briefly load the Tools Server, so keep them small and occasional.")
+    public String createCorpus(String name, String description, String documentsJson, String similarityTopK) {
+        logger.info("Creating corpus: {}", sanitize(name));
+        try {
+            String authErr = requireAuth(); if (authErr != null) return authErr;
+            if (name == null || !CORPUS_NAME_PATTERN.matcher(name.trim()).matches())
+                return "Error: name is required and may use only letters, digits, space, _ and - (max 255)";
+            List<TextDocument> docs = parseTextDocuments(documentsJson, "documentsJson");
+            ObjectNode meta = objectMapper.createObjectNode();
+            meta.put("name", name.trim());
+            if (description != null && !description.isBlank()) meta.put("description", description.trim());
+            if (similarityTopK != null && !similarityTopK.isBlank()) {
+                int k;
+                try { k = Integer.parseInt(similarityTopK.trim()); }
+                catch (NumberFormatException e) { return "Error: similarityTopK must be a number from 1 to 100"; }
+                if (k < 1 || k > 100) return "Error: similarityTopK must be a number from 1 to 100";
+                meta.put("similarity_top_k", k);
+            }
+            MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
+            form.add("metadata", objectMapper.writeValueAsString(meta));
+            addDocumentParts(form, "files", docs);
+            String url = getBaseUrl() + "/tools/api/v1/tenants/" + getTenantId() + "/knowledge-corpora";
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST,
+                    new HttpEntity<>(form, multipartHeaders()), String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_tools_server_corpus_create", e);
+        } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_corpus_create", e);
+        } catch (IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error creating corpus: " + e.getMessage(); }
+    }
+
+    @Tool(name = "exotel_tools_server_corpus_documents_update",
+          description = "Adds text documents to a knowledge corpus and/or removes documents from it. Params: corpusId (UUID), "
+              + "addDocumentsJson (optional, same shape and limits as exotel_tools_server_corpus_create), deleteDocumentIds "
+              + "(optional, comma-separated document UUIDs from exotel_tools_server_corpus_get). At least one is required. "
+              + "Asynchronous: the corpus goes to updating, then ready or failed; poll exotel_tools_server_corpus_get. "
+              + "Every bot whose knowledge_base tool uses this corpus answers from the new content once it is ready.")
+    public String updateCorpusDocuments(String corpusId, String addDocumentsJson, String deleteDocumentIds) {
+        logger.info("Updating corpus documents: {}", sanitize(corpusId));
+        try {
+            String authErr = requireAuth(); if (authErr != null) return authErr;
+            validateId(corpusId, "corpusId");
+            boolean hasAdd = addDocumentsJson != null && !addDocumentsJson.isBlank();
+            boolean hasDelete = deleteDocumentIds != null && !deleteDocumentIds.isBlank();
+            if (!hasAdd && !hasDelete) return "Error: provide addDocumentsJson, deleteDocumentIds or both";
+            MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
+            if (hasAdd) addDocumentParts(form, "add_files", parseTextDocuments(addDocumentsJson, "addDocumentsJson"));
+            if (hasDelete) {
+                List<String> ids = new ArrayList<>();
+                for (String id : deleteDocumentIds.split(",")) {
+                    String t = id.trim();
+                    if (t.isEmpty()) continue;
+                    validateId(t, "deleteDocumentIds");
+                    ids.add(t);
+                }
+                if (ids.isEmpty()) return "Error: deleteDocumentIds holds no ids";
+                form.add("delete_document_ids", String.join(",", ids));
+            }
+            String url = getBaseUrl() + "/tools/api/v1/tenants/" + getTenantId()
+                    + "/knowledge-corpora/" + corpusId + "/documents";
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PATCH,
+                    new HttpEntity<>(form, multipartHeaders()), String.class);
+            return safeBody(response);
+        } catch (HttpClientErrorException e) { return errorMsg("exotel_tools_server_corpus_documents_update", e);
+        } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_corpus_documents_update", e);
+        } catch (IllegalArgumentException e) { return "Error: " + e.getMessage();
+        } catch (Exception e) { return "Error updating corpus documents: " + e.getMessage(); }
     }
 }
