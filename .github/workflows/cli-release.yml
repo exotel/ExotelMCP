@@ -3,8 +3,9 @@
 # Trigger: after the version bump is merged, tag that commit on main with cli-v<version> (matching
 # cli/package.json):  git checkout main && git pull && git tag cli-v0.2.0 && git push origin cli-v0.2.0
 # Releases are made only here, only from commits on main; nobody publishes from a laptop.
+# npm: Trusted Publishing (OIDC). npmjs.com → exotel-cli → Settings → Trusted publisher → GitHub Actions:
+#   exotel / ExotelMCP / cli-release.yml. No npm token is stored anywhere; provenance is added automatically.
 # Secrets:
-#   NPM_TOKEN           required: granular npm token (publish rights on exotel-cli only) → npm publish --provenance
 #   HOMEBREW_TAP_TOKEN  optional: write access to exotel/homebrew-tap → the formula is pushed there
 name: cli-release
 
@@ -105,17 +106,15 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      id-token: write   # npm provenance: links the package to this workflow run and commit
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      id-token: write   # Trusted Publishing: GitHub proves to npm which repo and workflow is publishing
     steps:
-      - name: NPM_TOKEN is set
-        run: test -n "$NODE_AUTH_TOKEN" || { echo "::error::Add the NPM_TOKEN repository secret (granular token for exotel-cli)."; exit 1; }
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-      - name: npm publish --provenance
+      - name: npm 11.5.1 or later (needed for Trusted Publishing)
+        run: npm install -g npm@^11.5.1 && npm --version
+      - name: npm publish (Trusted Publishing, provenance automatic)
         working-directory: cli
-        run: npm publish --provenance --access public
+        run: npm publish --access public
