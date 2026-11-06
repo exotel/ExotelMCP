@@ -135,7 +135,7 @@ public class SetupTools {
             + "**What you can do:**\n"
             + "- Create and manage voice bots\n"
             + "- Place outbound AI-powered calls\n"
-            + "- Configure bot personas, TTS voices, and specializations\n"
+            + "- Configure bot personas and TTS voices\n"
             + "- Get call transcripts and session details\n\n";
     }
 

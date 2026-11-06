@@ -265,15 +265,15 @@ public class VoiceBotBuilderTools {
             out.put("version", textOr(data, "version", "v1"));
             out.put("stable_version", "v1");
             out.put("next_steps", List.of(
-                    "Read every stored field back with exotel_voicebot_bot_get_full(botId).",
-                    "Change config later with exotel_voicebot_bot_version_create; new versions start at 0% traffic."));
+                    "Read every stored field back with exotel_voicebot_get_details(botId).",
+                    "Change config later with exotel_voicebot_update_config; new versions start at 0% traffic."));
             putWarnings(out, warnings);
             putData(out, data);
             return out;
         });
     }
 
-    @Tool(name = "exotel_voicebot_bot_get_full",
+    @Tool(name = "exotel_voicebot_get_details",
           description = "Read a bot back with every field. Without version: GET {v1}/accounts/{account}/voicebots/{botId}, "
               + "the stable version in v1 shape and the only read that returns greeting_message, filler/nudge/PII config, "
               + "interruption settings, the full webhook_config and the LCI ids (conversation_assistant_id, "
@@ -284,7 +284,7 @@ public class VoiceBotBuilderTools {
             @ToolParam(description = "Bot id (UUID).") String botId,
             @ToolParam(required = false, description = "Optional version such as v3. Omit it to read the stable version "
                 + "through the v1 API.") String version) {
-        return run("exotel_voicebot_bot_get_full", () -> {
+        return run("exotel_voicebot_get_details", () -> {
             requireId(botId, "botId");
             String v = trimToNull(version);
             if (v != null && !VERSION_PATTERN.matcher(v).matches()) {
@@ -308,7 +308,7 @@ public class VoiceBotBuilderTools {
         });
     }
 
-    @Tool(name = "exotel_voicebot_bot_version_create",
+    @Tool(name = "exotel_voicebot_update_config",
           description = "Create a new bot version = source version + deep-merged data: "
               + "POST {v2}/accounts/{account}/voicebots/{botId}/versions. Always sends mark_as_stable=false, so the new "
               + "version gets 0% of traffic until exotel_voicebot_bot_version_promote or exotel_voicebot_bot_traffic_set; "
@@ -331,7 +331,7 @@ public class VoiceBotBuilderTools {
             String versionDescription,
             @ToolParam(required = false, description = "Leave unset. true is refused: check the new version, then promote it "
                 + "with exotel_voicebot_bot_version_promote.") Boolean markAsStable) {
-        return run("exotel_voicebot_bot_version_create", () -> {
+        return run("exotel_voicebot_update_config", () -> {
             requireId(botId, "botId");
             if (Boolean.TRUE.equals(markAsStable)) return markAsStableRefused("markAsStable=true");
             String source = trimToNull(sourceVersion) == null ? "latest" : sourceVersion.trim();
@@ -370,7 +370,7 @@ public class VoiceBotBuilderTools {
             out.put("mark_as_stable", false);
             out.put("traffic", "0% until promoted or given a share with exotel_voicebot_bot_traffic_set");
             out.put("next_steps", List.of(
-                    "Check it: exotel_voicebot_bot_get_full(botId, version=\"" + (newVersion == null ? "vN" : newVersion) + "\").",
+                    "Check it: exotel_voicebot_get_details(botId, version=\"" + (newVersion == null ? "vN" : newVersion) + "\").",
                     "Go live: exotel_voicebot_bot_version_promote(botId, version, confirm=true) after the user approves, "
                   + "or split traffic with exotel_voicebot_bot_traffic_set."));
             putWarnings(out, warnings);
@@ -993,7 +993,7 @@ public class VoiceBotBuilderTools {
         return error("MARK_AS_STABLE_REFUSED",
                 "This tool always creates versions with mark_as_stable=false; " + where + " was refused. "
               + "A new version gets 0% of traffic until it is promoted.",
-                "Create the version without it, check it with exotel_voicebot_bot_get_full(botId, version), then call "
+                "Create the version without it, check it with exotel_voicebot_get_details(botId, version), then call "
               + "exotel_voicebot_bot_version_promote(botId, version, confirm=true) for stable at 100% traffic, or "
               + "exotel_voicebot_bot_traffic_set for a split.", null, null);
     }
@@ -1033,7 +1033,7 @@ public class VoiceBotBuilderTools {
         }
         if (!silentNull.isEmpty()) {
             warnings.add("SILENT_NULL: if Java cannot parse " + silentNull + " it stores null without an error; read "
-                    + "the version back with exotel_voicebot_bot_get_full(botId, version).");
+                    + "the version back with exotel_voicebot_get_details(botId, version).");
         }
         JsonNode voice = data.get("voice_config");
         if (voice != null && voice.isObject() && !voice.has("provider") && (voice.has("model_id") || voice.has("voice_id"))) {
