@@ -23,6 +23,8 @@ class ToolsetsTest {
         assertTrue(StreamableHttpConfig.inToolsets("exotel_setup_guide", sets));
         assertFalse(StreamableHttpConfig.inToolsets("exotel_cqa_list_profiles", sets));
         assertFalse(StreamableHttpConfig.inToolsets("exotel_aiassist_list_assistants", sets));
+        assertFalse(StreamableHttpConfig.inToolsets("exotel_tools_server_table_list", sets));
+        assertTrue(StreamableHttpConfig.inToolsets("exotel_tools_server_table_list", StreamableHttpConfig.parseToolsets("toolserver")));
     }
 
     @Test

@@ -209,7 +209,8 @@ public class StreamableHttpConfig {
      * No toolsets = every tool (unchanged behaviour). Calling a tool by name always works.
      */
     static final Map<String, List<String>> TOOLSETS = Map.of(
-        "voicebot", List.of("exotel_voicebot_", "exotel_tools_server_"),
+        "voicebot", List.of("exotel_voicebot_"),
+        "toolserver", List.of("exotel_tools_server_"),
         "memory", List.of("exotel_memory_", "exotel_voicebot_memory_", "exotel_voicebot_call_result"),
         "calls", List.of("exotel_voice_", "exotel_connect_voice_ai", "exotel_number_get_metadata", "exotel_events_endpoint_guide"),
         "messaging", List.of("exotel_sms_", "exotel_whatsapp_", "exotel_engage_"),
