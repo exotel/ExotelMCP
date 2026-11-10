@@ -52,7 +52,7 @@ async function create(flags) {
   if (!flags.wait) {
     return out({ ok: true, generationId, next: `exotel voicebot create --status ${generationId}` }, `Bot generation started: ${generationId}. Re-run with --wait to wait for it.`);
   }
-  info(`Generating bot (${generationId})…`);
+  info(`Generating bot… (generation ${generationId}; this is not the bot ID)`);
   const deadline = Date.now() + Number(flags.timeout || 240) * 1000;
   let status;
   let last;
@@ -67,7 +67,7 @@ async function create(flags) {
   if (!/completed|success|done/.test(status)) throw new CliError(`Bot not ready after ${flags.timeout || 240}s; check later with \`exotel voicebot list\`.`, EXIT.ERROR, { generationId });
   const botId = findKey(last, ['bot_id', 'voicebot_id', 'botId', 'voiceBotId']);
   out({ ok: true, generationId, botId: botId || null, status, response: last },
-    () => `✔ VoiceBot ready${botId ? `: ${botId}` : ''}\nNext: exotel voicebot test-call --bot ${botId || '<id from exotel voicebot list>'} --to <your number> --wait`);
+    () => `✔ VoiceBot ready.${botId ? ` Bot ID: ${botId}` : ''}\nNext: exotel voicebot test-call --bot-id ${botId || '<id from exotel voicebot list>'} --to <your number> --wait`);
 }
 
 // ------------------------------------------------------------------ attach a number (inbound)

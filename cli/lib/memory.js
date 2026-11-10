@@ -182,9 +182,15 @@ async function voicebot(action, flags) {
   const a = action === 'on' ? memoryAuth() : requireAuth();
   const bot = need(flags, 'bot', /^[A-Za-z0-9-]{8,64}$/, 'the VoiceBot ID (exotel voicebot list)');
   const path = `/v1/accounts/{sid}/voicebots/${encodeURIComponent(bot)}`;
-  const cur = await rest.send(rest.buildRequest(a, { host: 'voicebot', path }));
-  const data = cur.data && cur.data.response && (cur.data.response.data || cur.data.response);
-  if (!cur.ok || !data || !data.id) throw new CliError(`Could not read VoiceBot ${bot} (HTTP ${cur.status}${cur.message ? `: ${cur.message}` : ''}).`, EXIT.ERROR);
+  let cur = await rest.send(rest.buildRequest(a, { host: 'voicebot', path }));
+  let data = cur.data && cur.data.response && (cur.data.response.data || cur.data.response);
+  if (!cur.ok || !data || !data.id) {
+    // `exotel voicebot create` prints a generation ID first; people often copy that. Resolve it to its bot.
+    const realBot = await botFromGeneration(a, bot);
+    if (!realBot) throw new CliError(`Could not read VoiceBot ${bot} (HTTP ${cur.status}${cur.message ? `: ${cur.message}` : ''}). List your bots: exotel voicebot list`, EXIT.ERROR);
+    info(`${bot} is a bot generation ID; using its bot ${realBot}.`);
+    return voicebot(action, { ...flags, bot: realBot });
+  }
   const hooks = { ...(data.webhook_config || {}) };
   const isMemory = (u) => /\/webhooks\/voicebot\//.test(u || '') && /^https:\/\/memory\.[^/]*(exotel\.(com|in)|qaexotel\.com)\//i.test(u || '');
   if (action === 'on') {
@@ -214,6 +220,17 @@ async function voicebot(action, flags) {
   return out({ ok: true, voiceBotId: bot, memory: action, webhook_config: hooks }, () => (action === 'on'
     ? `✔ Memory is ON for "${data.name || bot}". In the bot's prompt use {{entities.person_name}}, {{entities.memory_summary}},\n  {{entities.current_topic}} and {{entities.memory_context}} (notes, offers, open topics).`
     : `✔ Memory is OFF for "${data.name || bot}". Saved memory is kept.`));
+}
+
+async function botFromGeneration(a, id) {
+  try {
+    const { McpClient, unwrapResult } = require('./mcp');
+    const r = unwrapResult(await new McpClient(a).callTool('exotel_voicebot_creation_status', { generationId: id }));
+    const d = r.data && ((r.data.response && r.data.response.data) || r.data.data || r.data);
+    return d && d.bot_id && d.bot_id !== id ? d.bot_id : null;
+  } catch {
+    return null;
+  }
 }
 
 function cmd(sub, flags) {
