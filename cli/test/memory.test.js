@@ -98,3 +98,24 @@ test('without Memory set up, commands say how to add it', async () => {
   assert.strictEqual(t.code, 2);
   assert.match(t.json.error, /Did you mean --phone/);
 });
+
+test('agents can ask for only the tools they need (toolsets)', () => {
+  const clients = require('../lib/clients');
+  assert.strictEqual(clients.normToolsets('voicebot, memory,bogus'), 'voicebot,memory');
+  assert.strictEqual(clients.normToolsets(undefined), '');
+  const pc = clients.proxyCommand('voicebot,memory');
+  assert.deepStrictEqual(pc.args.slice(-2), ['--toolsets', 'voicebot,memory']);
+  assert.ok(!clients.proxyCommand().args.includes('--toolsets'));
+});
+
+test('voicebot memory on / prompt / result are one MCP tool call each (dry-run shows which)', async () => {
+  const prompt = await cli(['voicebot', 'prompt', '--bot-id', '1333a954-b9d4-4458-b77b-a1ab91bf719b', '--text', 'You are a friendly receptionist for a clinic.', '--dry-run']);
+  assert.strictEqual(prompt.code, 0);
+  assert.strictEqual(prompt.json.tool, 'exotel_voicebot_assistant_update_prompt');
+  assert.strictEqual(prompt.json.arguments.assistantId, '1333a954-b9d4-4458-b77b-a1ab91bf719b');
+  const bad = await cli(['voicebot', 'result', '--call-sid', 'x']);
+  assert.strictEqual(bad.code, 2);
+  const usage = await cli(['voicebot', 'memory', 'maybe', '--bot-id', 'abc']);
+  assert.strictEqual(usage.code, 2);
+  assert.match(usage.json.error, /--greeting/);
+});

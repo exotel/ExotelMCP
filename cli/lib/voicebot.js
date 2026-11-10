@@ -15,7 +15,9 @@ const USAGE = `Exotel-hosted VoiceBot, end to end:
   exotel voicebot test-call --bot-id <id> --to <your E.164> [--caller-id <ExoPhone>] [--wait]   $
   exotel voicebot transcript --call-sid <CallSid>   (or --session <uuid>)
   exotel voicebot debug --call-sid <CallSid>         why a call failed or went wrong
-  exotel voicebot memory on|off --bot-id <id>        give the bot Exotel Memory: callers are remembered across calls`;
+  exotel voicebot prompt --bot-id <id> --file prompt.txt   replace the bot's prompt everywhere it lives
+  exotel voicebot result --call-sid <CallSid>        transcript + what Memory learned, in one step
+  exotel voicebot memory on|off --bot-id <id>        give the bot Exotel Memory in one step: callers are remembered across calls`;
 
 const auth = requireAuth;
 
@@ -67,7 +69,7 @@ async function create(flags) {
   if (!/completed|success|done/.test(status)) throw new CliError(`Bot not ready after ${flags.timeout || 240}s; check later with \`exotel voicebot list\`.`, EXIT.ERROR, { generationId });
   const botId = findKey(last, ['bot_id', 'voicebot_id', 'botId', 'voiceBotId']);
   out({ ok: true, generationId, botId: botId || null, status, response: last },
-    () => `✔ VoiceBot ready.${botId ? ` Bot ID: ${botId}` : ''}\nNext: exotel voicebot test-call --bot-id ${botId || '<id from exotel voicebot list>'} --to <your number> --wait`);
+    () => `✔ VoiceBot ready.${botId ? ` Bot ID: ${botId}` : ''}\nNext: exotel voicebot test-call --bot-id ${botId || '<id from exotel voicebot list>'} --to <your number>   then: exotel voicebot result --call-sid <CallSid>`);
 }
 
 // ------------------------------------------------------------------ attach a number (inbound)

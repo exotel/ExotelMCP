@@ -56,9 +56,18 @@ function tomlString(s) {
   return JSON.stringify(s); // JSON string escaping is valid TOML basic-string escaping for these characters
 }
 
-/** How agents start the relay: the installed `exotel` if it is on PATH, otherwise via npx. */
-function proxyCommand() {
-  return onPath('exotel') ? { command: 'exotel', args: ['mcp', 'proxy'] } : { command: 'npx', args: ['-y', 'exotel-cli', 'mcp', 'proxy'] };
+/** Only these tool groups exist on the server (see exotel mcp tools); anything else is dropped. */
+const TOOLSETS = ['voicebot', 'memory', 'calls', 'messaging', 'cqa', 'aiassist', 'audio', 'toolserver'];
+function normToolsets(v) {
+  if (!v || v === true) return '';
+  return String(v).toLowerCase().split(/[,\s]+/).filter((t) => TOOLSETS.includes(t)).join(',');
+}
+
+/** How agents start the relay: the installed `exotel` if it is on PATH, otherwise via npx. Toolsets keep the agent's tool list small. */
+function proxyCommand(toolsets) {
+  const ts = normToolsets(toolsets);
+  const extra = ts ? ['--toolsets', ts] : [];
+  return onPath('exotel') ? { command: 'exotel', args: ['mcp', 'proxy', ...extra] } : { command: 'npx', args: ['-y', 'exotel-cli', 'mcp', 'proxy', ...extra] };
 }
 
 const CLIENTS = {
@@ -68,7 +77,7 @@ const CLIENTS = {
     install(ctx) {
       const scope = ctx.scope === 'project' ? 'project' : ctx.scope === 'local' ? 'local' : 'user';
       const exists = spawnSync('claude', ['mcp', 'get', ctx.name], { encoding: 'utf8' }).status === 0;
-      const pc = proxyCommand();
+      const pc = proxyCommand(ctx.toolsets);
       const addArgs = ['mcp', 'add', ctx.name, '--scope', scope, '--', pc.command, ...pc.args];
       if (ctx.dryRun) return { command: `claude ${addArgs.join(' ')}`, status: exists ? 'would-replace' : 'would-add' };
       if (exists) {
@@ -85,7 +94,7 @@ const CLIENTS = {
     detect: () => fs.existsSync(path.join(HOME, '.cursor')),
     install(ctx) {
       const file = ctx.scope === 'project' ? path.join(process.cwd(), '.cursor', 'mcp.json') : path.join(HOME, '.cursor', 'mcp.json');
-      return { ...writeJsonEntry(file, 'mcpServers', ctx.name, proxyCommand(), ctx), next: 'Reload Cursor; enable the server under Settings → MCP' };
+      return { ...writeJsonEntry(file, 'mcpServers', ctx.name, proxyCommand(ctx.toolsets), ctx), next: 'Reload Cursor; enable the server under Settings → MCP' };
     },
   },
   windsurf: {
@@ -93,7 +102,7 @@ const CLIENTS = {
     detect: () => fs.existsSync(path.join(HOME, '.codeium', 'windsurf')),
     install(ctx) {
       const file = path.join(HOME, '.codeium', 'windsurf', 'mcp_config.json');
-      return { ...writeJsonEntry(file, 'mcpServers', ctx.name, proxyCommand(), ctx), next: 'Refresh MCP servers in Windsurf' };
+      return { ...writeJsonEntry(file, 'mcpServers', ctx.name, proxyCommand(ctx.toolsets), ctx), next: 'Refresh MCP servers in Windsurf' };
     },
   },
   vscode: {
@@ -101,7 +110,7 @@ const CLIENTS = {
     detect: () => fs.existsSync(appSupport('Code', 'User')),
     install(ctx) {
       const file = ctx.scope === 'project' ? path.join(process.cwd(), '.vscode', 'mcp.json') : appSupport('Code', 'User', 'mcp.json');
-      return { ...writeJsonEntry(file, 'servers', ctx.name, { type: 'stdio', ...proxyCommand() }, ctx), next: 'Run "MCP: List Servers" in VS Code and start exotel' };
+      return { ...writeJsonEntry(file, 'servers', ctx.name, { type: 'stdio', ...proxyCommand(ctx.toolsets) }, ctx), next: 'Run "MCP: List Servers" in VS Code and start exotel' };
     },
   },
   'claude-desktop': {
@@ -109,7 +118,7 @@ const CLIENTS = {
     detect: () => fs.existsSync(appSupport('Claude')),
     install(ctx) {
       const file = appSupport('Claude', 'claude_desktop_config.json');
-      return { ...writeJsonEntry(file, 'mcpServers', ctx.name, proxyCommand(), ctx), next: 'Quit and reopen Claude Desktop' };
+      return { ...writeJsonEntry(file, 'mcpServers', ctx.name, proxyCommand(ctx.toolsets), ctx), next: 'Quit and reopen Claude Desktop' };
     },
   },
   codex: {
@@ -118,7 +127,7 @@ const CLIENTS = {
     install(ctx) {
       const file = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'config.toml');
       const header = `[mcp_servers.${ctx.name}]`;
-      const pc = proxyCommand();
+      const pc = proxyCommand(ctx.toolsets);
       const block = `${header}\ncommand = ${tomlString(pc.command)}\nargs = [${pc.args.map(tomlString).join(', ')}]\n`;
       const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
       const lines = current.split(/\r?\n/);
@@ -161,8 +170,8 @@ function resolveClients(spec) {
   return list;
 }
 
-function install(clientIds, { url, name = 'exotel', scope = 'user', force = false, dryRun = false }) {
-  const ctx = { url, name, scope, force, dryRun };
+function install(clientIds, { url, name = 'exotel', scope = 'user', force = false, dryRun = false, toolsets }) {
+  const ctx = { url, name, scope, force, dryRun, toolsets };
   return clientIds.map((id) => {
     try {
       return { client: id, ...CLIENTS[id].install(ctx) };
@@ -242,4 +251,4 @@ function uninstall({ name = 'exotel', secrets = [] } = {}) {
   return changed;
 }
 
-module.exports = { CLIENTS, detectClients, resolveClients, install, uninstall, configFiles, proxyCommand, tomlString };
+module.exports = { CLIENTS, detectClients, resolveClients, install, uninstall, configFiles, proxyCommand, tomlString, normToolsets, TOOLSETS };

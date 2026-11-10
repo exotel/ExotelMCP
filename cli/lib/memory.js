@@ -17,7 +17,8 @@ exotel memory save --phone <number> --id <interaction id> (--messages @turns.jso
 exotel memory note --phone <number> --text "Offer: 20% off this week" [--agents-only]      bots see it on the very next call
 exotel memory event --phone <number> --type payment|ticket_status|delivery|other --event-id <id>
                     [--amount 4500 --settled] [--status delivered] [--ref ORDER-1] [--data '{json}']
-exotel voicebot memory on|off --bot-id <id> [--replace-existing]                            give any VoiceBot memory (or take it away)
+exotel voicebot memory on|off --bot-id <id> [--greeting \"Hi, …\" | --keep-greeting] [--replace-existing]   give any VoiceBot memory in one step
+exotel voicebot result --call-sid <CallSid>                                               transcript + what Memory learned
 
 Phones: +919876543210; 09876543210 / 9876543210 / 919876543210 are read as Indian numbers, so a caller's inbound
 From and your outbound To always match the same contact. Notes are instant; saved interactions are learned in the background.`;
@@ -176,50 +177,77 @@ function event(flags) {
   });
 }
 
-/** `exotel voicebot memory on|off --bot-id <id>`: point the bot's session_start/session_end webhooks at Exotel Memory (or remove them). */
-async function voicebot(action, flags) {
-  if (!['on', 'off'].includes(action)) throw new CliError('Usage: exotel voicebot memory on|off --bot-id <id> [--replace-existing]', EXIT.USAGE);
-  const a = action === 'on' ? memoryAuth() : requireAuth();
-  const bot = need(flags, 'bot', /^[A-Za-z0-9-]{8,64}$/, 'the VoiceBot ID (exotel voicebot list)');
-  const path = `/v1/accounts/{sid}/voicebots/${encodeURIComponent(bot)}`;
-  let cur = await rest.send(rest.buildRequest(a, { host: 'voicebot', path }));
-  let data = cur.data && cur.data.response && (cur.data.response.data || cur.data.response);
-  if (!cur.ok || !data || !data.id) {
-    // `exotel voicebot create` prints a generation ID first; people often copy that. Resolve it to its bot.
-    const realBot = await botFromGeneration(a, bot);
-    if (!realBot) throw new CliError(`Could not read VoiceBot ${bot} (HTTP ${cur.status}${cur.message ? `: ${cur.message}` : ''}). List your bots: exotel voicebot list`, EXIT.ERROR);
-    info(`${bot} is a bot generation ID; using its bot ${realBot}.`);
-    return voicebot(action, { ...flags, bot: realBot });
-  }
-  const hooks = { ...(data.webhook_config || {}) };
-  const isMemory = (u) => /\/webhooks\/voicebot\//.test(u || '') && /^https:\/\/memory\.[^/]*(exotel\.(com|in)|qaexotel\.com)\//i.test(u || '');
-  if (action === 'on') {
-    const base = rest.memoryHookBase(a);
-    for (const k of ['session_start', 'session_end']) {
-      const u = hooks[k] && hooks[k].url;
-      if (u && !isMemory(u) && !flags['replace-existing']) {
-        throw new CliError(`This bot already sends ${k} to ${new URL(u).host}. Nothing changed. Re-run with --replace-existing to switch it to Exotel Memory.`, EXIT.USAGE);
-      }
-    }
-    hooks.session_start = { url: `${base}/session_start` };
-    hooks.session_end = { url: `${base}/session_end` };
-  } else {
-    for (const k of Object.keys(hooks)) if (hooks[k] && isMemory(hooks[k].url)) delete hooks[k];
-  }
-  const summary = action === 'on'
-    ? `Turn memory ON for VoiceBot "${data.name || bot}": every call loads and saves Exotel Memory`
-    : `Turn memory OFF for VoiceBot "${data.name || bot}" (saved memory is kept)`;
-  if (flags['dry-run']) return out({ dryRun: true, kind: 'write', summary, webhook_config: hooks }, () => `Dry run (write): ${summary}\n${JSON.stringify(hooks, null, 2)}`);
-  await confirm('write', summary, flags);
-  const req = rest.approve(rest.buildRequest(a, { host: 'voicebot', method: 'PUT', path, json: { ...data, webhook_config: hooks } }));
-  const res = await require('./ui').spin('Updating the bot…', rest.send(req));
+/** Run one Exotel MCP tool with the CLI's rules: --dry-run previews, changes ask first, output is compact. */
+async function tool(name, args, flags, { kind = 'write', summary, render }) {
+  const a = requireAuth();
+  if (flags['dry-run']) return out({ dryRun: true, kind, summary, tool: name, arguments: args }, () => `Dry run (${kind}): ${summary}\n${name} ${JSON.stringify(args)}`);
+  if (kind !== 'read') await confirm(kind, summary, flags);
+  const { McpClient, unwrapResult } = require('./mcp');
+  const res = unwrapResult(await require('./ui').spin(summary, new McpClient(a).callTool(name, args, { approved: true })));
   if (!res.ok) {
     process.exitCode = EXIT.ERROR;
-    return out({ ok: false, status: res.status, message: res.message, data: res.data }, () => `✘ VoiceBot update failed (HTTP ${res.status}) ${res.message || ''}`);
+    const unknown = /Unknown tool/i.test(res.text || '');
+    return out({ ok: false, error: res.text, ...(unknown ? { hint: 'Your Exotel MCP server does not have this tool yet (needs the Memory release).' } : {}) },
+      () => `✘ ${res.text}${unknown ? '\n  The Exotel MCP server does not have this tool yet (needs the Memory release).' : ''}`);
   }
-  return out({ ok: true, voiceBotId: bot, memory: action, webhook_config: hooks }, () => (action === 'on'
-    ? `✔ Memory is ON for "${data.name || bot}". In the bot's prompt use {{entities.person_name}}, {{entities.memory_summary}},\n  {{entities.current_topic}} and {{entities.memory_context}} (notes, offers, open topics).`
-    : `✔ Memory is OFF for "${data.name || bot}". Saved memory is kept.`));
+  return out({ ok: true, ...(res.data && typeof res.data === 'object' ? res.data : { text: res.text }) }, () => render(res.data || {}, res.text));
+}
+
+/** `exotel voicebot memory on|off --bot-id <id>`: one step; the server sets the Memory webhooks, the prompt's memory section and the opening line. */
+async function voicebot(action, flags) {
+  if (!['on', 'off'].includes(action)) throw new CliError('Usage: exotel voicebot memory on|off --bot-id <id> [--greeting "Hi, this is …" | --keep-greeting] [--replace-existing]', EXIT.USAGE);
+  const a = action === 'on' ? memoryAuth() : requireAuth();
+  let bot = need(flags, 'bot', /^[A-Za-z0-9-]{8,64}$/, 'the VoiceBot ID (exotel voicebot list)');
+  // `voicebot create` prints a generation ID first and people often copy it: resolve it only if no bot has this ID.
+  const isBot = (await rest.send(rest.buildRequest(a, { host: 'voicebot', path: `/v2/accounts/{sid}/voicebots/${encodeURIComponent(bot)}` }))).ok;
+  if (!isBot) {
+    const realBot = await botFromGeneration(a, bot);
+    if (!realBot) throw new CliError(`No VoiceBot ${bot} on this account. List your bots: exotel voicebot list`, EXIT.USAGE);
+    info(`${bot} is a bot generation ID; using its bot ${realBot}.`);
+    bot = realBot;
+  }
+  if (action === 'off') {
+    return tool('exotel_voicebot_memory_disable', { voiceBotId: bot }, flags, {
+      summary: `Turn memory OFF for VoiceBot ${bot} (saved memory is kept)`,
+      render: () => '✔ Memory is OFF: webhooks and the prompt\'s memory section removed. Saved memory is kept.',
+    });
+  }
+  const args = { voiceBotId: bot };
+  if (flags.greeting && flags.greeting !== true) args.greeting = String(flags.greeting);
+  if (flags['keep-greeting']) args.keepGreeting = true;
+  if (flags['replace-existing']) args.replaceExisting = true;
+  return tool('exotel_voicebot_memory_enable', args, flags, {
+    summary: `Turn memory ON for VoiceBot ${bot}: Memory webhooks, a memory section in its prompt${args.keepGreeting ? '' : ', and a shorter opening line if it asks for the caller\'s name'}`,
+    render: (d) => [`✔ Memory is ON for ${bot}.`, `  Opening line: ${d.greeting || 'unchanged'}`,
+      `  Prompt: ${d.prompt && d.prompt.changed ? `memory section added (version ${d.prompt.version}, ${d.prompt.promptLocations} places)` : (d.prompt && d.prompt.note) || 'unchanged'}`,
+      '  Next: exotel voicebot test-call --bot-id <id> --to <your number>, then exotel voicebot result --call-sid <CallSid>'].join('\n'),
+  });
+}
+
+/** `exotel voicebot prompt --bot-id <id> (--file prompt.txt | --text "…")`: replace the prompt everywhere it lives. */
+async function prompt(flags) {
+  const bot = need(flags, 'bot', /^[A-Za-z0-9-]{8,64}$/, 'the VoiceBot ID');
+  const text = flags.file && flags.file !== true ? fs.readFileSync(String(flags.file), 'utf8') : need(flags, 'text', /^[\s\S]{20,50000}$/, 'the new prompt, 20 to 50,000 characters');
+  return tool('exotel_voicebot_assistant_update_prompt', { assistantId: bot, newInstruction: text, versionDescription: opt(flags, 'note') || 'Prompt updated with exotel voicebot prompt' }, flags, {
+    summary: `Replace the prompt of VoiceBot ${bot} (${text.length} characters) and publish it`,
+    render: (d) => `✔ Prompt published${d.version ? ` as ${d.version}` : ''}${d.promptLocations ? ` (${d.promptLocations} places)` : ''}.`,
+  });
+}
+
+/** `exotel voicebot result --call-sid <CallSid>`: transcript and what Memory learned, in one step. */
+async function result(flags) {
+  const sid = need(flags, 'call-sid', /^[A-Za-z0-9]{8,64}$/, 'the CallSid printed by voicebot test-call');
+  return tool('exotel_voicebot_call_result', { callSid: sid }, flags, {
+    kind: 'read', summary: `Result of call ${sid}`,
+    render: (d, text) => {
+      if (d.found === false) return `No VoiceBot session for ${sid} yet: still running, not answered, or not indexed (retry in ~10 s).`;
+      const lines = [`${d.durationSec || '?'} s · ${d.outcome || ''}${d.hungUpBy ? ` · hung up by ${d.hungUpBy}` : ''}`];
+      for (const t of d.transcript || []) lines.push(`  ${t}`);
+      const m = d.memory && d.memory.memory;
+      if (m) lines.push('', 'What Memory knows now:', m.replace(/^<<<MEMORY[^\n]*\n/, '').trim());
+      return lines.join('\n') || text;
+    },
+  });
 }
 
 async function botFromGeneration(a, id) {
@@ -245,4 +273,4 @@ function cmd(sub, flags) {
   }
 }
 
-module.exports = { cmd, voicebot, phone, role, USAGE, info };
+module.exports = { cmd, voicebot, prompt, result, phone, role, USAGE, info };

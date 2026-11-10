@@ -8,14 +8,17 @@
 const readline = require('readline');
 const { McpClient } = require('./mcp');
 
-async function run() {
+async function run(flags = {}) {
   const creds = require('./credentials');
   const c = creds.load();
   if (!c) {
     process.stderr.write('exotel mcp proxy: not logged in. Run `exotel login` (or `exotel init`) in a terminal first.\n');
     process.exit(4);
   }
-  const client = new McpClient(c.auth);
+  // --toolsets voicebot,memory (or EXOTEL_MCP_TOOLSETS): the agent sees only those tool groups, so it picks faster.
+  const ts = require('./clients').normToolsets(flags.toolsets || process.env.EXOTEL_MCP_TOOLSETS);
+  const base = require('./mcp').serverUrl();
+  const client = new McpClient(c.auth, ts ? { url: `${base}${base.includes('?') ? '&' : '?'}toolsets=${ts}` } : {});
   const write = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   let pending = Promise.resolve();

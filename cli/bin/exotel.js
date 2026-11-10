@@ -189,12 +189,12 @@ async function cmdMcp(sub, flags) {
     requireAuth(); // the relay reads these credentials at run time; nothing is copied into client configs
     const ids = clients.resolveClients(flags.client);
     if (!ids.length) throw new CliError('No supported agent clients detected. Pass --client claude-code|cursor|codex|vscode|windsurf|claude-desktop.', EXIT.USAGE);
-    const results = clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'] });
+    const results = clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'], toolsets: flags.toolsets });
     out({ results }, () => results.map((r) => `${r.client.padEnd(15)} ${r.status}${r.file ? `  ${r.file}` : ''}${r.hint ? `  (${r.hint})` : ''}${r.error ? `  ${r.error}` : ''}${r.next && /added|replaced/.test(r.status) ? `\n${''.padEnd(16)}→ ${r.next}` : ''}`).join('\n'));
     if (results.some((r) => r.status === 'error')) process.exitCode = EXIT.ERROR;
     return results;
   }
-  if (sub === 'proxy') return require('../lib/mcp-proxy').run();
+  if (sub === 'proxy') return require('../lib/mcp-proxy').run(flags);
   if (sub === 'config') {
     // The setup to paste into any MCP client: it runs the local relay, so it contains no credentials.
     const pc = clients.proxyCommand();
@@ -425,6 +425,8 @@ async function cmdCall(numberArg, flags) {
 
 async function cmdVoicebot(sub, flags, rest = []) {
   if (sub === 'memory') return require('../lib/memory').voicebot(rest[0], flags);
+  if (sub === 'prompt') return require('../lib/memory').prompt(flags);
+  if (sub === 'result') return require('../lib/memory').result(flags);
   if (sub === 'list') {
     const res = await runTool('exotel_voicebot_list_all', { status: flags.status || '', limit: String(flags.limit || 50), offset: String(flags.offset || 0) }, flags, { quiet: true, spinText: 'Loading your VoiceBots…' });
     const ui = require('../lib/ui');
@@ -478,7 +480,7 @@ async function cmdInit(flags) {
   steps.credentials = { source: c.source, products: creds.products(c.auth) };
   if (!flags['no-mcp']) {
     const ids = clients.resolveClients(flags.client);
-    steps.mcp = ids.length ? clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'] }) : [];
+    steps.mcp = ids.length ? clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'], toolsets: flags.toolsets }) : [];
   }
   if (!flags['no-skills']) {
     const agents = skills.resolveAgents(flags.agent);
@@ -537,7 +539,7 @@ SIP TRUNKING (Dynamic SIP trunks)
 AI VOICE  → exotel voice-ai --help
   exotel voice-ai connect --to <E.164> --stream-url wss://…   $   call a number, connect it to YOUR bot (Connect Voice AI)
   exotel voice-ai connect --to <E.164> --app-id <app_id>        $   …or to an App Bazaar flow with a Voicebot applet
-  exotel voicebot create | attach | test-call | transcript | debug   Exotel-hosted VoiceBots → exotel voicebot --help
+  exotel voicebot create | test-call | result | prompt | attach | debug   Exotel-hosted VoiceBots → exotel voicebot --help
 
 MEMORY (remember every contact across calls and chats, any bot)  → exotel memory --help
   exotel memory login                         add your Memory API key (cm_…) and Memory account SID
@@ -564,6 +566,7 @@ EVERYTHING ELSE
   exotel api <GET|POST|PUT|DELETE> </path/with/{sid}> [--host api|cpaas] [--query …] [--data '{json}'] [--form …]
   exotel mcp tools [--filter text] | mcp tool <name> | mcp call <tool> key=value…   (VoiceBot, SMS, WhatsApp, CQA, AI Assist…)
   exotel mcp install | config | clients   connect agents; they run "exotel mcp proxy", so their configs hold no token
+                                        --toolsets voicebot,memory gives the agent only those tools (faster)
   exotel skill list | install
 
   $ = billed or rings a real phone   ~ = changes live routing   ! = cannot be undone

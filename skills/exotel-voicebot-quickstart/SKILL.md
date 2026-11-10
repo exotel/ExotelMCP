@@ -18,9 +18,10 @@ takes `--json` for machine-readable output. The Exotel MCP tools named below are
 
 ## 1. Write the brief
 
-From the user's request, draft a short brief: who the bot represents, the one job of the call, the
-greeting, language(s), what to collect, when to end, what never to say. Only ask the user if something
-essential is missing; otherwise state your assumptions and continue.
+From the user's request, draft a short brief: who the bot represents, the one job of the call, a short
+opening line (no questions in it: "Hi, this is Exotel Bank support."), language(s), what to collect, when
+to end, what never to say. Always add: "Never use titles or guess gender (no sir, madam, Mr, Ms)." Only ask
+the user if something essential is missing; otherwise state your assumptions and continue.
 
 ## 2. Create the bot
 
@@ -46,14 +47,15 @@ exotel voicebot test-call --bot-id <botId> --to <user number> --record --wait --
 (MCP: `exotel_voicebot_place_call` with `toNumber`, `voiceBotId`, `callerId`, `customField: ""`,
 `record: true`, `statusCallback: ""`.)
 
-## 4. Read the transcript
+## 4. Read the result (one step)
 
 ```bash
-exotel voicebot transcript --call-sid <callSid> --json
+exotel voicebot result --call-sid <callSid> --json      # MCP: exotel_voicebot_call_result
 ```
 
-If it says no session yet, wait about 10 seconds and retry once. Show the user the conversation turn by
-turn and point out where the bot went off-brief, repeated itself, or missed information.
+Duration, who hung up, the transcript as bot/caller lines and, if Memory is on, what it now knows. If it
+says no session yet, wait about 10 seconds and retry once. Show the user the conversation and point out
+where the bot went off-brief, repeated itself, or missed information.
 
 ## 5. If the call failed or went wrong
 
@@ -66,11 +68,19 @@ answered but the onward connection failed, no speech, very short session, wrong 
 
 ## 6. Improve and repeat
 
-- Prompt / behaviour: read the current instruction with MCP `exotel_voicebot_assistant_get_config`
-  (`version: "stable"`), then `exotel_voicebot_assistant_update_prompt` with the full new instruction.
-  Change one thing per iteration.
+- Prompt / behaviour: write the full new prompt to a file, then
+  `exotel voicebot prompt --bot-id <botId> --file prompt.txt --yes` (MCP: `exotel_voicebot_assistant_update_prompt`
+  with `assistantId` = the bot ID). It updates every place the prompt lives. Do not use angle brackets in
+  prompts (the VoiceBot API removes them). Change one thing per iteration.
+- Opening line: it plays before the AI replies, so keep it short and never ask for the caller's name there
+  ("Hi, this is City Dental."). With memory on, the AI greets returning callers by name in its first reply.
 - Voice, ASR, VAD, greeting interruption: MCP `exotel_voicebot_update_config` with only the fields to change.
 - Test-call again (step 3, ask again) and compare transcripts.
+
+## Remember callers across calls
+
+`exotel voicebot memory on --bot-id <botId> --yes` (MCP: `exotel_voicebot_memory_enable`) gives the bot
+Exotel Memory in one step. See the `exotel-memory` skill.
 
 ## 7. Inbound: route a number to the bot (go-live)
 
