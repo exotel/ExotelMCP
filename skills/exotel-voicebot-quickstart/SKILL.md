@@ -20,8 +20,12 @@ takes `--json` for machine-readable output. The Exotel MCP tools named below are
 
 From the user's request, draft a short brief: who the bot represents, the one job of the call, a short
 opening line (no questions in it: "Hi, this is Exotel Bank support."), language(s), what to collect, when
-to end, what never to say. Always add: "Never use titles or guess gender (no sir, madam, Mr, Ms)." Only ask
-the user if something essential is missing; otherwise state your assumptions and continue.
+to end, what never to say. Always add these rules (they fixed real test calls):
+- "Never use titles or guess gender (no sir, madam, Mr, Ms)."
+- "One question per turn. If an answer is unclear, ask again once in one short sentence; after two failed tries, move on."
+- "Read numbers back exactly as the caller said them, in groups (74111 79773); never add a 0 or a country code."
+- "Never say something was done (blocked, sent, booked) unless a tool confirmed it."
+Only ask the user if something essential is missing; otherwise state your assumptions and continue.
 
 ## 2. Create the bot
 
@@ -34,6 +38,11 @@ Returns `botId` when generation completes (usually under 2 minutes). If `botId` 
 (MCP: `exotel_voicebot_create`, then poll `exotel_voicebot_creation_status`.)
 
 ## 3. Place a test call (needs the user's approval)
+
+Ask which number to call (any phone) and which ExoPhone to call from; the caller ID must be one of the
+account's ExoPhones (`exotel numbers list`), the saved default is used if they have no preference. The CLI
+checks `--caller-id` before dialling. For a call with a purpose (an offer, a delivery, a follow-up) add
+`--reason "<one sentence>"`: with memory on, the bot opens with it instead of asking how it can help.
 
 1. Caller ID: `exotel whoami` shows the saved caller ID; otherwise pick one from `exotel numbers list`.
 2. Ask: "I'll call <number> from <caller ID> with bot <name>. OK?" Wait for yes.

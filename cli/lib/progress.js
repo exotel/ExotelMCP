@@ -85,7 +85,7 @@ function summary({ status, callSid, duration, next = [] }) {
 /** Suggested follow-up commands for a finished call. */
 function nextSteps(status, callSid, { voicebot = false } = {}) {
   const steps = [];
-  if (status === 'completed' && voicebot) steps.push(`exotel voicebot transcript --call-sid ${callSid}    what was said`);
+  if (status === 'completed' && voicebot) steps.push(`exotel voicebot result --call-sid ${callSid}    what was said + what Memory learned`);
   if (status !== 'completed') steps.push(`exotel explain ${status}    what this status means`);
   steps.push(`exotel calls get --call-sid ${callSid} --details    full call record`);
   if (voicebot && status !== 'completed') steps.push(`exotel voicebot debug --call-sid ${callSid}    bot-side diagnosis`);

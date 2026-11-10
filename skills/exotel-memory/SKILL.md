@@ -16,6 +16,7 @@ recent interactions. Works for any bot or agent on any channel.
 | What happened on a call + what Memory learned | `exotel voicebot result --call-sid <sid>` | `exotel_voicebot_call_result` |
 | What Memory knows about someone | `exotel memory get --phone <number>` | `exotel_memory_get` |
 | The bot to know a CRM fact on its next call | `exotel memory note --phone <number> --text "…" --yes` | `exotel_memory_add_note` |
+| The bot to call someone for a reason it opens with | `exotel voicebot test-call --bot-id <id> --to <number> --reason "…" [--caller-id <ExoPhone>]` | `exotel_voicebot_call_customer` |
 | A trusted business event (payment, delivery…) | `exotel memory event --phone <n> --type delivery --event-id <id> --yes` | `exotel_memory_record_event` |
 | Save a conversation from any other bot | `exotel memory save --phone <n> --id <id> --messages @turns.json --yes` | `exotel_memory_save_interaction` |
 | Turn memory off | `exotel voicebot memory off --bot-id <id> --yes` | `exotel_voicebot_memory_disable` |
@@ -51,9 +52,11 @@ automatically; `exotel mcp install --toolsets voicebot,memory` gives them only t
 ## Proactive call ("tell the customers this offer fits")
 
 Find the matching contacts in the user's own system (Memory searches only by exact phone, email or ID, never by
-interest). For each: add a note (one plain sentence, not an instruction), then call them through the bot
-(`exotel voicebot test-call --bot-id <id> --to <number>` or `exotel_voicebot_place_call`). The memory section
-makes the bot open with the note.
+interest). For each, with the user's yes (billed): `exotel voicebot test-call --bot-id <id> --to <number> --reason
+"<one plain sentence>"` (MCP: `exotel_voicebot_call_customer`). It saves the reason as an `Outbound call:` note first;
+the bot cannot otherwise tell its own calls from incoming ones, so it opens with the reason and asks if now is a
+good time. `exotel voicebot result --call-sid <sid>` (MCP: `exotel_voicebot_call_result`) afterwards marks the
+note done, so later incoming calls are treated as incoming. The CLI does that itself when it waits for the call.
 
 ## Backfill a call made before memory was on
 

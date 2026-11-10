@@ -381,6 +381,7 @@ async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call'
   result.final = await waitForCall(callSid, statusTool, flags);
   if (result.final.status !== 'completed') process.exitCode = EXIT.ERROR;
   out(result, () => progress.summary({ status: result.final.status, callSid, next: progress.nextSteps(result.final.status, callSid, { voicebot }) }));
+  return result;
 }
 
 async function listBots(flags) {
@@ -446,14 +447,21 @@ async function cmdVoicebot(sub, flags, rest = []) {
     flags.to = await guided.to(flags);
     const callerId = await guided.callerId(flags);
     if (flags.wait === undefined && !flags['no-wait'] && interactive()) flags.wait = true;
-    return placeAndMaybeWait('exotel_voicebot_place_call', {
-      toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '',
-    }, flags, 'exotel_voicebot_call_status', {
+    // --reason: the bot knows it placed this call and opens with the reason (saved as a Memory note, closed after the call).
+    const reason = flags.reason && flags.reason !== true ? String(flags.reason).trim() : '';
+    const res = await placeAndMaybeWait(reason ? 'exotel_voicebot_call_customer' : 'exotel_voicebot_place_call', reason
+      ? { toNumber: flags.to, voiceBotId: flags.bot, callerId, reason, record: !!flags.record }
+      : { toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '' }, flags, 'exotel_voicebot_call_status', {
       label: `a VoiceBot test call to ${flags.to} from ${callerId}`,
       voicebot: true,
-      confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}`
-        + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; change it with --caller-id or: exotel config set caller-id <ExoPhone>)`),
+      confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}${reason ? `\n  The bot opens with: "${reason}"` : ''}`
+        + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; use --caller-id <your ExoPhone> or: exotel config set caller-id <ExoPhone>)`),
     });
+    if (reason && flags.wait && res && res.callSid) {
+      // Mark the reason note done so later incoming calls are not treated as this outbound call.
+      await runTool('exotel_voicebot_call_result', { callSid: res.callSid }, { ...flags, 'dry-run': false }, { quiet: true }).catch(() => {});
+    }
+    return res;
   }
   const vb = require('../lib/voicebot');
   if (sub === 'create') return vb.create(flags);

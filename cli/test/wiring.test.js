@@ -65,5 +65,5 @@ test('call progress: prints each status change, ends with a plain result and nex
   const sum = progress.summary({ status: r.status, callSid: 'CA1', next: progress.nextSteps(r.status, 'CA1', { voicebot: true }) });
   assert.match(sum, /^✘ Nobody answered/);
   assert.match(sum, /exotel explain no-answer/);
-  assert.match(progress.summary({ status: 'completed', callSid: 'CA2', duration: 42, next: progress.nextSteps('completed', 'CA2', { voicebot: true }) }), /✔ Call completed\. Duration: 42s\.[\s\S]*voicebot transcript --call-sid CA2/);
+  assert.match(progress.summary({ status: 'completed', callSid: 'CA2', duration: 42, next: progress.nextSteps('completed', 'CA2', { voicebot: true }) }), /✔ Call completed\. Duration: 42s\.[\s\S]*voicebot result --call-sid CA2/);
 });
