@@ -457,9 +457,10 @@ async function cmdVoicebot(sub, flags, rest = []) {
       confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}${reason ? `\n  The bot opens with: "${reason}"` : ''}`
         + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; use --caller-id <your ExoPhone> or: exotel config set caller-id <ExoPhone>)`),
     });
-    if (reason && flags.wait && res && res.callSid) {
+    if (reason && res && res.callSid) {
       // Mark the reason note done so later incoming calls are not treated as this outbound call.
-      await runTool('exotel_voicebot_call_result', { callSid: res.callSid }, { ...flags, 'dry-run': false }, { quiet: true }).catch(() => {});
+      if (flags.wait) await runTool('exotel_voicebot_call_result', { callSid: res.callSid }, { ...flags, 'dry-run': false }, { quiet: true }).catch(() => {});
+      else info(`When the call ends, run: exotel voicebot result --call-sid ${res.callSid}   (marks the reason done, so later incoming calls are not treated as this one)`);
     }
     return res;
   }

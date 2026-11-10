@@ -119,3 +119,15 @@ test('voicebot memory on / prompt / result are one MCP tool call each (dry-run s
   assert.strictEqual(usage.code, 2);
   assert.match(usage.json.error, /--greeting/);
 });
+
+test('memory login only sends the Memory key to an Exotel Memory host', async () => {
+  const r = await cli(['memory', 'login', '--account', 'mem_acme', '--url', 'https://api.in.exotel.com', '--no-verify']);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.json.error, /Exotel Memory host/);
+});
+
+test('memory event --data must be a JSON object', async () => {
+  const r = await cli(['memory', 'event', '--phone', '+919876543210', '--type', 'other', '--event-id', 'E1', '--data', '[1,2]', '--dry-run']);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.json.error, /JSON object/);
+});

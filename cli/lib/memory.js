@@ -53,13 +53,16 @@ function memoryAuth() {
 }
 
 async function login(flags) {
+  const url = flags.url && flags.url !== true ? String(flags.url).replace(/\/$/, '') : (process.env.EXOTEL_MEMORY_BASE_URL || undefined);
+  // The Memory key goes only to an Exotel Memory host over HTTPS (same rule as the MCP server).
+  if (url && !/^https:\/\/memory(\.[a-z0-9-]+)*\.(exotel\.(com|in)|qaexotel\.com)$/i.test(url)) {
+    throw new CliError(`--url must be an Exotel Memory host, https://memory.….exotel.com (got ${url}). Nothing was saved.`, EXIT.USAGE);
+  }
   const c = creds.load();
   if (!c) throw new CliError('Log in to Exotel first (exotel login), then add Memory with: exotel memory login', EXIT.AUTH);
   if (c.source === 'env') throw new CliError('Credentials come from EXOTEL_* environment variables; set EXOTEL_MEMORY_API_KEY and EXOTEL_MEMORY_ACCOUNT_SID there instead.', EXIT.USAGE);
   const account = flags.account && flags.account !== true ? String(flags.account).trim() : (process.env.EXOTEL_MEMORY_ACCOUNT_SID || c.auth.account_sid);
   if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(account || '')) throw new CliError('--account must be your Memory account SID (letters, digits, _ . : -)', EXIT.USAGE);
-  const url = flags.url && flags.url !== true ? String(flags.url).replace(/\/$/, '') : (process.env.EXOTEL_MEMORY_BASE_URL || undefined);
-  if (url) rest.assertExotelHost(url);
   const key = await readSecret({ envKey: 'EXOTEL_MEMORY_API_KEY', stdinFlag: 'key-stdin', flags, prompt: 'Exotel Memory API key (cm_…, hidden): ' });
   if (!/^cm_[A-Za-z0-9_-]{8,}$/.test(key)) throw new CliError('That does not look like a Memory API key (it starts with cm_).', EXIT.USAGE);
   const auth = { ...c.auth, memory_api_key: key, memory_account_sid: account };
@@ -169,6 +172,7 @@ function event(flags) {
   if (opt(flags, 'ref')) body.external_ref = opt(flags, 'ref');
   if (flags.data && flags.data !== true) {
     try { body.payload = JSON.parse(readArg(flags.data)); } catch (e) { throw new CliError(`--data is not valid JSON: ${e.message}`, EXIT.USAGE); }
+    if (!body.payload || typeof body.payload !== 'object' || Array.isArray(body.payload)) throw new CliError('--data must be a JSON object, e.g. \'{"order":"A12"}\'', EXIT.USAGE);
   }
   return run(flags, {
     kind: 'write', summary: `Record ${type} event ${body.event_id} for ${p}`,
