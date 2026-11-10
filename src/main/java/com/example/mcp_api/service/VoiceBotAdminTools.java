@@ -225,7 +225,7 @@ public class VoiceBotAdminTools {
     }
 
     @Tool(name = "exotel_voicebot_assistant_push_version",
-          description = "Creates a new version of an assistant with custom data payload. For advanced updates: attaching tools, updating intent config, swapping agents. dataJson must be valid JSON.")
+          description = "Creates a new version of an assistant with custom data payload. For advanced updates: attaching tools, updating intent config, swapping agents, or the top-level instruction of a single-agent bot. dataJson must be valid JSON. sourceVersion defaults to the current stable version.")
     public String createAssistantVersion(String assistantId, String sourceVersion, String markAsStable, String versionDescription, String dataJson) {
         logger.info("Creating assistant version — assistant={}", sanitize(assistantId));
         try {
@@ -237,6 +237,13 @@ public class VoiceBotAdminTools {
             catch (Exception e) { return "Error: dataJson is not valid JSON — " + e.getMessage(); }
 
             ObjectNode payload = objectMapper.createObjectNode();
+            if (sourceVersion == null || sourceVersion.isBlank()) {
+                // The API needs the version the new one is based on; default to the assistant's current stable version.
+                String getUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=stable";
+                JsonNode cur = objectMapper.readTree(safeBody(restTemplate.exchange(getUrl, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class)));
+                JsonNode d = cur.path("response").path("data");
+                sourceVersion = d.path("stable_version").asText(d.path("latest_version").asText(""));
+            }
             if (sourceVersion != null && !sourceVersion.isBlank()) payload.put("source_version", sourceVersion);
             payload.put("mark_as_stable", markAsStable != null ? markAsStable : "true");
             payload.put("version_description", versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Updated via MCP");
