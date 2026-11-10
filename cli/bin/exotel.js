@@ -135,7 +135,7 @@ function cmdLogout(flags = {}) {
   if (c && c.source !== 'env') {
     const a = c.auth;
     const pair = creds.apiKeyPair(a);
-    secrets.push(a.token, JSON.stringify(a), pair.apiKey, pair.apiToken, a.voicebot_api_token, a.calls_api_token, a.cqa_api_key);
+    secrets.push(a.token, JSON.stringify(a), pair.apiKey, pair.apiToken, a.voicebot_api_token, a.calls_api_token, a.cqa_api_key, a.memory_api_key);
   }
   const changed = flags['keep-agents'] ? [] : clients.uninstall({ secrets: secrets.filter(Boolean) });
   const removed = creds.remove();
@@ -423,7 +423,8 @@ async function cmdCall(numberArg, flags) {
   return platform.voiceAi('connect', flags);
 }
 
-async function cmdVoicebot(sub, flags) {
+async function cmdVoicebot(sub, flags, rest = []) {
+  if (sub === 'memory') return require('../lib/memory').voicebot(rest[0], flags);
   if (sub === 'list') {
     const res = await runTool('exotel_voicebot_list_all', { status: flags.status || '', limit: String(flags.limit || 50), offset: String(flags.offset || 0) }, flags, { quiet: true, spinText: 'Loading your VoiceBots…' });
     const ui = require('../lib/ui');
@@ -538,6 +539,12 @@ AI VOICE  → exotel voice-ai --help
   exotel voice-ai connect --to <E.164> --app-id <app_id>        $   …or to an App Bazaar flow with a Voicebot applet
   exotel voicebot create | attach | test-call | transcript | debug   Exotel-hosted VoiceBots → exotel voicebot --help
 
+MEMORY (remember every contact across calls and chats, any bot)  → exotel memory --help
+  exotel memory login                         add your Memory API key (cm_…) and Memory account SID
+  exotel voicebot memory on|off --bot-id <id>  ~  give a VoiceBot memory: each call loads and saves it
+  exotel memory get --phone <number>          what Memory knows about a contact
+  exotel memory note | event | save | search  push CRM facts (instant), save calls from any bot, find contacts
+
 VOICE-AI PLATFORMS (already connected to Exotel)  → exotel integrate --help
   exotel integrate elevenlabs|bolna status | setup | call --agent <id> --to <E.164> [--wait] | result --id <id>
 
@@ -586,7 +593,7 @@ const SUBHELP = {
   voiceai: platform.USAGE.VOICE_AI_USAGE,
 };
 
-const COMMANDS = ['init', 'login', 'logout', 'whoami', 'doctor', 'config', 'call', 'balance', 'numbers', 'calls', 'campaigns', 'voicebot', 'voice-ai',
+const COMMANDS = ['init', 'login', 'logout', 'whoami', 'doctor', 'config', 'call', 'balance', 'numbers', 'calls', 'campaigns', 'voicebot', 'memory', 'voice-ai',
   'integrate', 'leg', 'bridge', 'events', 'exoml', 'applet', 'trunk', 'api', 'mcp', 'skill', 'ask', 'explain', 'docs', 'completion', 'help'];
 
 const HOME = () => {
@@ -663,7 +670,8 @@ async function main(argv) {
     case 'agentstream':
       throw new CliError('"exotel agentstream call" is now "exotel voice-ai connect" (Connect Voice AI API). Run: exotel voice-ai --help', EXIT.USAGE);
     case 'api': return platform.api([sub, ...rest], flags);
-    case 'voicebot': return cmdVoicebot(sub, flags);
+    case 'voicebot': return cmdVoicebot(sub, flags, rest);
+    case 'memory': return require('../lib/memory').cmd(sub, flags);
     case 'integrate': return require('../lib/integrations').run(sub, rest[0], flags);
     case 'ask': return require('../lib/ask').ask([sub, ...rest].filter(Boolean).join(' '), flags);
     case 'explain': {

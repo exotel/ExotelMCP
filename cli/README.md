@@ -58,6 +58,7 @@ exotel docs show https://developer.exotel.com/docs/agentstream/connect-voice-ai 
 | SIP trunking | `exotel trunk setup` (all steps at once), or `create \| map-number \| set-number-mode \| whitelist-ip \| destination \| credentials add\|list\|delete \| caller-id \| delete` | Dynamic SIP Trunking |
 | **Your own voice bot (standard)** | `exotel voice-ai connect --to … --stream-url wss://…`, or `--app-id <app_id>` for an App Bazaar flow with a Voicebot applet | Connect Voice AI API |
 | Exotel VoiceBot | `exotel voicebot list \| test-call \| transcript` | VoiceBot |
+| Memory: contacts remembered across calls and chats | `exotel voicebot memory on --bot-id <id>`, `exotel memory get \| note \| event \| save \| search` | Exotel Memory |
 | Live call control (needs enablement by Exotel support) | `exotel leg create \| get \| events \| action`, `exotel bridge …`, `exotel events listen \| scaffold` | Legs API |
 | ExoML | `exotel exoml validate flow.xml` (and `leg action` validates before sending) | ExoML |
 | Flow webhooks | `exotel applet test connect\|gather\|dial\|passthru\|stream <url>` | Connect / Gather / Passthru / Stream applets |
@@ -82,6 +83,7 @@ Not covered: Voice v3 (`/v3/accounts/{sid}/calls`). Use `exotel api` for it if n
 | `exotel-flow-webhooks` | Write and test Dynamic URL handlers for flow applets |
 | `exotel-call-debugging` | Why a call or message failed |
 | `exotel-conversation-quality` | Conversational Intelligence scoring |
+| `exotel-memory` | Bots that remember callers; CRM facts the bot knows on the next call |
 
 ```bash
 exotel skill list

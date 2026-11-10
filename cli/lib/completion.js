@@ -8,6 +8,7 @@ const COMMANDS = {
   whoami: 'who you are logged in as', doctor: 'check your setup', config: 'saved defaults (your number, caller ID, bot)',
   call: 'place a test call, step by step', balance: 'account balance', numbers: 'search, buy, route, release numbers',
   calls: 'call logs and recordings', campaigns: 'outbound call campaigns', voicebot: 'Exotel-hosted AI voice agents',
+  memory: 'remember contacts across calls and chats',
   'voice-ai': 'your own bot over WebSocket', integrate: 'ElevenLabs and Bolna', leg: 'call control with ExoML (Legs API)',
   bridge: 'join legs into one conversation', events: 'receive call events locally', exoml: 'validate ExoML',
   applet: 'test or scaffold flow webhooks', trunk: 'SIP trunking', api: 'call any Exotel REST endpoint',

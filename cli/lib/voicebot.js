@@ -14,7 +14,8 @@ const USAGE = `Exotel-hosted VoiceBot, end to end:
   exotel voicebot attach --number <ExoPhone E.164> --app-id <app_id>     inbound: route the number to the bot's flow
   exotel voicebot test-call --bot-id <id> --to <your E.164> [--caller-id <ExoPhone>] [--wait]   $
   exotel voicebot transcript --call-sid <CallSid>   (or --session <uuid>)
-  exotel voicebot debug --call-sid <CallSid>         why a call failed or went wrong`;
+  exotel voicebot debug --call-sid <CallSid>         why a call failed or went wrong
+  exotel voicebot memory on|off --bot-id <id>        give the bot Exotel Memory: callers are remembered across calls`;
 
 const auth = requireAuth;
 

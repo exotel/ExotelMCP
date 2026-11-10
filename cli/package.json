@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "prepack": "node scripts/bundle-skills.js",
-    "test": "node --test test/cli.test.js test/platform.test.js test/wiring.test.js test/docs-commands.test.js",
+    "test": "node --test test/cli.test.js test/platform.test.js test/wiring.test.js test/memory.test.js test/docs-commands.test.js",
     "build:binary": "node scripts/build-binary.js",
     "homebrew:formula": "node scripts/homebrew-formula.js dist",
     "sync:templates": "node scripts/sync-templates.js"
