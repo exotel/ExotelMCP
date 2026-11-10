@@ -45,8 +45,10 @@ public class MemoryService {
     private static final int MAX_BODY_CHARS = 2_000_000;
 
     /** Prompt section added by exotel_voicebot_memory_enable. No angle brackets: the VoiceBot API strips them. */
-    static final String MEMORY_BLOCK_START = "### EXOTEL MEMORY (added by Exotel Memory; edit it with exotel_voicebot_memory_enable) ###";
+    static final String MEMORY_BLOCK_START = "### EXOTEL MEMORY (managed by Exotel Memory; removed by exotel_voicebot_memory_disable) ###";
     static final String MEMORY_BLOCK_END = "### END EXOTEL MEMORY ###";
+    /** Every version of the section starts with this, so older sections are found and replaced, never duplicated. */
+    static final String MEMORY_BLOCK_PREFIX = "### EXOTEL MEMORY (";
     static final String MEMORY_BLOCK = MEMORY_BLOCK_START + "\n"
         + "What you remember about this caller (filled in by Exotel Memory at the start of every call; may be empty):\n"
         + "- name: {{entities.person_name}}\n"
@@ -75,7 +77,7 @@ public class MemoryService {
     private VoiceBotService voiceBotService;
 
     static final String OUTBOUND_PREFIX = "Outbound call: ";
-    static final String OUTBOUND_DONE_PREFIX = "Outbound call completed: ";
+    static final String OUTBOUND_DONE_PREFIX = "Earlier call, finished: ";
 
     // ======================== MEMORY TOOLS ========================
 
@@ -276,9 +278,15 @@ public class MemoryService {
                 patch.set("greeting_message", g);
             }
             String res = voiceBotAdminTools.updateBotConfig(botId, objectMapper.writeValueAsString(patch));
-            if (res == null || res.startsWith("Error")) return res;
+            if (failed(res)) return res;
 
-            ObjectNode prompt = updatePrompt(bot, true);
+            ObjectNode prompt;
+            try {
+                prompt = updatePrompt(bot, true);
+            } catch (Exception e) {
+                return "Error: memory webhooks are ON, but the prompt could not be updated (" + e.getMessage() + "). "
+                    + "Run exotel_voicebot_memory_enable again; it only changes what is missing.";
+            }
             ObjectNode out = objectMapper.createObjectNode();
             out.put("ok", true);
             out.put("voiceBotId", botId);
@@ -308,12 +316,19 @@ public class MemoryService {
             ObjectNode patch = objectMapper.createObjectNode();
             patch.set("webhook_config", hooks);
             String res = voiceBotAdminTools.updateBotConfig(botId, objectMapper.writeValueAsString(patch));
-            if (res == null || res.startsWith("Error")) return res;
+            if (failed(res)) return res;
+            ObjectNode prompt;
+            try {
+                prompt = updatePrompt(bot, false);
+            } catch (Exception e) {
+                return "Error: memory webhooks are OFF, but the memory section could not be removed from the prompt (" + e.getMessage() + "). "
+                    + "Run exotel_voicebot_memory_disable again.";
+            }
             ObjectNode out = objectMapper.createObjectNode();
             out.put("ok", true);
             out.put("voiceBotId", botId);
             out.put("memory", "off");
-            out.set("prompt", updatePrompt(bot, false));
+            out.set("prompt", prompt);
             return objectMapper.writeValueAsString(out);
         } catch (Exception e) {
             return "Error: " + e.getMessage();
@@ -331,7 +346,7 @@ public class MemoryService {
             String found = voiceBotAdminTools.findSessionByCallSid(callSid, "100", "0");
             JsonNode f;
             try { f = objectMapper.readTree(found); } catch (Exception e) { return found; }
-            if (!f.path("found").asBoolean(false)) return found;
+            if (!f.path("found").asBoolean(false)) return noSessionResult(callSid, f);
             JsonNode conv = f.path("conversation");
             String session = conv.path("session_id").asText("");
             ObjectNode out = objectMapper.createObjectNode();
@@ -380,11 +395,15 @@ public class MemoryService {
             if (notBlank(reason) && AuthContext.current().hasMemoryCredentials()) {
                 String text = OUTBOUND_PREFIX + reason.trim();
                 if (text.length() > 1000) return "Error: reason is too long (max about 980 characters)";
-                addNote(to, text, true);
+                String n = addNote(to, text, true);
+                if (failed(n)) return "Error: the reason could not be saved, so no call was placed. Write it as a plain fact, not an instruction. " + n;
                 noted = true;
             }
             String res = voiceBotService.makeOutboundBotCall(to, botId, callerId, "", record, "");
-            if (res == null || res.startsWith("Error")) return res;
+            if (failed(res)) {
+                if (noted) closeOutboundNote(to);   // otherwise the next incoming call would be treated as this outbound call
+                return res;
+            }
             JsonNode r;
             try { r = objectMapper.readTree(res); } catch (Exception e) { return res; }
             String sid = r.path("Call").path("Sid").asText(r.path("call").path("sid").asText(""));
@@ -399,6 +418,31 @@ public class MemoryService {
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
+    }
+
+    /**
+     * No bot session: the call is still running, or ended without being answered. If it ended, close an open outbound
+     * reason note for the called number, so the next incoming call is not treated as this outbound call.
+     */
+    private String noSessionResult(String callSid, JsonNode notFound) throws Exception {
+        ObjectNode out = ((ObjectNode) notFound.deepCopy());
+        JsonNode call;
+        try { call = objectMapper.readTree(voiceBotService.getBotCallDetails(callSid)).path("Call"); } catch (Exception e) { return objectMapper.writeValueAsString(out); }
+        String status = call.path("Status").asText("");
+        out.put("callStatus", status);
+        String customer = call.path("From").asText("");   // Connect API: From is the number that was called
+        if (TERMINAL.contains(status) && AuthContext.current().hasMemoryCredentials() && looksLikePhone(customer)) {
+            String closed = closeOutboundNote(customer);
+            if (closed != null) out.put("outboundReason", closed);
+        }
+        return objectMapper.writeValueAsString(out);
+    }
+
+    private static final Set<String> TERMINAL = Set.of("completed", "busy", "failed", "no-answer", "canceled");
+
+    /** Tool methods return their errors as text starting with "Error". */
+    static boolean failed(String result) {
+        return result == null || result.startsWith("Error");
     }
 
     /** The newest note is an open "Outbound call:" note: mark it done so later inbound calls are not treated as this outbound call. */
@@ -438,7 +482,7 @@ public class MemoryService {
         for (String t : texts) {
             if (t.isEmpty()) continue;
             boolean has = t.contains(MEMORY_BLOCK);
-            if (on ? !has : t.contains(MEMORY_BLOCK_START)) { needs = true; break; }
+            if (on ? !has : t.contains(MEMORY_BLOCK_PREFIX)) { needs = true; break; }
         }
         if (!needs) return r.put("changed", false).put("note", on ? "memory section already in the prompt" : "no memory section in the prompt");
         JsonNode v = voiceBotAdminTools.publishInstructions(assistantId,
@@ -447,6 +491,7 @@ public class MemoryService {
         r.put("changed", true);
         r.put("version", v.path("version").asText(""));
         r.put("promptLocations", v.path("promptLocations").asInt());
+        r.put("promptLocationsChanged", v.path("promptLocationsChanged").asInt());
         return r;
     }
 
@@ -455,11 +500,14 @@ public class MemoryService {
     }
 
     static String withoutMemoryBlock(String prompt) {
-        int s = prompt.indexOf(MEMORY_BLOCK_START);
+        int s = prompt.indexOf(MEMORY_BLOCK_PREFIX);
         if (s < 0) return prompt;
+        int lineEnd = prompt.indexOf('\n', s);
+        int startLen = (lineEnd < 0 ? prompt.length() : lineEnd) - s;
         int e = prompt.indexOf(MEMORY_BLOCK_END, s);
-        String after = e < 0 ? "" : prompt.substring(e + MEMORY_BLOCK_END.length());
-        return (prompt.substring(0, s).stripTrailing() + after).stripTrailing();
+        // Someone edited the section and removed its end line: remove only the start line, never the text after it.
+        if (e < 0) return (prompt.substring(0, s) + prompt.substring(s + startLen)).stripTrailing();
+        return (prompt.substring(0, s).stripTrailing() + prompt.substring(e + MEMORY_BLOCK_END.length())).stripTrailing();
     }
 
     /** A fixed opening line that asks for the name runs before the AI (and memory), so returning callers get asked again. */
@@ -467,11 +515,11 @@ public class MemoryService {
         return greeting != null && greeting.matches("(?is).*\\bname\\b.*\\?.*");
     }
 
-    /** Keeps the sentences that are not questions: "Hello, thanks for calling X. May I have your name?" becomes "Hello, thanks for calling X." */
+    /** Keeps the sentences that are not questions: "Hi, I'm Asha from X. May I have your name?" becomes "Hi, I'm Asha from X." */
     static String shortenGreeting(String greeting) {
         StringBuilder b = new StringBuilder();
         for (String sentence : greeting.trim().split("(?<=[.!?])\\s+")) {
-            if (sentence.contains("?") || sentence.toLowerCase().matches(".*\\bname\\b.*")) continue;
+            if (sentence.contains("?")) continue;
             if (b.length() > 0) b.append(' ');
             b.append(sentence.trim());
         }
@@ -534,9 +582,10 @@ public class MemoryService {
             b.method(method, HttpRequest.BodyPublishers.noBody());
         }
         HttpResponse<String> r = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
-        logger.info("Memory {} {} -> {}", method, url.replaceAll("\\?.*", ""), r.statusCode());
+        String requestId = r.headers().firstValue("X-Request-Id").orElse("-");
+        logger.info("Memory {} {} -> {} requestId={}", method, url.replaceAll("\\?.*", ""), r.statusCode(), requestId);
         if (r.statusCode() >= 400 && r.statusCode() != 404) {
-            throw new IllegalStateException("Memory API " + r.statusCode() + ": " + truncate(r.body(), 500)
+            throw new IllegalStateException("Memory API " + r.statusCode() + " (request " + requestId + "): " + truncate(r.body(), 500)
                 + (r.statusCode() == 401 ? " (check memory_api_key and memory_account_sid)" : "")
                 + (r.statusCode() == 403 ? " (the API key lacks the scope for this call)" : ""));
         }

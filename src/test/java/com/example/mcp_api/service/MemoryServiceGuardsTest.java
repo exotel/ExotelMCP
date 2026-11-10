@@ -75,6 +75,36 @@ class MemoryServiceGuardsTest {
     }
 
     @Test
+    void anEditedMemorySectionNeverTakesTheCustomersPromptWithIt() {
+        String edited = "Be helpful.\n\n" + MemoryService.MEMORY_BLOCK_START + "\nmy own rules\nMore of my prompt.";
+        String out = MemoryService.withoutMemoryBlock(edited);
+        assertTrue(out.contains("my own rules") && out.contains("More of my prompt."), "text after a broken section is kept");
+        assertFalse(out.contains(MemoryService.MEMORY_BLOCK_START));
+    }
+
+    @Test
+    void anOlderMemorySectionIsReplacedNotDuplicated() {
+        String old = "Be helpful.\n\n### EXOTEL MEMORY (an older wording) ###\nold rules\n" + MemoryService.MEMORY_BLOCK_END;
+        String on = MemoryService.withMemoryBlock(old);
+        assertEquals(1, on.split(java.util.regex.Pattern.quote(MemoryService.MEMORY_BLOCK_PREFIX), -1).length - 1);
+        assertFalse(on.contains("old rules"));
+        assertTrue(on.startsWith("Be helpful."));
+    }
+
+    @Test
+    void shortenedGreetingKeepsTheBotsIntroduction() {
+        assertEquals("Hi, I'm Asha from Exotel Bank.", MemoryService.shortenGreeting("Hi, I'm Asha from Exotel Bank. What's your name?"));
+        assertEquals("Hi, my name is Asha.", MemoryService.shortenGreeting("Hi, my name is Asha. May I have your name, please?"));
+    }
+
+    @Test
+    void finishedOutboundNoteDoesNotLookLikeALiveOne() {
+        assertFalse(MemoryService.OUTBOUND_DONE_PREFIX.startsWith("Outbound call"));
+        assertNotEquals("Outbound call: x", MemoryService.newestNote("- note: " + MemoryService.OUTBOUND_DONE_PREFIX + "x"));
+        assertTrue(MemoryService.failed("Error: nope") && MemoryService.failed(null) && !MemoryService.failed("{\"ok\":true}"));
+    }
+
+    @Test
     void searchTreatsNumbersAsPhones() {
         assertTrue(MemoryService.looksLikePhone("09876543210"));
         assertTrue(MemoryService.looksLikePhone("+91 98765 43210"));

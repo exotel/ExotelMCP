@@ -191,12 +191,20 @@ public class VoiceBotAdminTools {
         int count = agents.isArray() ? agents.size() : 0;
 
         ObjectNode version = objectMapper.createObjectNode();
-        if (!oldTop.isEmpty() || count == 0) version.put("instruction", patch.apply(oldTop, oldTop, 0));
+        int changed = 0;
+        if (!oldTop.isEmpty() || count == 0) {
+            String top = patch.apply(oldTop, oldTop, 0);
+            if (!top.equals(oldTop)) changed++;
+            version.put("instruction", top);
+        }
         if (count > 0) {
             ArrayNode out = objectMapper.createArrayNode();
             for (JsonNode a : agents) {
                 ObjectNode copy = (ObjectNode) a.deepCopy();
-                copy.put("instruction", patch.apply(a.path("instruction").asText(""), oldTop, count));
+                String before = a.path("instruction").asText("");
+                String after = patch.apply(before, oldTop, count);
+                if (!after.equals(before)) changed++;
+                copy.put("instruction", after);
                 out.add(copy);
             }
             version.set("agents", out);
@@ -213,6 +221,7 @@ public class VoiceBotAdminTools {
         out.put("version", res.path("response").path("data").path("version").asText(""));
         out.put("assistantId", assistantId);
         out.put("promptLocations", 1 + count);
+        out.put("promptLocationsChanged", changed);
         return out;
     }
 
