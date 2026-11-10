@@ -57,7 +57,10 @@ public class MemoryService {
         + "- If these are empty or still show curly braces, you know nothing about this caller: treat them as new.\n"
         + "- Returning caller: use their name in your first reply, recap in one sentence what you already know, never ask again for "
         + "anything you already know, and continue from the open topic.\n"
-        + "- New notes (an offer, a delivery, a payment, an update) come first. On a call you placed, open with the reason from the notes.\n"
+        + "- Who called whom: if the newest note starts with \"Outbound call:\", you placed this call. Open with that reason in one "
+        + "sentence and ask if now is a good time; never ask how you can help. Otherwise the caller called you.\n"
+        + "- New notes (an offer, a delivery, a payment, an update) come before older topics.\n"
+        + "- Never say something was done (a card blocked, a refund sent, an appointment booked) unless a tool result or a note confirms it.\n"
         + "- Never use titles or guess gender: no sir, madam, Mr, Mrs or Ms. Use the first name only.\n"
         + "- Do not read back phone numbers, account numbers or IDs from memory unless the caller asks.\n"
         + MEMORY_BLOCK_END;
@@ -67,6 +70,12 @@ public class MemoryService {
 
     @Autowired
     private VoiceBotAdminTools voiceBotAdminTools;
+
+    @Autowired
+    private VoiceBotService voiceBotService;
+
+    static final String OUTBOUND_PREFIX = "Outbound call: ";
+    static final String OUTBOUND_DONE_PREFIX = "Outbound call completed: ";
 
     // ======================== MEMORY TOOLS ========================
 
@@ -340,6 +349,8 @@ public class MemoryService {
             String caller = conv.path("contact_uri").asText("");
             if (!Boolean.FALSE.equals(includeMemory) && AuthContext.current().hasMemoryCredentials() && looksLikePhone(caller)) {
                 try {
+                    String closed = closeOutboundNote(caller);
+                    if (closed != null) out.put("outboundReason", closed);
                     out.set("memory", objectMapper.readTree(getMemory(caller, null, null, null, null, null, null)));
                 } catch (Exception e) {
                     out.put("memory", "not available: " + e.getMessage());
@@ -349,6 +360,69 @@ public class MemoryService {
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
+    }
+
+    @Tool(name = "exotel_voicebot_call_customer",
+          description = "Has a VoiceBot call someone for a reason it opens with (an offer, a delivery, a follow-up). With Exotel Memory set up "
+              + "and memory on for the bot, it first saves the reason as an 'Outbound call:' note, so the bot knows it placed this call and "
+              + "opens with the reason instead of asking how it can help; exotel_voicebot_call_result marks the note done afterwards. "
+              + "Billed and rings a real phone. callerId must be an ExoPhone on this account (default: the saved caller ID).")
+    public String callCustomer(
+            @ToolParam(description = "VoiceBot ID") String voiceBotId,
+            @ToolParam(description = "Number to call, E.164 (e.g. +919876543210)") String toNumber,
+            @ToolParam(description = "Why the bot is calling, one plain sentence, e.g. 'Your replacement debit card ending 9993 was dispatched today.'", required = false) String reason,
+            @ToolParam(description = "ExoPhone to call from (default: saved caller ID)", required = false) String callerId,
+            @ToolParam(description = "true to record the call", required = false) Boolean record) {
+        try {
+            String botId = checkBotId(voiceBotId);
+            String to = normalizePhone(toNumber);
+            boolean noted = false;
+            if (notBlank(reason) && AuthContext.current().hasMemoryCredentials()) {
+                String text = OUTBOUND_PREFIX + reason.trim();
+                if (text.length() > 1000) return "Error: reason is too long (max about 980 characters)";
+                addNote(to, text, true);
+                noted = true;
+            }
+            String res = voiceBotService.makeOutboundBotCall(to, botId, callerId, "", record, "");
+            if (res == null || res.startsWith("Error")) return res;
+            JsonNode r;
+            try { r = objectMapper.readTree(res); } catch (Exception e) { return res; }
+            String sid = r.path("Call").path("Sid").asText(r.path("call").path("sid").asText(""));
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("ok", true);
+            out.put("callSid", sid);
+            out.put("to", to);
+            out.put("status", r.path("Call").path("Status").asText(""));
+            out.put("reasonNote", noted ? "saved: the bot opens with the reason" : (notBlank(reason) ? "not saved (Memory is not set up)" : "none"));
+            out.put("next", "When the call ends: exotel_voicebot_call_result with this callSid (also marks the reason note done).");
+            return objectMapper.writeValueAsString(out);
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    /** The newest note is an open "Outbound call:" note: mark it done so later inbound calls are not treated as this outbound call. */
+    private String closeOutboundNote(String phone) {
+        try {
+            JsonNode m = objectMapper.readTree(getMemory(phone, null, null, null, null, "customer", null));
+            String brief = m.path("memory").asText("");
+            String newest = newestNote(brief);
+            if (newest != null && newest.startsWith(OUTBOUND_PREFIX)) {
+                addNote(phone, OUTBOUND_DONE_PREFIX + newest.substring(OUTBOUND_PREFIX.length()), true);
+                return "marked done";
+            }
+        } catch (Exception ignored) { /* best effort */ }
+        return null;
+    }
+
+    /** The first "- note: …" line of a Memory brief (Memory lists notes newest first). */
+    static String newestNote(String brief) {
+        if (brief == null) return null;
+        for (String line : brief.split("\\n")) {
+            String t = line.trim();
+            if (t.startsWith("- note: ")) return t.substring("- note: ".length()).trim();
+        }
+        return null;
     }
 
     /** Adds (on=true) or removes the Exotel Memory section in every prompt location; publishes only when something changes. */

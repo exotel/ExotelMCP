@@ -211,7 +211,7 @@ public class StreamableHttpConfig {
     static final Map<String, List<String>> TOOLSETS = Map.of(
         "voicebot", List.of("exotel_voicebot_"),
         "toolserver", List.of("exotel_tools_server_"),
-        "memory", List.of("exotel_memory_", "exotel_voicebot_memory_", "exotel_voicebot_call_result"),
+        "memory", List.of("exotel_memory_", "exotel_voicebot_memory_", "exotel_voicebot_call_result", "exotel_voicebot_call_customer"),
         "calls", List.of("exotel_voice_", "exotel_connect_voice_ai", "exotel_number_get_metadata", "exotel_events_endpoint_guide"),
         "messaging", List.of("exotel_sms_", "exotel_whatsapp_", "exotel_engage_"),
         "cqa", List.of("exotel_cqa_"),

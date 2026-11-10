@@ -67,6 +67,14 @@ class MemoryServiceGuardsTest {
     }
 
     @Test
+    void newestNoteIsTheFirstNoteLine() {
+        String brief = "## About\nRavi\n## Notes taken in recent calls\n- note: Outbound call: Your card was dispatched.\n- note: Older note.\n";
+        assertEquals("Outbound call: Your card was dispatched.", MemoryService.newestNote(brief));
+        assertNull(MemoryService.newestNote("## About\nno notes here"));
+        assertTrue(MemoryService.MEMORY_BLOCK.contains("Outbound call:"));
+    }
+
+    @Test
     void searchTreatsNumbersAsPhones() {
         assertTrue(MemoryService.looksLikePhone("09876543210"));
         assertTrue(MemoryService.looksLikePhone("+91 98765 43210"));
