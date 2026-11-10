@@ -193,26 +193,26 @@ public class VoiceBotAdminTools {
                 }
             }
 
-            ArrayNode agentsArray = objectMapper.createArrayNode();
+            ObjectNode versionData = objectMapper.createObjectNode();
             if (existingAgents.isArray() && existingAgents.size() > 0) {
+                ArrayNode agentsArray = objectMapper.createArrayNode();
                 boolean first = true;
                 for (JsonNode agent : existingAgents) {
                     ObjectNode agentNode = (ObjectNode) agent.deepCopy();
                     if (first) { agentNode.put("instruction", newInstruction); first = false; }
                     agentsArray.add(agentNode);
                 }
+                versionData.set("agents", agentsArray);
             } else {
-                ObjectNode agent = objectMapper.createObjectNode();
-                agent.put("instruction", newInstruction);
-                agentsArray.add(agent);
+                // Single-agent assistants (every bot made by exotel_voicebot_create) keep the prompt at the top level.
+                // Sending a bare agent object here was rejected with 400.
+                versionData.put("instruction", newInstruction);
             }
 
             ObjectNode payload = objectMapper.createObjectNode();
             payload.put("source_version", sourceVersion);
             payload.put("mark_as_stable", "true");
             payload.put("version_description", versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Prompt updated via MCP");
-            ObjectNode versionData = objectMapper.createObjectNode();
-            versionData.set("agents", agentsArray);
             payload.set("data", versionData);
 
             String postUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "/versions";

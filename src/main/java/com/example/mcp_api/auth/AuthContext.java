@@ -76,6 +76,20 @@ public final class AuthContext {
         return null;
     }
 
+    public static String requireMemory() {
+        AuthCredentials creds = current();
+        if (!creds.hasMemoryCredentials()) {
+            return "Missing Exotel Memory credentials.\n\n"
+                + "Add these fields to your Authorization header:\n"
+                + "  - memory_api_key (starts with cm_; Memory console \u2192 API keys)\n"
+                + "  - memory_account_sid (shared by Exotel during Memory onboarding)\n"
+                + "  - memory_base_url (optional, defaults to https://memory.in.exotel.com)\n\n"
+                + "With the Exotel CLI: exotel login --memory-key-stdin --memory-account <sid>\n"
+                + "For setup help, use the tool: exotel_setup_guide";
+        }
+        return null;
+    }
+
     public static String requireCpaas() {
         AuthCredentials creds = current();
         if (!creds.hasCpaasCredentials()) {

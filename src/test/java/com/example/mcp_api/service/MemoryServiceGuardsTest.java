@@ -1,0 +1,57 @@
+package com.example.mcp_api.service;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class MemoryServiceGuardsTest {
+
+    @Test
+    void indianNumbersNormalizeToOneKeySoInboundAndOutboundMatch() {
+        String expected = "+919876543210";
+        assertEquals(expected, MemoryService.normalizePhone("+919876543210"));
+        assertEquals(expected, MemoryService.normalizePhone("09876543210"));   // Exotel inbound From
+        assertEquals(expected, MemoryService.normalizePhone("9876543210"));
+        assertEquals(expected, MemoryService.normalizePhone("919876543210"));  // WhatsApp style
+        assertEquals(expected, MemoryService.normalizePhone("+91 98765-43210"));
+        assertEquals("+14155550100", MemoryService.normalizePhone("+14155550100"));
+    }
+
+    @Test
+    void badPhonesAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.normalizePhone(null));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.normalizePhone("12345"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.normalizePhone("+91abc"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.normalizePhone("+9198765432101234567"));
+    }
+
+    @Test
+    void rolesMapToMemoryRoles() {
+        assertEquals("customer", MemoryService.normalizeRole("user"));
+        assertEquals("customer", MemoryService.normalizeRole("contact"));
+        assertEquals("customer", MemoryService.normalizeRole("Customer"));
+        assertEquals("bot", MemoryService.normalizeRole("assistant"));
+        assertEquals("bot", MemoryService.normalizeRole("bot"));
+        assertEquals("agent", MemoryService.normalizeRole("agent"));
+        assertEquals("system", MemoryService.normalizeRole("system"));
+    }
+
+    @Test
+    void memoryKeyIsOnlySentToExotelMemoryHostsOverHttps() {
+        assertDoesNotThrow(() -> MemoryService.validateHost("https://memory.in.exotel.com"));
+        assertDoesNotThrow(() -> MemoryService.validateHost("https://memory.us3.qaexotel.com/memory-client/x"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.validateHost("http://memory.in.exotel.com"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.validateHost("https://evil.example.com"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.validateHost("https://memory.in.exotel.com.evil.io"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.validateHost("https://api.in.exotel.com"));
+        assertThrows(IllegalArgumentException.class, () -> MemoryService.validateHost("not a url"));
+    }
+
+    @Test
+    void searchTreatsNumbersAsPhones() {
+        assertTrue(MemoryService.looksLikePhone("09876543210"));
+        assertTrue(MemoryService.looksLikePhone("+91 98765 43210"));
+        assertFalse(MemoryService.looksLikePhone("riya@example.com"));
+        assertFalse(MemoryService.looksLikePhone("C-881"));
+    }
+}
