@@ -102,7 +102,7 @@ a ready-to-fill snippet.
 ## 4. Verify
 
 1. Call `exotel_voicebot_list_phone_numbers`. It must return at least one number. That number is the
-   `callerId` for test calls.
+   `callerId` for calls.
 2. Call `exotel_voicebot_list_all` with `status: ""`, `limit: "10"`, `offset: "0"`.
 3. Report what is configured. Do not place a call or send a message as a "test" unless the user asks;
    both cost money.

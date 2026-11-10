@@ -74,7 +74,7 @@ function voiceAiSetup(flags) {
     platform === 'bolna' ? '     Repeat 1–4 for the inbound app with the inbound URL.' : null,
     '',
     'Then:',
-    `  exotel voice-ai connect --to <your number> --app-id <app_id> --wait          test call through the flow`,
+    `  exotel voice-ai connect --to <your number> --app-id <app_id> --wait          call through the flow`,
     `  exotel voicebot attach --number <ExoPhone> --app-id <app_id>                  inbound: route the number to the flow`,
     platform ? `  ${PLATFORM_WSS[platform].after}` : null,
     '',

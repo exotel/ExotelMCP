@@ -395,7 +395,7 @@ const CALL_USAGE = `exotel call [phone number]          guided: asks what should
   --stream-url wss://…               your own bot (Connect Voice AI)
   --caller-id <ExoPhone>  --record  --no-wait  --yes`;
 
-/** `exotel call`: one command for a test call; asks for anything missing (pickers), then follows the call live. */
+/** `exotel call`: one command for a call; asks for anything missing (pickers), then follows the call live. */
 async function cmdCall(numberArg, flags) {
   const ui = require('../lib/ui');
   const guided = require('../lib/guided');
@@ -410,7 +410,7 @@ async function cmdCall(numberArg, flags) {
     ]);
   }
   if (flags.wait === undefined && !flags['no-wait']) flags.wait = true;
-  if (mode === 'bot') return cmdVoicebot('test-call', flags);
+  if (mode === 'bot') return cmdVoicebot('call', flags);
   flags.to = await guided.to(flags);
   if (mode === 'flow' && !flags.flow) {
     if (!interactive()) throw new CliError('Pass --app-id <flow id>', EXIT.USAGE);
@@ -439,9 +439,9 @@ async function cmdVoicebot(sub, flags, rest = []) {
         { key: 'status', label: 'STATUS', fmt: ui.statusColor },
         { key: 'date_created', label: 'CREATED', fmt: (v) => String(v || '').slice(0, 16).replace('T', ' ') },
         { key: 'id', label: 'BOT ID' },
-      ])}\n${ui.c.dim('Call one: exotel call   ·   or: exotel voicebot test-call --bot-id <name or id>')}`);
+      ])}\n${ui.c.dim('Call one: exotel call   ·   or: exotel voicebot call --bot-id <name or id>')}`);
   }
-  if (sub === 'test-call') {
+  if (sub === 'call' || sub === 'test-call') { // test-call: earlier name, still accepted
     const guided = require('../lib/guided');
     flags.bot = await guided.bot(flags, () => listBots(flags));
     flags.to = await guided.to(flags);
@@ -452,7 +452,7 @@ async function cmdVoicebot(sub, flags, rest = []) {
     const res = await placeAndMaybeWait(reason ? 'exotel_voicebot_call_customer' : 'exotel_voicebot_place_call', reason
       ? { toNumber: flags.to, voiceBotId: flags.bot, callerId, reason, record: !!flags.record }
       : { toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '' }, flags, 'exotel_voicebot_call_status', {
-      label: `a VoiceBot test call to ${flags.to} from ${callerId}`,
+      label: `a VoiceBot call to ${flags.to} from ${callerId}`,
       voicebot: true,
       confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}${reason ? `\n  The bot opens with: "${reason}"` : ''}`
         + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; use --caller-id <your ExoPhone> or: exotel config set caller-id <ExoPhone>)`),
@@ -505,7 +505,7 @@ async function cmdInit(flags) {
     '  2. Inside the agent, check Exotel shows "connected" (Claude Code: type /mcp inside it, not in this shell).',
     '  3. Ask it in plain words, for example:',
     '     "What is my Exotel balance and which phone numbers do I have?"',
-    '     "Create an Exotel VoiceBot that confirms tomorrow\'s appointment, then test-call +91XXXXXXXXXX"',
+    '     "Create an Exotel VoiceBot that confirms tomorrow\'s appointment, then call +91XXXXXXXXXX"',
     '  Prefer the terminal? Try: exotel balance · exotel numbers list · exotel ask "connect my bot to a call"',
   ].filter((x) => x !== null).join('\n'));
 }
@@ -519,7 +519,7 @@ NOT SURE WHICH API?
   exotel explain <code|word> | explain --list            what a status / error code means (e.g. 408, 1012, no-answer, 23005)
 
 GET STARTED
-  exotel call [number]        place a test call; asks what to connect (VoiceBot, flow or your wss bot)
+  exotel call [number]        place a call; asks what to connect (VoiceBot, flow or your wss bot)
   exotel config               saved defaults: your number, caller ID, default bot
   exotel completion zsh|bash|fish   tab-completion for your shell
   exotel init                 log in, connect your coding agents (MCP), install Exotel skills
@@ -547,7 +547,7 @@ SIP TRUNKING (Dynamic SIP trunks)
 AI VOICE  → exotel voice-ai --help
   exotel voice-ai connect --to <E.164> --stream-url wss://…   $   call a number, connect it to YOUR bot (Connect Voice AI)
   exotel voice-ai connect --to <E.164> --app-id <app_id>        $   …or to an App Bazaar flow with a Voicebot applet
-  exotel voicebot create | test-call | result | prompt | attach | debug   Exotel-hosted VoiceBots → exotel voicebot --help
+  exotel voicebot create | call | result | prompt | attach | debug   Exotel-hosted VoiceBots → exotel voicebot --help
 
 MEMORY (remember every contact across calls and chats, any bot)  → exotel memory --help
   exotel memory login                         add your Memory API key (cm_…) and Memory account SID
@@ -615,7 +615,7 @@ const HOME = () => {
 
 ${b('Start here')}
   ${loggedIn ? ui.c.green('✔ logged in') + ui.c.dim(' (exotel whoami)') : 'exotel init           log in and connect your coding agent'}
-  exotel call           place a test call — it asks you what to connect, step by step
+  exotel call           place a call — it asks you what to connect, step by step
   exotel balance        your account balance
   exotel numbers list   your Exotel phone numbers
 

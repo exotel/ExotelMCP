@@ -1,6 +1,6 @@
 ---
 name: exotel-voicebot-quickstart
-description: Build, test and debug an Exotel-hosted VoiceBot (AI voice agent on phone calls) end to end - create the bot from a description, place a test call to the user's phone, read the transcript, fix the prompt, call again, and route an ExoPhone to it for inbound calls. Use when the user wants a voice bot, AI calling agent, AI receptionist, outbound AI calls, or asks why an Exotel VoiceBot call failed or behaved badly.
+description: Build, call and improve an Exotel-hosted VoiceBot (AI voice agent on phone calls) end to end - create the bot from a description, call the user's phone, read the transcript, fix the prompt, call again, and route an ExoPhone to it for inbound calls. Use when the user wants a voice bot, AI calling agent, AI receptionist, outbound AI calls, or asks why an Exotel VoiceBot call failed or behaved badly.
 ---
 
 # Exotel VoiceBot quickstart
@@ -10,7 +10,7 @@ takes `--json` for machine-readable output. The Exotel MCP tools named below are
 
 ## Rules
 
-- A test call rings a real phone and is billed. **Before placing a call, tell the user the bot, the
+- A call rings a real phone and is billed. **Before placing a call, tell the user the bot, the
   number to call and the caller ID, and wait for their yes.** Only call numbers the user gave you.
   The CLI refuses billed actions without `--yes` (exit code 3); add `--yes` only after the user agreed.
 - Everything else (creating the bot, reading transcripts, debugging) needs no approval.
@@ -20,7 +20,7 @@ takes `--json` for machine-readable output. The Exotel MCP tools named below are
 
 From the user's request, draft a short brief: who the bot represents, the one job of the call, a short
 opening line (no questions in it: "Hi, this is Exotel Bank support."), language(s), what to collect, when
-to end, what never to say. Always add these rules (they fixed real test calls):
+to end, what never to say. Always add these rules:
 - "Never use titles or guess gender (no sir, madam, Mr, Ms)."
 - "One question per turn. If an answer is unclear, ask again once in one short sentence; after two failed tries, move on."
 - "Read numbers back exactly as the caller said them, in groups (74111 79773); never add a 0 or a country code."
@@ -37,7 +37,7 @@ Returns `botId` when generation completes (usually under 2 minutes). If `botId` 
 `exotel voicebot list --json` and take the newest bot with the expected name.
 (MCP: `exotel_voicebot_create`, then poll `exotel_voicebot_creation_status`.)
 
-## 3. Place a test call (needs the user's approval)
+## 3. Call (needs the user's approval)
 
 Ask which number to call (any phone) and which ExoPhone to call from; the caller ID must be one of the
 account's ExoPhones (`exotel numbers list`), the saved default is used if they have no preference. The CLI
@@ -49,7 +49,7 @@ checks `--caller-id` before dialling. For a call with a purpose (an offer, a del
 3. Tell the user to pick up and talk to the bot, then:
 
 ```bash
-exotel voicebot test-call --bot-id <botId> --to <user number> --record --wait --yes --json
+exotel voicebot call --bot-id <botId> --to <user number> --record --wait --yes --json
 ```
 
 `--wait` returns when the call ends, with the `callSid` and final status.
@@ -84,7 +84,7 @@ answered but the onward connection failed, no speech, very short session, wrong 
 - Opening line: it plays before the AI replies, so keep it short and never ask for the caller's name there
   ("Hi, this is City Dental."). With memory on, the AI greets returning callers by name in its first reply.
 - Voice, ASR, VAD, greeting interruption: MCP `exotel_voicebot_update_config` with only the fields to change.
-- Test-call again (step 3, ask again) and compare transcripts.
+- Call again (step 3, ask again) and compare transcripts.
 
 ## Remember callers across calls
 
@@ -109,5 +109,5 @@ New numbers cannot be bought from the CLI yet; the user gets them from Exotel su
 
 ## Report back
 
-Bot ID and name, the brief used, test call SID(s) with status, the transcript, issues found, and what
+Bot ID and name, the brief used, call SID(s) with status, the transcript, issues found, and what
 to do next (iterate, or attach a number for inbound).

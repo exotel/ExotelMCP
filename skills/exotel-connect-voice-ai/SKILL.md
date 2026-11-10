@@ -30,7 +30,7 @@ Reference bot bridges for every major provider: https://github.com/exotel/Agent-
 **Hosted platforms (ElevenLabs, Bolna):** they accept Exotel audio only through path B: their WSS refuses
 streams from numbers not registered with them (ElevenLabs 403) or calls they did not start (Bolna `run_id`).
 Use `exotel voice-ai setup --platform elevenlabs|bolna` for the exact URL and steps, and `exotel-setup` →
-`exotel integrate …` for registration and test calls.
+`exotel integrate …` for registration and calls.
 
 **Flow (app) ids:** only use an app id the user gives you for a flow they built with a Voicebot applet
 pointing at the intended URL. Never reuse an existing flow's id or guess one.

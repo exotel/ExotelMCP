@@ -21,7 +21,7 @@ cd examples/exotel-voice-agent
 export BOT_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
 ./start.sh                                  # creates the venv, installs packages, starts on :8080
 # optional, for the AI paths:
-OPENAI_API_KEY=sk-... COMPANY_NAME="Exotel Demo" ./start.sh
+OPENAI_API_KEY=sk-... COMPANY_NAME="Acme Clinic" ./start.sh
 ```
 
 (If you don't set `BOT_TOKEN`, `start.sh` creates one for the run and prints the stream URL to use.)

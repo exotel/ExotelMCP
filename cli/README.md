@@ -57,7 +57,7 @@ exotel docs show https://developer.exotel.com/docs/agentstream/connect-voice-ai 
 | Phone numbers (ExoPhones) | `exotel numbers available \| buy \| list \| get \| update \| release` | ExoPhones API |
 | SIP trunking | `exotel trunk setup` (all steps at once), or `create \| map-number \| set-number-mode \| whitelist-ip \| destination \| credentials add\|list\|delete \| caller-id \| delete` | Dynamic SIP Trunking |
 | **Your own voice bot (standard)** | `exotel voice-ai connect --to … --stream-url wss://…`, or `--app-id <app_id>` for an App Bazaar flow with a Voicebot applet | Connect Voice AI API |
-| Exotel VoiceBot | `exotel voicebot list \| test-call \| transcript` | VoiceBot |
+| Exotel VoiceBot | `exotel voicebot create \| call \| result \| prompt` | VoiceBot |
 | Memory: contacts remembered across calls and chats | `exotel voicebot memory on --bot-id <id>`, `exotel memory get \| note \| event \| save \| search` | Exotel Memory |
 | Live call control (needs enablement by Exotel support) | `exotel leg create \| get \| events \| action`, `exotel bridge …`, `exotel events listen \| scaffold` | Legs API |
 | ExoML | `exotel exoml validate flow.xml` (and `leg action` validates before sending) | ExoML |
@@ -76,7 +76,7 @@ Not covered: Voice v3 (`/v3/accounts/{sid}/calls`). Use `exotel api` for it if n
 | `exotel-setup` | **Start here**: connect, verify, and pick the right skill |
 | `exotel-phone-numbers` | See and route numbers; balance (buying: via Exotel support) |
 | `exotel-messaging-and-calls` | SMS (India DLT), WhatsApp, simple calls, click-to-call |
-| `exotel-voicebot-quickstart` | Exotel-hosted AI voice bot: create → test call → transcript → fix |
+| `exotel-voicebot-quickstart` | Exotel-hosted AI voice bot: create → call → result → improve |
 | `exotel-connect-voice-ai` | Your own voice bot (OpenAI, ElevenLabs, Gemini, Sarvam, Pipecat…) on calls |
 | `exotel-sip-trunking` | Connect a PBX / SBC / Voice AI platform over SIP; SIP error codes |
 | `exotel-call-control` | Legs, bridges and ExoML actions on live calls (needs enablement) |

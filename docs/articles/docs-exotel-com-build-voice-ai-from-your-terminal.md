@@ -51,13 +51,13 @@ Not sure? Ask:
 exotel ask "connect my OpenAI bot to a phone call"
 ```
 
-## Step 3: Make a test call
+## Step 3: Call your phone
 
 **Exotel VoiceBot**
 
 ```bash
 exotel voicebot create --prompt "Friendly receptionist for Acme. Greet, ask name and reason, end politely." --wait
-exotel voicebot test-call --bot-id <bot id> --to +91XXXXXXXXXX --wait
+exotel voicebot call --bot-id <bot id> --to +91XXXXXXXXXX --wait
 exotel voicebot transcript --call-sid <CallSid>
 ```
 

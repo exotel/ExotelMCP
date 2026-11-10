@@ -7,9 +7,9 @@ const creds = require('./credentials');
 const { CliError, EXIT, out } = require('./io');
 
 const KEYS = {
-  'my-number': { desc: 'your phone, used as --to for test calls', re: /^\+?\d{6,15}$/ },
+  'my-number': { desc: 'your phone, used as --to when you call yourself', re: /^\+?\d{6,15}$/ },
   'caller-id': { desc: 'ExoPhone shown to the person you call (--caller-id)', re: /^\+?\d{6,15}$/ },
-  bot: { desc: 'default VoiceBot id for test calls (--bot-id)', re: /^[\w-]{6,64}$/ },
+  bot: { desc: 'default VoiceBot id (--bot-id)', re: /^[\w-]{6,64}$/ },
 };
 
 const file = () => path.join(creds.configDir(), 'config.json');

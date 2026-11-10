@@ -1,5 +1,5 @@
 'use strict';
-// Exotel-hosted VoiceBot workflow: create → attach a number → test call → transcript → debug.
+// Exotel-hosted VoiceBot workflow: create → call → result → attach a number → debug.
 // Uses the Exotel MCP server for bot creation/calls and the VoiceBot / CPaaS REST APIs for lookups,
 // so every step works against the live platform today.
 const creds = require('./credentials');
@@ -12,7 +12,7 @@ const USAGE = `Exotel-hosted VoiceBot, end to end:
   exotel voicebot create --prompt "<what the bot does, its greeting, language, rules>" [--wait]
   exotel voicebot list
   exotel voicebot attach --number <ExoPhone E.164> --app-id <app_id>     inbound: route the number to the bot's flow
-  exotel voicebot test-call --bot-id <id> --to <your E.164> [--caller-id <ExoPhone>] [--wait]   $
+  exotel voicebot call --bot-id <id> --to <E.164> [--caller-id <your ExoPhone>] [--reason "…"] [--wait]   $
   exotel voicebot transcript --call-sid <CallSid>   (or --session <uuid>)
   exotel voicebot debug --call-sid <CallSid>         why a call failed or went wrong
   exotel voicebot prompt --bot-id <id> --file prompt.txt   replace the bot's prompt everywhere it lives
@@ -69,7 +69,7 @@ async function create(flags) {
   if (!/completed|success|done/.test(status)) throw new CliError(`Bot not ready after ${flags.timeout || 240}s; check later with \`exotel voicebot list\`.`, EXIT.ERROR, { generationId });
   const botId = findKey(last, ['bot_id', 'voicebot_id', 'botId', 'voiceBotId']);
   out({ ok: true, generationId, botId: botId || null, status, response: last },
-    () => `✔ VoiceBot ready.${botId ? ` Bot ID: ${botId}` : ''}\nNext: exotel voicebot test-call --bot-id ${botId || '<id from exotel voicebot list>'} --to <your number>   then: exotel voicebot result --call-sid <CallSid>`);
+    () => `✔ VoiceBot ready.${botId ? ` Bot ID: ${botId}` : ''}\nNext: exotel voicebot call --bot-id ${botId || '<id from exotel voicebot list>'} --to <number>   then: exotel voicebot result --call-sid <CallSid>`);
 }
 
 // ------------------------------------------------------------------ attach a number (inbound)

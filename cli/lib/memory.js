@@ -220,7 +220,7 @@ async function voicebot(action, flags) {
     summary: `Turn memory ON for VoiceBot ${bot}: Memory webhooks, a memory section in its prompt${args.keepGreeting ? '' : ', and a shorter opening line if it asks for the caller\'s name'}`,
     render: (d) => [`✔ Memory is ON for ${bot}.`, `  Opening line: ${d.greeting || 'unchanged'}`,
       `  Prompt: ${d.prompt && d.prompt.changed ? `memory section added (version ${d.prompt.version}, ${d.prompt.promptLocations} places)` : (d.prompt && d.prompt.note) || 'unchanged'}`,
-      '  Next: exotel voicebot test-call --bot-id <id> --to <your number>, then exotel voicebot result --call-sid <CallSid>'].join('\n'),
+      '  Next: exotel voicebot call --bot-id <id> --to <number>, then exotel voicebot result --call-sid <CallSid>'].join('\n'),
   });
 }
 
@@ -236,7 +236,7 @@ async function prompt(flags) {
 
 /** `exotel voicebot result --call-sid <CallSid>`: transcript and what Memory learned, in one step. */
 async function result(flags) {
-  const sid = need(flags, 'call-sid', /^[A-Za-z0-9]{8,64}$/, 'the CallSid printed by voicebot test-call');
+  const sid = need(flags, 'call-sid', /^[A-Za-z0-9]{8,64}$/, 'the CallSid printed by voicebot call');
   return tool('exotel_voicebot_call_result', { callSid: sid }, flags, {
     kind: 'read', summary: `Result of call ${sid}`,
     render: (d, text) => {

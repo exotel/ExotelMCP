@@ -1,5 +1,5 @@
 """Use-case definitions: instructions, greeting and connector tools for each agent.
-Edit COMPANY and the prompts to fit your demo."""
+Edit COMPANY and the prompts to fit your business."""
 import os
 
 COMPANY = os.getenv("COMPANY_NAME", "Acme Clinic")

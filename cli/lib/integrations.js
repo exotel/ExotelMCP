@@ -17,7 +17,7 @@ const USAGE = `Connect Exotel to a voice-AI platform and test it.
   status                        agents, and which Exotel numbers are already linked
   setup [--agent <id> --number <ExoPhone> --app-id <app_id>]
                                 the steps to link Exotel (ElevenLabs: does the API part for you)
-  call --agent <id> --to <E.164> [--number <linked number>] [--wait]      $  outbound test call
+  call --agent <id> --to <E.164> [--number <linked number>] [--wait]      $  outbound call
   result --id <conversation_id | execution_id>                            transcript and outcome`;
 
 const PLATFORMS = {
@@ -68,7 +68,7 @@ async function http(p, method, urlPath, body, { approved = false } = {}) {
   if (!res.ok) {
     const msg = data && typeof data === 'object' ? JSON.stringify(data.detail || data.message || data.error || data).slice(0, 400) : String(data).slice(0, 400);
     let hint;
-    if (/verified phone numbers/i.test(msg)) hint = 'Bolna trial account: verify this number in the Bolna dashboard (or upgrade), then retry.';
+    if (/verified phone numbers/i.test(msg)) hint = 'Bolna free plan: verify this number in the Bolna dashboard (or upgrade), then retry.';
     else if (res.status === 401 || res.status === 403) hint = `Check the ${p} API key (exotel integrate ${p} login).`;
     throw new CliError(`${p} API ${method} ${urlPath} → HTTP ${res.status}: ${msg}${hint ? `\nHint: ${hint}` : ''}`, EXIT.ERROR, { status: res.status, data, hint });
   }
