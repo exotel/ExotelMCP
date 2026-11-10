@@ -44,11 +44,26 @@ public class MemoryService {
     private static final Set<String> EVENT_TYPES = Set.of("payment", "ticket_status", "delivery", "other");
     private static final int MAX_BODY_CHARS = 2_000_000;
 
+    /** Prompt section added by exotel_voicebot_memory_enable. No angle brackets: the VoiceBot API strips them. */
+    static final String MEMORY_BLOCK_START = "### EXOTEL MEMORY (added by Exotel Memory; edit it with exotel_voicebot_memory_enable) ###";
+    static final String MEMORY_BLOCK_END = "### END EXOTEL MEMORY ###";
+    static final String MEMORY_BLOCK = MEMORY_BLOCK_START + "\n"
+        + "What you remember about this caller (filled in by Exotel Memory at the start of every call; may be empty):\n"
+        + "- name: {{entities.person_name}}\n"
+        + "- summary: {{entities.memory_summary}}\n"
+        + "- current topic: {{entities.current_topic}}\n"
+        + "- notes and open topics: {{entities.memory_context}}\n"
+        + "Rules:\n"
+        + "- If these are empty or still show curly braces, you know nothing about this caller: treat them as new.\n"
+        + "- Returning caller: use their name in your first reply, recap in one sentence what you already know, never ask again for "
+        + "anything you already know, and continue from the open topic.\n"
+        + "- New notes (an offer, a delivery, a payment, an update) come first. On a call you placed, open with the reason from the notes.\n"
+        + "- Never use titles or guess gender: no sir, madam, Mr, Mrs or Ms. Use the first name only.\n"
+        + "- Do not read back phone numbers, account numbers or IDs from memory unless the caller asks.\n"
+        + MEMORY_BLOCK_END;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-
-    @Autowired
-    private VoiceBotService voiceBotService;
 
     @Autowired
     private VoiceBotAdminTools voiceBotAdminTools;
@@ -56,19 +71,21 @@ public class MemoryService {
     // ======================== MEMORY TOOLS ========================
 
     @Tool(name = "exotel_memory_get",
-          description = "Reads what Exotel Memory knows about a contact: name, summary, open topics (cases) with status and promises, "
-              + "notes, facts and recent interactions. Identify the contact by phone (E.164, e.g. +919876543210), email, or one of your "
-              + "own IDs (idType + idValue). Use before calling or replying to a contact. Returns found=false for a contact Memory has never seen.")
+          description = "Reads what Exotel Memory knows about a contact as a short brief: name, summary, open topics and promises, notes, "
+              + "recent interactions. Identify the contact by phone (E.164, e.g. +919876543210), email, or idType + idValue. "
+              + "detail=full returns the structured data. found=false: Memory has never seen this contact.")
     public String getMemory(
             @ToolParam(description = "Contact phone, e.g. +919876543210 (0XXXXXXXXXX and 91XXXXXXXXXX are accepted for India)", required = false) String phone,
             @ToolParam(description = "Contact email", required = false) String email,
             @ToolParam(description = "Your own ID type, e.g. customer_id (use with idValue)", required = false) String idType,
             @ToolParam(description = "Your own ID value (use with idType)", required = false) String idValue,
             @ToolParam(description = "Optional: what the contact is asking about; matching facts are listed first", required = false) String query,
-            @ToolParam(description = "internal (default; includes agent-only notes) or customer (what a bot may say to the contact)", required = false) String audience) {
+            @ToolParam(description = "internal (default; includes agent-only notes) or customer (what a bot may say to the contact)", required = false) String audience,
+            @ToolParam(description = "brief (default: a short ready-to-read summary, about 400 tokens) or full (all structured data)", required = false) String detail) {
         try {
             Ctx c = ctx();
-            StringBuilder q = new StringBuilder("format=json&audience=");
+            boolean full = "full".equalsIgnoreCase(detail);
+            StringBuilder q = new StringBuilder(full ? "format=json&audience=" : "format=markdown&budget=500&audience=");
             q.append("customer".equalsIgnoreCase(audience) ? "customer" : "internal");
             if (notBlank(phone)) q.append("&phone=").append(enc(normalizePhone(phone)));
             else if (notBlank(email)) q.append("&email=").append(enc(email.trim()));
@@ -77,7 +94,14 @@ public class MemoryService {
             if (notBlank(query)) q.append("&query=").append(enc(query));
             Resp r = send(c, "GET", c.apiBase + "/memory?" + q, null);
             if (r.status == 404) return "{\"found\":false,\"note\":\"Memory has nothing for this contact yet. Start without memory.\"}";
-            return r.body;
+            if (full) return r.body;
+            JsonNode b = objectMapper.readTree(r.body);
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("found", true);
+            out.put("profileId", b.path("profileId").asText(""));
+            out.put("memory", b.path("memory").asText(""));
+            if (b.path("truncated").asBoolean(false)) out.put("more", "Shortened; pass detail=full for everything.");
+            return objectMapper.writeValueAsString(out);
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
@@ -202,77 +226,197 @@ public class MemoryService {
     // ======================== VOICEBOT INTEGRATION ========================
 
     @Tool(name = "exotel_voicebot_memory_enable",
-          description = "Gives any Exotel VoiceBot memory: sets the bot's session_start and session_end webhooks to Exotel Memory, so every call "
-              + "starts with what Memory knows about the caller and is saved when it ends. Works for inbound and outbound calls. "
-              + "In the bot's prompt, use {{entities.person_name}}, {{entities.memory_summary}}, {{entities.current_topic}} and "
-              + "{{entities.memory_context}} (notes and open topics). Other webhooks on the bot are kept; a different existing "
-              + "session_start/session_end webhook is only replaced when replaceExisting=true.")
+          description = "Gives any Exotel VoiceBot memory in one step, so callers are remembered across calls (inbound and outbound): "
+              + "1) points the bot's session_start/session_end webhooks at Exotel Memory, 2) adds a memory section to the bot's prompt "
+              + "(every place the prompt lives) that greets returning callers by name and puts new notes first, 3) if the bot's fixed "
+              + "opening line asks for the caller's name, shortens it so the first reply can use memory (pass greeting to choose the "
+              + "line yourself, or keepGreeting=true). Safe to run again. A different existing session_start/session_end webhook is only "
+              + "replaced when replaceExisting=true.")
     public String enableVoicebotMemory(
             @ToolParam(description = "VoiceBot ID") String voiceBotId,
+            @ToolParam(description = "Optional new opening line, e.g. 'Hi, this is Exotel Bank support.'", required = false) String greeting,
+            @ToolParam(description = "true keeps the current opening line unchanged", required = false) Boolean keepGreeting,
             @ToolParam(description = "true to replace a different existing session_start/session_end webhook", required = false) Boolean replaceExisting) {
         try {
             Ctx c = ctx();
-            ObjectNode hooks = currentWebhooks(voiceBotId);
+            String botId = checkBotId(voiceBotId);
+            JsonNode bot = voiceBotAdminTools.getBotV1(botId);
+            ObjectNode hooks = bot.path("webhook_config").isObject() ? (ObjectNode) bot.path("webhook_config").deepCopy() : objectMapper.createObjectNode();
             String start = c.hookBase + "/session_start";
             String end = c.hookBase + "/session_end";
             for (String k : new String[] {"session_start", "session_end"}) {
                 String url = hooks.path(k).path("url").asText("");
-                if (!url.isBlank() && !url.equals(start) && !url.equals(end) && !Boolean.TRUE.equals(replaceExisting)) {
+                if (!url.isBlank() && !isMemoryHook(url) && !Boolean.TRUE.equals(replaceExisting)) {
                     return "Error: bot already sends " + k + " to another URL (" + hostOf(url) + "). Nothing changed. "
                         + "Call again with replaceExisting=true to switch it to Exotel Memory.";
                 }
             }
             hooks.set("session_start", objectMapper.createObjectNode().put("url", start));
             hooks.set("session_end", objectMapper.createObjectNode().put("url", end));
-            return updateWebhooks(voiceBotId, hooks, "Memory is ON for this bot. New calls load and save memory.");
+            ObjectNode patch = objectMapper.createObjectNode();
+            patch.set("webhook_config", hooks);
+
+            JsonNode gm = bot.path("greeting_message");
+            String oldGreeting = gm.path("text").asText("");
+            String newGreeting = notBlank(greeting) ? greeting.trim()
+                : (!Boolean.TRUE.equals(keepGreeting) && asksForName(oldGreeting) ? shortenGreeting(oldGreeting) : oldGreeting);
+            boolean greetingChanged = !newGreeting.equals(oldGreeting);
+            if (greetingChanged) {
+                ObjectNode g = gm.isObject() ? (ObjectNode) gm.deepCopy() : objectMapper.createObjectNode();
+                g.put("text", newGreeting);
+                patch.set("greeting_message", g);
+            }
+            String res = voiceBotAdminTools.updateBotConfig(botId, objectMapper.writeValueAsString(patch));
+            if (res == null || res.startsWith("Error")) return res;
+
+            ObjectNode prompt = updatePrompt(bot, true);
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("ok", true);
+            out.put("voiceBotId", botId);
+            out.put("memory", "on");
+            out.put("greeting", greetingChanged ? "changed to: " + newGreeting : "unchanged: " + oldGreeting);
+            out.set("prompt", prompt);
+            out.put("next", "Call the bot (exotel_voicebot_place_call). After a call: exotel_voicebot_call_result shows the transcript and what Memory learned.");
+            return objectMapper.writeValueAsString(out);
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
     }
 
     @Tool(name = "exotel_voicebot_memory_disable",
-          description = "Turns Exotel Memory off for a VoiceBot: removes only the session_start/session_end webhooks that point to Exotel Memory. "
-              + "Saved memory is kept; turn it on again with exotel_voicebot_memory_enable.")
+          description = "Turns Exotel Memory off for a VoiceBot: removes the Memory webhooks and the memory section from its prompt. "
+              + "Other webhooks, the opening line and saved memory are kept.")
     public String disableVoicebotMemory(@ToolParam(description = "VoiceBot ID") String voiceBotId) {
         try {
-            ObjectNode hooks = currentWebhooks(voiceBotId);
+            String botId = checkBotId(voiceBotId);
+            JsonNode bot = voiceBotAdminTools.getBotV1(botId);
+            ObjectNode hooks = bot.path("webhook_config").isObject() ? (ObjectNode) bot.path("webhook_config").deepCopy() : objectMapper.createObjectNode();
             Iterator<Map.Entry<String, JsonNode>> it = hooks.fields();
             while (it.hasNext()) {
                 Map.Entry<String, JsonNode> e = it.next();
                 if (isMemoryHook(e.getValue().path("url").asText(""))) it.remove();
             }
-            return updateWebhooks(voiceBotId, hooks, "Memory is OFF for this bot. Saved memory is kept.");
+            ObjectNode patch = objectMapper.createObjectNode();
+            patch.set("webhook_config", hooks);
+            String res = voiceBotAdminTools.updateBotConfig(botId, objectMapper.writeValueAsString(patch));
+            if (res == null || res.startsWith("Error")) return res;
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("ok", true);
+            out.put("voiceBotId", botId);
+            out.put("memory", "off");
+            out.set("prompt", updatePrompt(bot, false));
+            return objectMapper.writeValueAsString(out);
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
     }
 
-    private ObjectNode currentWebhooks(String voiceBotId) throws Exception {
-        if (!notBlank(voiceBotId) || !SAFE_ID.matcher(voiceBotId.trim()).matches()) throw new IllegalArgumentException("voiceBotId is invalid");
-        String raw = voiceBotService.getVoiceBot(voiceBotId.trim());
-        JsonNode root;
-        try { root = objectMapper.readTree(raw); } catch (Exception e) { throw new IllegalStateException(raw); }
-        // VoiceBot v2 returns {"http_code":200,"response":{...bot}}; tolerate {"response":{"data":{...}}} and a bare bot too.
-        JsonNode data = null;
-        for (JsonNode candidate : new JsonNode[] {root.path("response").path("data"), root.path("response"), root.path("data"), root}) {
-            if (candidate.isObject() && candidate.has("id")) { data = candidate; break; }
+    @Tool(name = "exotel_voicebot_call_result",
+          description = "Everything about a finished VoiceBot call in one step: duration, who hung up, the transcript (bot/caller lines), "
+              + "and, when Exotel Memory is set up, what Memory now knows about the caller. Give the Call SID from exotel_voicebot_place_call. "
+              + "found=false: the call is still running, was not answered, or has not been indexed yet (retry in about 10 seconds).")
+    public String callResult(
+            @ToolParam(description = "Call SID") String callSid,
+            @ToolParam(description = "false to skip the Memory lookup", required = false) Boolean includeMemory) {
+        try {
+            String found = voiceBotAdminTools.findSessionByCallSid(callSid, "100", "0");
+            JsonNode f;
+            try { f = objectMapper.readTree(found); } catch (Exception e) { return found; }
+            if (!f.path("found").asBoolean(false)) return found;
+            JsonNode conv = f.path("conversation");
+            String session = conv.path("session_id").asText("");
+            ObjectNode out = objectMapper.createObjectNode();
+            out.put("callSid", callSid.trim());
+            out.put("sessionId", session);
+            out.put("durationSec", conv.path("call_duration").asText(""));
+            out.put("outcome", conv.path("outcome").asText(""));
+            out.put("hungUpBy", conv.path("disconnected_by").asText(""));
+            ArrayNode lines = objectMapper.createArrayNode();
+            if (!session.isBlank()) {
+                String raw = voiceBotAdminTools.getBotSessionTranscript(session);
+                try { collectTurns(objectMapper.readTree(raw), lines, 0); } catch (Exception ignored) { /* transcript not ready */ }
+            }
+            out.set("transcript", lines);
+            String caller = conv.path("contact_uri").asText("");
+            if (!Boolean.FALSE.equals(includeMemory) && AuthContext.current().hasMemoryCredentials() && looksLikePhone(caller)) {
+                try {
+                    out.set("memory", objectMapper.readTree(getMemory(caller, null, null, null, null, null, null)));
+                } catch (Exception e) {
+                    out.put("memory", "not available: " + e.getMessage());
+                }
+            }
+            return objectMapper.writeValueAsString(out);
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
         }
-        if (data == null) throw new IllegalStateException("could not read the bot: " + truncate(raw, 300));
-        JsonNode w = data.path("webhook_config");
-        return w.isObject() ? (ObjectNode) w.deepCopy() : objectMapper.createObjectNode();
     }
 
-    private String updateWebhooks(String voiceBotId, ObjectNode hooks, String okMessage) throws Exception {
-        ObjectNode patch = objectMapper.createObjectNode();
-        patch.set("webhook_config", hooks);
-        String res = voiceBotAdminTools.updateBotConfig(voiceBotId.trim(), objectMapper.writeValueAsString(patch));
-        if (res == null || res.startsWith("Error")) return res;
-        ObjectNode out = objectMapper.createObjectNode();
-        out.put("ok", true);
-        out.put("voiceBotId", voiceBotId.trim());
-        out.put("message", okMessage);
-        out.set("webhook_config", hooks);
-        return objectMapper.writeValueAsString(out);
+    /** Adds (on=true) or removes the Exotel Memory section in every prompt location; publishes only when something changes. */
+    private ObjectNode updatePrompt(JsonNode bot, boolean on) throws Exception {
+        String assistantId = bot.path("assistant_config").path("id").asText("");
+        ObjectNode r = objectMapper.createObjectNode();
+        if (assistantId.isBlank()) return r.put("changed", false).put("note", "bot has no assistant; prompt not changed");
+        JsonNode a = voiceBotAdminTools.getAssistantData(assistantId);
+        boolean needs = false;
+        java.util.List<String> texts = new java.util.ArrayList<>();
+        texts.add(a.path("instruction").asText(""));
+        for (JsonNode ag : a.path("agents")) texts.add(ag.path("instruction").asText(""));
+        for (String t : texts) {
+            if (t.isEmpty()) continue;
+            boolean has = t.contains(MEMORY_BLOCK);
+            if (on ? !has : t.contains(MEMORY_BLOCK_START)) { needs = true; break; }
+        }
+        if (!needs) return r.put("changed", false).put("note", on ? "memory section already in the prompt" : "no memory section in the prompt");
+        JsonNode v = voiceBotAdminTools.publishInstructions(assistantId,
+            (current, oldTop, n) -> current.isEmpty() ? current : (on ? withMemoryBlock(current) : withoutMemoryBlock(current)),
+            on ? "Exotel Memory on" : "Exotel Memory off");
+        r.put("changed", true);
+        r.put("version", v.path("version").asText(""));
+        r.put("promptLocations", v.path("promptLocations").asInt());
+        return r;
+    }
+
+    static String withMemoryBlock(String prompt) {
+        return withoutMemoryBlock(prompt).stripTrailing() + "\n\n" + MEMORY_BLOCK;
+    }
+
+    static String withoutMemoryBlock(String prompt) {
+        int s = prompt.indexOf(MEMORY_BLOCK_START);
+        if (s < 0) return prompt;
+        int e = prompt.indexOf(MEMORY_BLOCK_END, s);
+        String after = e < 0 ? "" : prompt.substring(e + MEMORY_BLOCK_END.length());
+        return (prompt.substring(0, s).stripTrailing() + after).stripTrailing();
+    }
+
+    /** A fixed opening line that asks for the name runs before the AI (and memory), so returning callers get asked again. */
+    static boolean asksForName(String greeting) {
+        return greeting != null && greeting.matches("(?is).*\\bname\\b.*\\?.*");
+    }
+
+    /** Keeps the sentences that are not questions: "Hello, thanks for calling X. May I have your name?" becomes "Hello, thanks for calling X." */
+    static String shortenGreeting(String greeting) {
+        StringBuilder b = new StringBuilder();
+        for (String sentence : greeting.trim().split("(?<=[.!?])\\s+")) {
+            if (sentence.contains("?") || sentence.toLowerCase().matches(".*\\bname\\b.*")) continue;
+            if (b.length() > 0) b.append(' ');
+            b.append(sentence.trim());
+        }
+        return b.length() > 0 ? b.toString() : "Hello!";
+    }
+
+    private void collectTurns(JsonNode n, ArrayNode out, int depth) {
+        if (n == null || depth > 10 || out.size() >= 200) return;
+        if (n.isObject() && n.path("speaker").isTextual() && n.path("text").isTextual()) {
+            String who = "assistant".equalsIgnoreCase(n.path("speaker").asText()) ? "bot" : "caller";
+            out.add(who + ": " + n.path("text").asText());
+            return;
+        }
+        if (n.isContainerNode()) for (JsonNode c : n) collectTurns(c, out, depth + 1);
+    }
+
+    private String checkBotId(String id) {
+        if (!notBlank(id) || !SAFE_ID.matcher(id.trim()).matches()) throw new IllegalArgumentException("voiceBotId is invalid");
+        return id.trim();
     }
 
     // ======================== HELPERS ========================

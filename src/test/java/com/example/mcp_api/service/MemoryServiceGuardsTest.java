@@ -48,6 +48,25 @@ class MemoryServiceGuardsTest {
     }
 
     @Test
+    void openingLineThatAsksForTheNameIsShortened() {
+        String g = "Hello, thank you for calling Exotel Bank support. I can help you with a lost debit card. May I have your name please?";
+        assertTrue(MemoryService.asksForName(g));
+        assertEquals("Hello, thank you for calling Exotel Bank support. I can help you with a lost debit card.", MemoryService.shortenGreeting(g));
+        assertFalse(MemoryService.asksForName("Hi, this is City Dental."));
+        assertEquals("Hello!", MemoryService.shortenGreeting("What is your name?"));
+    }
+
+    @Test
+    void memorySectionIsAddedOnceAndRemovedCleanly() {
+        String p = "You are a receptionist.";
+        String on = MemoryService.withMemoryBlock(p);
+        assertTrue(on.startsWith(p) && on.contains("{{entities.person_name}}"));
+        assertEquals(on, MemoryService.withMemoryBlock(on), "idempotent");
+        assertEquals(p, MemoryService.withoutMemoryBlock(on));
+        assertFalse(MemoryService.MEMORY_BLOCK.contains("<"), "the VoiceBot API strips angle brackets");
+    }
+
+    @Test
     void searchTreatsNumbersAsPhones() {
         assertTrue(MemoryService.looksLikePhone("09876543210"));
         assertTrue(MemoryService.looksLikePhone("+91 98765 43210"));
