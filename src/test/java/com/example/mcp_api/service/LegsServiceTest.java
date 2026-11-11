@@ -38,7 +38,6 @@ class LegsServiceTest {
         String x = LegsService.streamXml("wss://bot.example/ws?a=1&b=\"2\"");
         assertTrue(x.contains("a=1&amp;b=&quot;2&quot;"));
         assertEquals(List.of("StartStream"), LegsService.validateExoml(x, false));
-        assertEquals("<Flow><Say>Tom &amp; Jerry &lt;3</Say></Flow>", LegsService.sayXml("Tom & Jerry <3"));
     }
 
     // ---------------------------------------------------------------- host
@@ -102,7 +101,7 @@ class LegsServiceTest {
             new String[]{},
             new String[]{"leg_answered@2026-11-11T05:04:23.687Z"},
             new String[]{"stream_started@2026-11-11T05:04:25.781Z"}));
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), null, 5000, 0);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, null);
         assertTrue(out.path("ok").asBoolean(), out.toString());
         assertTrue(out.path("botConnected").asBoolean());
         assertEquals(2094, out.path("answerToBotMs").asLong());
@@ -126,9 +125,9 @@ class LegsServiceTest {
             new String[]{"leg_answered@2026-11-11T05:04:23.687Z"},
             new String[]{"stream_started@2026-11-11T05:04:24.900Z"}));
         LegsInboundRegistry reg = new LegsInboundRegistry();
-        var r = reg.register(api, "acme1", "+919999999999", LegsService.streamXml("wss://bot/x"), null, Duration.ofMinutes(15));
+        var r = reg.register(api, "acme1", "+919999999999", LegsService.streamXml("wss://bot/x"), Duration.ofMinutes(15));
         r.startStreamAt().put("LEG123456789", java.time.Instant.parse("2026-11-11T05:04:23.790Z"));
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), null, 5000, 0, r);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, r);
         assertTrue(out.path("ok").asBoolean(), out.toString());
         assertEquals("webhook", out.path("mode").asText());
         assertEquals(103, out.path("answerToStartStreamMs").asLong());
@@ -141,25 +140,13 @@ class LegsServiceTest {
         assertNull(LegsService.exotelTime("garbage"));
     }
 
-    @Test
-    void greetingPlaysWhileTheBotConnectsAndStopsWhenItIsOn() throws Exception {
-        FakeLegs api = new FakeLegs(List.of(
-            new String[]{"leg_answered@2026-11-11T05:00:00Z"},
-            new String[]{"stream_started@2026-11-11T05:00:02Z"}));
-        new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), LegsService.sayXml("Connecting you"), 5000, 0);
-        List<String> actions = api.requests.stream().filter(r -> r.contains("/actions")).toList();
-        assertEquals(3, actions.size(), actions.toString());
-        assertTrue(actions.get(0).endsWith("<Flow><StartStream"), "the greeting must never delay the bot");
-        assertTrue(actions.get(1).endsWith("<Flow><Say"));
-        assertTrue(actions.get(2).endsWith("<Flow><StopSay"));
-    }
 
     @Test
     void anUnansweredCallSendsNoActions() throws Exception {
         FakeLegs api = new FakeLegs(List.of(
             new String[]{"leg_ringing@2026-11-11T05:00:00Z"},
             new String[]{"leg_terminated@2026-11-11T05:00:30Z"}));
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), null, 5000, 0);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, null);
         assertFalse(out.path("ok").asBoolean());
         assertFalse(out.path("answered").asBoolean());
         assertEquals("The call ended without an answer.", out.path("note").asText());
@@ -169,7 +156,7 @@ class LegsServiceTest {
     @Test
     void aFailedDialStopsAtOnce() throws Exception {
         LegsService.Api api = (m, p, j) -> new LegsService.Resp(401, "{\"response\":{\"error_data\":{\"message\":\"Unauthorized\"}}}", "rq");
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), null, 5000, 0);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, null);
         assertFalse(out.path("ok").asBoolean());
         assertTrue(out.path("error").asText().contains("no Legs access"), out.toString());
     }
@@ -185,7 +172,7 @@ class LegsServiceTest {
         LegsInboundRegistry reg = new LegsInboundRegistry();
         List<String> sent = new CopyOnWriteArrayList<>();
         LegsService.Api api = (m, p, j) -> { sent.add(p + " " + j.replaceAll(".*\"exoml\":\"(<Flow><[A-Za-z]+).*", "$1")); return new LegsService.Resp(202, "{}", "r"); };
-        var r = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), null, Duration.ofHours(1));
+        var r = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), Duration.ofHours(1));
         assertEquals(43, r.id().length());
         assertEquals(200, reg.handle(r.id(), event("leg_incoming", "e1", "L1", "acme1")));
         assertEquals(200, reg.handle(r.id(), event("leg_answered", "e2", "L1", "acme1")));
@@ -202,13 +189,13 @@ class LegsServiceTest {
     void hostedInboundRejectsUnknownIdsAndOnlyItsAccountCanStopIt() {
         LegsInboundRegistry reg = new LegsInboundRegistry();
         LegsService.Api api = (m, p, j) -> new LegsService.Resp(202, "{}", "r");
-        var r = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), null, Duration.ofHours(1));
+        var r = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), Duration.ofHours(1));
         assertEquals(404, reg.handle("x".repeat(43), event("leg_incoming", "e1", "L1", "acme1")));
         assertEquals(404, reg.handle("../etc", "{}"));
         assertFalse(reg.stop(r.id(), "someone-else"));
         assertTrue(reg.stop(r.id(), "acme1"));
         assertEquals(404, reg.handle(r.id(), event("leg_incoming", "e1", "L1", "acme1")));
-        var expired = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), null, Duration.ofMillis(-1));
+        var expired = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), Duration.ofMillis(-1));
         assertEquals(404, reg.handle(expired.id(), event("leg_incoming", "e1", "L1", "acme1")));
     }
 

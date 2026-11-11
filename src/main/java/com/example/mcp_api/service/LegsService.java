@@ -92,7 +92,6 @@ public class LegsService {
             @ToolParam(description = "Your Legs-enabled number (ExoPhone) to call from") String exophone,
             @ToolParam(description = "Exotel VoiceBot ID (use this or streamUrl)", required = false) String botId,
             @ToolParam(description = "Your own bot's wss:// URL (use this or botId)", required = false) String streamUrl,
-            @ToolParam(description = "Optional line spoken while the bot connects, e.g. 'Connecting you now.'", required = false) String greeting,
             @ToolParam(description = "Optional correlation id sent back in events (custom_param)", required = false) String customParam,
             @ToolParam(description = "Seconds to ring before giving up (10-45, default 30)", required = false) Integer ringTimeoutSec) {
         try {
@@ -102,14 +101,13 @@ public class LegsService {
             ObjectNode body = legBody(to, exophone, null, customParam);
             body.put("ring_timeout", ring);
             logger.info("Legs bot call: to={}, from={}, bot={}", mask(to), mask(exophone), botId != null ? botId : "custom");
-            String say = notBlank(greeting) ? sayXml(greeting) : null;
             Api api = api(c);
-            if (!webhooks) return om.writeValueAsString(runBotCall(api, body, streamXml(url), say, (ring + 15) * 1000L, 100, null));
+            if (!webhooks) return om.writeValueAsString(runBotCall(api, body, streamXml(url), (ring + 15) * 1000L, 100, null));
             // Webhook mode: leg_answered reaches this server and StartStream goes out at once (no polling delay).
-            LegsInboundRegistry.Registration reg = inboundRegistry.register(api, c.accountSid(), to.trim(), streamXml(url), say, Duration.ofMinutes(15));
+            LegsInboundRegistry.Registration reg = inboundRegistry.register(api, c.accountSid(), to.trim(), streamXml(url), Duration.ofMinutes(15));
             try {
                 body.put("leg_event_endpoint", trimSlash(publicBaseUrl) + "/legs/inbound/" + reg.id());
-                return om.writeValueAsString(runBotCall(api, body, streamXml(url), say, (ring + 15) * 1000L, 100, reg));
+                return om.writeValueAsString(runBotCall(api, body, streamXml(url), (ring + 15) * 1000L, 100, reg));
             } finally {
                 inboundRegistry.stop(reg.id(), c.accountSid());
             }
@@ -255,13 +253,11 @@ public class LegsService {
             @ToolParam(description = "Your Legs-enabled number (DID) that callers dial") String number,
             @ToolParam(description = "Exotel VoiceBot ID (use this or streamUrl)", required = false) String botId,
             @ToolParam(description = "Your own bot's wss:// URL (use this or botId)", required = false) String streamUrl,
-            @ToolParam(description = "Optional line spoken while the bot connects", required = false) String greeting,
             @ToolParam(description = "guide (default) or hosted", required = false) String mode,
             @ToolParam(description = "hosted only: hours to keep answering (1-168, default 24)", required = false) Integer hours) {
         try {
             if (number == null || !NUMBER.matcher(number.trim()).matches()) return "Error: number must be a phone number, e.g. 02048566332";
             String url = resolveStream(botId, streamUrl);
-            String say = notBlank(greeting) ? sayXml(greeting) : null;
             ObjectNode out = om.createObjectNode();
             out.put("number", number.trim());
             boolean hosted = "hosted".equalsIgnoreCase(mode);
@@ -271,7 +267,7 @@ public class LegsService {
             }
             if (hosted && webhooks) {
                 Cpaas c = cpaas();
-                LegsInboundRegistry.Registration reg = inboundRegistry.register(api(c), c.accountSid(), number.trim(), streamXml(url), say,
+                LegsInboundRegistry.Registration reg = inboundRegistry.register(api(c), c.accountSid(), number.trim(), streamXml(url),
                     Duration.ofHours(clamp(hours, 1, 168, 24)));
                 String endpoint = trimSlash(publicBaseUrl) + "/legs/inbound/" + reg.id();
                 out.put("hosted", "on");
@@ -295,7 +291,6 @@ public class LegsService {
             b.add("2. Your endpoint acks every POST with 200 within 1 s, then acts on the event (next step goes to POST "
                 + DEFAULT_CPAAS + "/v2/accounts/{account_sid}/legs/{leg_sid}/actions):");
             b.add("   on leg_incoming: " + "<Flow><Answer/></Flow>");
-            if (say != null) b.add("   on leg_answered: " + say);
             b.add("   on leg_answered: " + streamXml(url));
             b.add("3. Ready-made endpoint code: exotel_events_endpoint_guide, or run it from a laptop with the CLI: "
                 + "exotel voice-ai inbound --number " + number.trim() + " --stream-url <bot wss> --events https://<public>/ --listen 8080");
@@ -322,15 +317,11 @@ public class LegsService {
 
     // ======================== OUTBOUND BOT CALL ========================
 
-    ObjectNode runBotCall(Api api, ObjectNode createBody, String streamXml, String sayXml, long budgetMs, long pollMs) throws Exception {
-        return runBotCall(api, createBody, streamXml, sayXml, budgetMs, pollMs, null);
-    }
-
     /**
-     * Dial, wait for leg_answered, send StartStream (then the greeting), wait for stream_started. With a webhook
+     * Dial, wait for leg_answered, send StartStream at once (no greeting: the bot speaks first), wait for stream_started. With a webhook
      * registration the registry sends the actions the moment leg_answered arrives; the history is only read for the report.
      */
-    ObjectNode runBotCall(Api api, ObjectNode createBody, String streamXml, String sayXml, long budgetMs, long pollMs,
+    ObjectNode runBotCall(Api api, ObjectNode createBody, String streamXml, long budgetMs, long pollMs,
                           LegsInboundRegistry.Registration webhook) throws Exception {
         long start = System.currentTimeMillis();
         ObjectNode out = om.createObjectNode();
@@ -348,7 +339,6 @@ public class LegsService {
         Instant streamAt = null;
         boolean sent = false;
         Instant startStreamAt = null;
-        boolean sayDone = false;
         long streamDeadline = Long.MAX_VALUE;
         while (System.currentTimeMillis() - start < budgetMs && System.currentTimeMillis() < streamDeadline) {
             Resp ev = api.call("GET", "/legs/" + leg + "/external_events", null);
@@ -360,7 +350,6 @@ public class LegsService {
                 row.put("at", e.path("date_created").asText(""));
                 if ("leg_answered".equals(name)) answeredAt = instant(e);
                 if ("stream_started".equals(name)) streamAt = instant(e);
-                if ("say_completed".equals(name)) sayDone = true;
             }
             if (seen.contains("leg_answered") && !sent && webhook != null) {
                 sent = true;
@@ -369,7 +358,6 @@ public class LegsService {
             }
             if (seen.contains("leg_answered") && !sent) {
                 sent = true;
-                // StartStream first: a Say sent before it delayed the bot by about 2 s on live calls (11 Nov 2026).
                 Resp s = api.call("POST", "/legs/" + leg + "/actions", actionBody(streamXml, "start-stream"));
                 timeline.addObject().put("action", "StartStream " + status(s));
                 startStreamAt = exotelTime(data(s).path("created_at").asText(""));
@@ -377,14 +365,11 @@ public class LegsService {
                     out.put("error", failure("StartStream", s));
                     break;
                 }
-                if (sayXml != null) timeline.addObject().put("action", "Say " + status(api.call("POST", "/legs/" + leg + "/actions", actionBody(sayXml, "greeting"))));
                 streamDeadline = System.currentTimeMillis() + 12_000;
             }
             if (seen.contains("stream_started") || ENDED.stream().anyMatch(seen::contains)) break;
             if (pollMs > 0) Thread.sleep(pollMs);
         }
-        if (seen.contains("stream_started") && sayXml != null && !sayDone)
-            timeline.addObject().put("action", "StopSay " + status(api.call("POST", "/legs/" + leg + "/actions", actionBody("<Flow><StopSay/></Flow>", "stop-greeting"))));
         boolean answered = seen.contains("leg_answered");
         boolean streaming = seen.contains("stream_started");
         out.put("answered", answered);
@@ -512,10 +497,6 @@ public class LegsService {
         return "<Flow><StartStream streamType=\"bidirectional\" streamUrl=\"" + xmlEscape(wss) + "\"/></Flow>";
     }
 
-    static String sayXml(String text) {
-        if (text.length() > 500) throw new IllegalArgumentException("greeting is too long (max 500 characters)");
-        return "<Flow><Say>" + xmlEscape(text.trim()) + "</Say></Flow>";
-    }
 
     static String xmlEscape(String s) {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;");

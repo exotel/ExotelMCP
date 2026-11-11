@@ -35,7 +35,7 @@ public class LegsInboundRegistry {
     private static final Pattern ID = Pattern.compile("^[A-Za-z0-9_-]{43}$");
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    record Registration(String id, String accountSid, String number, LegsService.Api api, String streamXml, String sayXml,
+    record Registration(String id, String accountSid, String number, LegsService.Api api, String streamXml,
                         Instant expiresAt, Set<String> seen, Map<String, Instant> startStreamAt) {}
 
     private final Map<String, Registration> registrations = new ConcurrentHashMap<>();
@@ -44,7 +44,7 @@ public class LegsInboundRegistry {
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2, 8, 60, TimeUnit.SECONDS,
         new ArrayBlockingQueue<>(1000), new ThreadPoolExecutor.DiscardPolicy());
 
-    Registration register(LegsService.Api api, String accountSid, String number, String streamXml, String sayXml, Duration ttl) {
+    Registration register(LegsService.Api api, String accountSid, String number, String streamXml, Duration ttl) {
         purgeExpired();
         if (registrations.size() >= MAX_REGISTRATIONS) throw new IllegalStateException("Too many active inbound registrations on this server. Stop unused ones first.");
         byte[] b = new byte[32];
@@ -53,7 +53,7 @@ public class LegsInboundRegistry {
         Set<String> seen = Collections.newSetFromMap(Collections.synchronizedMap(new LinkedHashMap<>() {
             @Override protected boolean removeEldestEntry(Map.Entry<String, Boolean> e) { return size() > 2000; }
         }));
-        Registration r = new Registration(id, accountSid, number, api, streamXml, sayXml, Instant.now().plus(ttl), seen, new ConcurrentHashMap<>());
+        Registration r = new Registration(id, accountSid, number, api, streamXml, Instant.now().plus(ttl), seen, new ConcurrentHashMap<>());
         registrations.put(id, r);
         logger.info("Legs webhook registered for account {} until {}", accountSid, r.expiresAt());
         return r;
@@ -90,10 +90,7 @@ public class LegsInboundRegistry {
         if (leg.isEmpty() || (!account.isEmpty() && !account.equals(r.accountSid()))) return 200;
         if (!r.seen().add(eventSid)) return 200; // duplicate delivery
         if ("leg_incoming".equals(name)) executor.execute(() -> act(r, leg, "<Flow><Answer/></Flow>", "answer"));
-        if ("leg_answered".equals(name) && r.seen().add("answered:" + leg)) executor.execute(() -> {
-            act(r, leg, r.streamXml(), "start-stream"); // first, so a greeting never delays the bot
-            if (r.sayXml() != null) act(r, leg, r.sayXml(), "greeting");
-        });
+        if ("leg_answered".equals(name) && r.seen().add("answered:" + leg)) executor.execute(() -> act(r, leg, r.streamXml(), "start-stream"));
         return 200;
     }
 
