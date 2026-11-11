@@ -138,8 +138,8 @@ public class VoiceBotAdminTools {
 
     // ======================== ASSISTANT HELPERS ========================
 
-    /** Rewrites one prompt location. agentCount is 0 for the top-level instruction. */
-    public interface InstructionPatch { String apply(String current, String oldTopLevel, int agentCount); }
+    /** Rewrites one prompt location. agentIndex is -1 for the top-level instruction, 0 for the first agent. */
+    public interface InstructionPatch { String apply(String current, String oldTopLevel, int agentIndex); }
 
     /**
      * Accepts an assistant ID or a VoiceBot ID (what people usually have: exotel_voicebot_create returns the bot ID)
@@ -193,16 +193,17 @@ public class VoiceBotAdminTools {
         ObjectNode version = objectMapper.createObjectNode();
         int changed = 0;
         if (!oldTop.isEmpty() || count == 0) {
-            String top = patch.apply(oldTop, oldTop, 0);
+            String top = patch.apply(oldTop, oldTop, -1);
             if (!top.equals(oldTop)) changed++;
             version.put("instruction", top);
         }
         if (count > 0) {
             ArrayNode out = objectMapper.createArrayNode();
+            int i = 0;
             for (JsonNode a : agents) {
                 ObjectNode copy = (ObjectNode) a.deepCopy();
                 String before = a.path("instruction").asText("");
-                String after = patch.apply(before, oldTop, count);
+                String after = patch.apply(before, oldTop, i++);
                 if (!after.equals(before)) changed++;
                 copy.put("instruction", after);
                 out.add(copy);
@@ -223,6 +224,11 @@ public class VoiceBotAdminTools {
         out.put("promptLocations", 1 + count);
         out.put("promptLocationsChanged", changed);
         return out;
+    }
+
+    /** As before: the top-level prompt and the first agent change; so does any agent that shares the main prompt. */
+    static InstructionPatch promptPatch(String newInstruction) {
+        return (current, oldTop, agentIndex) -> (agentIndex <= 0 || current.isBlank() || current.equals(oldTop)) ? newInstruction : current;
     }
 
     // ======================== ASSISTANT TOOLS ========================
@@ -247,7 +253,7 @@ public class VoiceBotAdminTools {
     @Tool(name = "exotel_voicebot_assistant_update_prompt",
           description = "Replaces a VoiceBot's prompt and publishes it as the new stable version. assistantId may be the VoiceBot ID or "
               + "the assistant ID. Updates every place the prompt lives (the assistant's instruction and the agent that answers calls); "
-              + "for multi-agent assistants only the agent that shares the main prompt is changed. Returns the new version.")
+              + "on multi-agent assistants the first agent and any agent sharing the main prompt are changed. Returns the new version.")
     public String updateBotPrompt(String assistantId, String newInstruction, String versionDescription) {
         logger.info("Updating prompt for assistant={}", sanitize(assistantId));
         try {
@@ -255,8 +261,7 @@ public class VoiceBotAdminTools {
             if (newInstruction == null || newInstruction.isBlank()) return "Error: newInstruction is required";
             if (newInstruction.length() > 50_000) return "Error: newInstruction too long (max 50,000 characters)";
             String aid = resolveAssistantId(assistantId);
-            JsonNode out = publishInstructions(aid,
-                (current, oldTop, agentCount) -> (agentCount <= 1 || current.isBlank() || current.equals(oldTop)) ? newInstruction : current,
+            JsonNode out = publishInstructions(aid, promptPatch(newInstruction),
                 versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Prompt updated via MCP");
             return objectMapper.writeValueAsString(((ObjectNode) out).put("ok", true));
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_assistant_update_prompt", e);
