@@ -51,8 +51,9 @@ public class MemoryService {
     static final String MEMORY_BLOCK_PREFIX = "### EXOTEL MEMORY (";
     static final String MEMORY_BLOCK = MEMORY_BLOCK_START + "\n"
         + "Your first reply, in this order:\n"
-        + "1. Who called whom: if the newest note below starts with \"Outbound call:\", you placed this call. Greet them by name, "
-        + "say that reason in one sentence and ask if now is a good time. Never ask how you can help, and do not bring up older topics "
+        + "1. Who called whom: find the first line in the memory below that starts with \"- note:\". If it starts with "
+        + "\"- note: Outbound call:\", you placed this call to tell them that: greet them by name, say that reason in one sentence and ask "
+        + "if now is a good time. This comes before your usual task. Never ask how you can help, and do not bring up older topics "
         + "unless they do. Otherwise the caller called you.\n"
         + "2. Returning caller who called you: use their name, recap in one sentence what you already know (newest notes first, then "
         + "the open topic), and never ask again for anything you already know.\n"
