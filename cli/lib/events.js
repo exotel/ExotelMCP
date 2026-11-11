@@ -160,9 +160,9 @@ async function handle(event) {
       await legAction(leg, '<Flow><Answer/></Flow>', 'answer');
       break;
     case 'leg_answered':
-      // Greet, then hand the call to your bot. Act only after leg_answered: actions sent while ringing are lost.
-      await legAction(leg, '<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>', 'greeting');
+      // Hand the call to your bot at once (no greeting: the bot speaks first). Act only after leg_answered: actions sent while ringing are lost.
       if (process.env.BOT_WSS) await legAction(leg, \`<Flow><StartStream streamType="bidirectional" streamUrl="\${process.env.BOT_WSS.replace(/&/g, '&amp;')}"/></Flow>\`, 'stream');
+      else await legAction(leg, '<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>', 'hello');
       break;
     case 'leg_terminated':
     case 'leg_failed_to_create':
@@ -254,10 +254,11 @@ def handle(event):
     if name == "leg_incoming":  # inbound call on a DID attached to this endpoint: answer it
         leg_action(leg, "<Flow><Answer/></Flow>", "answer")
     elif name == "leg_answered":  # act only after answer; actions sent while ringing are lost
-        leg_action(leg, "<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>", "greeting")
-        if os.environ.get("BOT_WSS"):
+        if os.environ.get("BOT_WSS"):  # hand the call to your bot at once (no greeting: the bot speaks first)
             url = os.environ["BOT_WSS"].replace("&", "&amp;")
             leg_action(leg, f'<Flow><StartStream streamType="bidirectional" streamUrl="{url}"/></Flow>', "stream")
+        else:
+            leg_action(leg, "<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>", "hello")
     elif name in ("leg_terminated", "leg_failed_to_create"):
         print("call ended", leg, data.get("terminal_status"))
 

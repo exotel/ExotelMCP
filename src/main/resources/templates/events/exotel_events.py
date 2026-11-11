@@ -50,10 +50,11 @@ def handle(event):
     if name == "leg_incoming":  # inbound call on a DID attached to this endpoint: answer it
         leg_action(leg, "<Flow><Answer/></Flow>", "answer")
     elif name == "leg_answered":  # act only after answer; actions sent while ringing are lost
-        leg_action(leg, "<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>", "greeting")
-        if os.environ.get("BOT_WSS"):
+        if os.environ.get("BOT_WSS"):  # hand the call to your bot at once (no greeting: the bot speaks first)
             url = os.environ["BOT_WSS"].replace("&", "&amp;")
             leg_action(leg, f'<Flow><StartStream streamType="bidirectional" streamUrl="{url}"/></Flow>', "stream")
+        else:
+            leg_action(leg, "<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>", "hello")
     elif name in ("leg_terminated", "leg_failed_to_create"):
         print("call ended", leg, data.get("terminal_status"))
 

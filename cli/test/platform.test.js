@@ -372,15 +372,14 @@ test('voice-ai setup: WSS URL + manual flow steps, never a made-up app id', asyn
   assert.strictEqual((await cli(['voice-ai', 'setup'])).code, 2);
 });
 
-test('voice-ai connect --via legs: create leg; on leg_answered send ExoML Say + StartStream', async () => {
+test('voice-ai connect --via legs: create leg; on leg_answered send StartStream at once', async () => {
   const r = await cli(['voice-ai', 'connect', '--via', 'legs', '--to', '+919876543210', '--exophone', '08000000001',
-    '--stream-url', 'wss://bot.example.com/echo?sample-rate=8000&x=1', '--events', 'https://ev.example.com/events', '--listen', '8787', '--greeting', 'Please hold', '--dry-run']);
+    '--stream-url', 'wss://bot.example.com/echo?sample-rate=8000&x=1', '--events', 'https://ev.example.com/events', '--listen', '8787', '--dry-run']);
   assert.strictEqual(r.code, 0, r.stdout);
   assert.strictEqual(r.json.steps[0].request.url, 'https://cpaas-api.in.exotel.com/v2/accounts/acme1/legs');
   assert.strictEqual(r.json.steps[0].request.body.leg_event_endpoint, 'https://ev.example.com/events');
-  assert.deepStrictEqual(r.json.steps.map((s) => s.when), ['now', 'on leg_answered', 'on leg_answered', 'on stream_started']);
+  assert.deepStrictEqual(r.json.steps.map((s) => s.when), ['now', 'on leg_answered']);
   assert.strictEqual(r.json.steps[1].request.body.exoml, '<Flow><StartStream streamType="bidirectional" streamUrl="wss://bot.example.com/echo?sample-rate=8000&amp;x=1"/></Flow>');
-  assert.strictEqual(r.json.steps[3].request.body.exoml, '<Flow><StopSay/></Flow>');
   assert.strictEqual((await cli(['voice-ai', 'connect', '--via', 'legs', '--to', '+919876543210', '--exophone', '08000000001', '--stream-url', 'wss://x'])).code, 3, 'no --events is fine (the CLI follows the leg), but it asks before a billed call');
 });
 
