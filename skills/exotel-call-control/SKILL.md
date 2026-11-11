@@ -35,7 +35,7 @@ create leg (202) → events: channel_created → leg_connecting → leg_ringing 
 | Situation | Do this |
 |-----------|---------|
 | Local development | `exotel events listen --port 8787`, expose 8787 with ngrok/cloudflared. With `voice-ai … --ws-proxy <bot port>` the bot's WebSocket is served on the same URL, so one tunnel covers both |
-| Real app | `exotel events scaffold --lang node\|python` (handles `leg_incoming` → Answer, `leg_answered` → greeting + StartStream when `BOT_WSS` is set). The generated server refuses to start without `EXOTEL_EVENTS_TOKEN` (then the event URL is `https://<host>/exotel/events/<token>`) or `EXOTEL_EVENTS_USER`/`EXOTEL_EVENTS_PASS`. |
+| Real app | `exotel events scaffold --lang node\|python` (handles `leg_incoming` → Answer, `leg_answered` → StartStream at once when `BOT_WSS` is set). The generated server refuses to start without `EXOTEL_EVENTS_TOKEN` (then the event URL is `https://<host>/exotel/events/<token>`) or `EXOTEL_EVENTS_USER`/`EXOTEL_EVENTS_PASS`. |
 | Debugging | `exotel leg events --leg-sid <sid>` (history; only exists when events were delivered) |
 
 ## Bot on a call, no flow
@@ -43,8 +43,7 @@ create leg (202) → events: channel_created → leg_connecting → leg_ringing 
 ```bash
 # outbound: the CLI runs the event receiver and streams on answer
 exotel voice-ai connect --via legs --exophone <LP number> --to <E.164> \
-  --stream-url wss://<public>/echo?sample-rate=8000 --events https://<public>/events --listen 8787 --ws-proxy 8786 \
-  [--greeting "Connecting you"]
+  --stream-url wss://<public>/echo?sample-rate=8000 --events https://<public>/events --listen 8787 --ws-proxy 8786
 
 # inbound on a DID: Exotel support attaches the DID to your HTTPS event endpoint (no public API for this step);
 # then the CLI answers and streams each call

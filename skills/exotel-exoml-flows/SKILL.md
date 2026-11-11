@@ -28,16 +28,19 @@ gather_success (event_data.data.digits) →
 gather_failed / no digits → repeat once, then <Flow><Say>Goodbye</Say></Flow> → say_completed → <Flow><Hangup/></Flow>
 ```
 
-## 2. Outbound voice bot with a greeting (no dead air)
+## 2. Outbound voice bot (StartStream at once)
 
 ```
 create leg (custom_param=<your id>) → leg_answered
-  → <Flow><Say>Connecting you to our assistant</Say></Flow>
-  → <Flow><StartStream streamType="bidirectional" streamUrl="wss://bot/agent?id=…"/></Flow>
-stream_started → if the greeting is still playing: <Flow><StopSay/></Flow>   (StopSay after say_completed is rejected)
+  → <Flow><StartStream streamType="bidirectional" streamUrl="wss://bot/agent?id=…"/></Flow>   (at once, no greeting)
 ```
 
-CLI (does exactly this): `exotel voice-ai connect --via legs --exophone <LP> --to <num> --stream-url wss://… --events https://… --listen 8787 --greeting "…"`
+Send StartStream the moment `leg_answered` arrives: no greeting first (a Say before it delayed the bot about 2 s on
+live calls). Act on the pushed event (your endpoint): reading the event history instead sees the answer 1-5 s late.
+
+CLI: `exotel voice-ai connect --via legs --exophone <LP> --to <num> --bot-id <VoiceBot id> | --stream-url wss://…`
+(no event server; follows the leg's history) or add `--events https://… --listen 8787` to act on the pushed event.
+MCP: `exotel_legs_call_bot`.
 
 ## 3. Inbound voice bot on a DID
 

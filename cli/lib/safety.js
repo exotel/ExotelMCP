@@ -9,7 +9,7 @@
 const SPEND = [
   /place_call/, /call_customer/, /call_initiate/, /connect_two_numbers/, /connect_to_call_flow/, /connect_voice_ai/,
   /sms_send/, /whatsapp_send/, /engage_create/, /tenant_spawn/, /cqa_ingest/, /smoke_test/, /version_test/,
-  /improve_description/,
+  /improve_description/, /legs_call_bot/, /legs_dial/, /legs_action/,
 ];
 const DESTRUCTIVE = [/(^|_)delete($|_)/, /revoke/, /terminate/, /archive/, /detach/];
 // Any of these words in a tool name means it changes something, even if it also says get/list.

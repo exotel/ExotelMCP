@@ -17,8 +17,10 @@ const VOICE_AI_USAGE = `Put a voice bot on a phone call. Three ways, all over WS
      exotel voice-ai setup --stream-url wss://… | --platform elevenlabs|bolna     prints the WSS URL and the exact steps
      exotel voice-ai connect --to <E.164> --app-id <app_id of the flow YOU created>
   3. Legs API + ExoML <StartStream> (no flow; needs an LP-enabled API key/token + LP number from Exotel support):
-     exotel voice-ai connect --via legs --exophone <LP number> --to <E.164> --stream-url wss://… --events https://<public>/events --listen <port> [--greeting "Please hold"]
-     (--listen runs the event receiver: on leg_answered it sends <StartStream>; expose <port> at the --events URL.
+     exotel voice-ai connect --via legs --exophone <LP number> --to <E.164> --stream-url wss://…
+     (no event server needed: the CLI follows the leg's events and sends <StartStream> on leg_answered.
+      Exotel VoiceBot: --bot-id <id> instead of --stream-url. Your own endpoint: --events https://<public>/events, and
+      --listen <port> to let the CLI answer there;
       --ws-proxy <bot port> serves the bot's WebSocket through the same port, so one tunnel covers both.)
      Inbound, no flow: exotel voice-ai inbound --number <LP DID> --stream-url wss://… --events https://<public>/events --listen <port> [--ws-proxy <bot port>]
 
@@ -87,20 +89,20 @@ async function voiceAiViaLegs(flags) {
   const a = auth();
   const to = need(flags, 'to', /^\+?\d{6,15}$/, 'E.164');
   const exophone = need(flags, 'exophone', /^\+?\d{6,15}$/, 'your LP number (from Exotel support)');
-  const url = need(flags, 'stream-url', /^wss:\/\/\S{1,594}$/, 'bot wss:// URL');
-  const events = need(flags, 'events', /^https:\/\/\S+$/, 'public HTTPS URL of your event endpoint');
+  const url = flags.bot !== undefined ? await botStreamUrl(a, flags) : need(flags, 'stream-url', /^wss:\/\/\S{1,594}$/, 'bot wss:// URL, or --bot-id <Exotel VoiceBot id>');
   const port = flags.listen !== undefined ? Number(need(flags, 'listen', /^\d{2,5}$/, 'local port behind the --events URL')) : null;
-  const greeting = flags.greeting && flags.greeting !== true ? String(flags.greeting) : '';
+  // No --events: no event server needed. The CLI follows the leg through its event history (GET /legs/{sid}/external_events)
+  // and Exotel's events go to an Exotel-hosted endpoint that only acknowledges them.
+  const poll = flags.events === undefined && !port;
+  const events = poll ? POLL_EVENTS_URL : need(flags, 'events', /^https:\/\/\S+$/, 'public HTTPS URL of your event endpoint');
   const P = '/v2/accounts/{sid}/legs';
+  // StartStream straight after the answer, no greeting: the bot speaks first and nothing delays it.
   const streamXml = `<Flow><StartStream streamType="bidirectional" streamUrl="${xa(url)}"/></Flow>`;
-  const sayXml = greeting ? `<Flow><Say>${xt(greeting)}</Say></Flow>` : null;
   const create = { method: 'POST', host: 'cpaas', path: P, json: { contact_uri: to, exophone, leg_event_endpoint: events, network_type: 'pstn', custom_param: opt(flags, 'custom-field') || 'exotel-cli', timeout: 40,
     ...(flags.dc && flags.dc !== true ? { requested_dc_code: String(flags.dc) } : {}), ...(flags.nso && flags.nso !== true ? { requested_nso_code: String(flags.nso) } : {}) } };
   const plan = [
     { when: 'now', request: rest.preview(rest.buildRequest(a, create)) },
-    ...(sayXml ? [{ when: 'on leg_answered', request: { method: 'POST', url: `…${P}/<leg_sid>/actions`, body: { exoml: sayXml } } }] : []),
     { when: 'on leg_answered', request: { method: 'POST', url: `…${P}/<leg_sid>/actions`, body: { exoml: streamXml } } },
-    ...(sayXml ? [{ when: 'on stream_started', request: { method: 'POST', url: `…${P}/<leg_sid>/actions`, body: { exoml: '<Flow><StopSay/></Flow>' } } }] : []),
   ];
   if (flags['dry-run']) return out({ dryRun: true, kind: 'spend', listen: port, steps: plan });
   await confirm('spend', `Call ${to} from ${exophone} (Legs API) and stream it to ${url}`, flags);
@@ -113,7 +115,6 @@ async function voiceAiViaLegs(flags) {
   let finish;
   const finished = new Promise((r) => { finish = r; });
   let legSid = null;
-  let sayDone = false;
   if (port) {
     const ev = require('../events');
     server = await ev.listen({
@@ -125,12 +126,8 @@ async function voiceAiViaLegs(flags) {
         timeline.push({ at: rec.received_at, event: e.event_name, state: d.state, error: e.event_data && e.event_data.error });
         info(`  ${rec.received_at.slice(11, 23)} ${e.event_name}`);
         if (e.event_name === 'leg_answered' && !rec.duplicate) {
-          if (sayXml) timeline.push({ action: 'Say', status: (await act(legSid, sayXml, 'greeting')).status });
           timeline.push({ action: 'StartStream', status: (await act(legSid, streamXml, 'start-stream')).status });
         }
-        if (e.event_name === 'say_completed') sayDone = true;
-        // Stop the greeting only if it is still playing (StopSay after say_completed returns invalid_request).
-        if (e.event_name === 'stream_started' && sayXml && !sayDone && !rec.duplicate) timeline.push({ action: 'StopSay', status: (await act(legSid, '<Flow><StopSay/></Flow>', 'stop-greeting')).status });
         if (/^(leg_terminated|leg_failed_to_create)$/.test(e.event_name)) finish();
       },
     });
@@ -142,9 +139,10 @@ async function voiceAiViaLegs(flags) {
     if (server) server.close();
     throw new CliError(`Create leg failed (HTTP ${c.status}${c.code ? `, code ${c.code}` : ''}). ${c.status === 401 ? 'This API key has no Legs (LP) access. Get an LP-enabled API key + token and an LP number from Exotel support (an account can have several keys; only some have Legs).' : (c.hint || c.message || '')}`, EXIT.ERROR, { data: c.data });
   }
+  if (poll) return followByPolling(a, legSid, { act, streamXml, flags });
   if (!server) {
-    return out({ ok: true, leg: legSid, next: 'Your event endpoint must send these ExoML actions to POST /legs/<leg_sid>/actions', onAnswered: [sayXml, streamXml].filter(Boolean) },
-      `Leg ${legSid} created. Your event endpoint (${events}) must, on leg_answered, POST to /legs/${legSid}/actions:\n${[sayXml, streamXml].filter(Boolean).join('\n')}\n(or rerun with --listen <port> to let the CLI do it)`);
+    return out({ ok: true, leg: legSid, next: 'Your event endpoint must send these ExoML actions to POST /legs/<leg_sid>/actions', onAnswered: [streamXml] },
+      `Leg ${legSid} created. Your event endpoint (${events}) must, on leg_answered, POST to /legs/${legSid}/actions:\n${streamXml}\n(or rerun with --listen <port> to let the CLI do it)`);
   }
   info(`Leg ${legSid} created; waiting for events…`);
   let timer;
@@ -156,6 +154,66 @@ async function voiceAiViaLegs(flags) {
   if (!streamed) process.exitCode = EXIT.ERROR;
 }
 
+/** An Exotel VoiceBot's wss:// URL (its dp-endpoint), so ExoML StartStream can put it on a call. */
+async function botStreamUrl(a, flags) {
+  const id = rest.seg(flags.bot, 'bot-id');
+  if (flags['dry-run']) return `wss://<stream URL of bot ${id}>`;
+  const r = await rest.send(rest.buildRequest(a, { host: 'voicebot', path: `/v1/accounts/{sid}/bots/${id}/dp-endpoint` }));
+  const url = (JSON.stringify(r.data || '').match(/wss:\/\/[^"\\]+/) || [])[0];
+  if (!r.ok || !url) throw new CliError(`Could not get the stream URL of bot ${flags.bot} (HTTP ${r.status}). Check the bot ID: exotel voicebot list`, EXIT.ERROR);
+  return url;
+}
+
+const POLL_EVENTS_URL = 'https://mcp.exotel.com/legs/events';
+const ENDED = /^(leg_terminated|leg_failed_to_create|leg_failed|leg_disconnected|leg_completed)$/;
+
+/** Outbound without an event server: watch the leg's event history, act on leg_answered (about 0.5 s behind the event). */
+async function followByPolling(a, legSid, { act, streamXml, flags }) {
+  const P = `/v2/accounts/{sid}/legs/${legSid}/external_events`;
+  const seen = new Map();
+  const timeline = [];
+  const deadline = Date.now() + Number(flags['wait-timeout'] || 75) * 1000;
+  let streamBy = Infinity;
+  let sent = false;
+  let startStreamAt = null;
+  info(`Leg ${legSid} created; following its events (no event server needed)…`);
+  while (Date.now() < deadline && Date.now() < streamBy) {
+    const r = await rest.send(rest.buildRequest(a, { host: 'cpaas', path: P }));
+    const list = (r.ok && r.data && r.data.response && r.data.response.data && r.data.response.data.external_events) || [];
+    for (const e of list) {
+      const name = e.event_info && e.event_info.event_name;
+      if (!name || seen.has(name)) continue;
+      seen.set(name, e.date_created);
+      timeline.push({ at: e.date_created, event: name });
+      info(`  ${String(e.date_created).slice(11, 23)} ${name}`);
+    }
+    if (seen.has('leg_answered') && !sent) {
+      sent = true;
+      // StartStream first: a Say sent before it delayed the bot by about 2 s on live calls.
+      const s = await act(legSid, streamXml, 'start-stream');
+      timeline.push({ action: 'StartStream', status: s.status });
+      if (!s.ok) break;
+      const created = s.data && s.data.response && s.data.response.data && s.data.response.data.created_at;
+      startStreamAt = created ? Date.parse(String(created).replace(/^(\S+) (\S+) \+0000 UTC$/, '$1T$2Z')) : null;
+      streamBy = Date.now() + 12000;
+    }
+    if (seen.has('stream_started') || [...seen.keys()].some((n) => ENDED.test(n))) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const streamed = seen.has('stream_started');
+  const answered = seen.has('leg_answered') ? Date.parse(seen.get('leg_answered')) : null;
+  const ms = streamed && answered ? Date.parse(seen.get('stream_started')) - answered : null;
+  const toStart = answered && startStreamAt && !Number.isNaN(startStreamAt) ? startStreamAt - answered : null;
+  out({ ok: streamed, leg: legSid, answered: !!answered, botConnected: streamed, answerToStartStreamMs: toStart, answerToBotMs: ms, timeline },
+    () => `${streamed ? '✔ Bot connected' : answered ? '✘ Answered, but the bot did not connect' : '✘ Not answered'} (leg ${legSid}`
+      + `${toStart !== null ? `; StartStream ${toStart} ms after answer` : ''}${ms !== null ? `; bot on ${ms} ms after answer` : ''})\n`
+      + timeline.map((t) => (t.action ? `    → ${t.action} ${t.status}` : `  ${String(t.at).slice(11, 23)} ${t.event}`)).join('\n')
+      + `\n  Follow it: exotel leg get --leg-sid ${legSid}   End it: exotel leg hangup --leg-sid ${legSid}`);
+  if (toStart !== null && toStart > 700) info('Note: without an event server the CLI sees leg_answered 1-5 s late (the event history lags). '
+    + 'For StartStream within 700 ms of the answer use your own endpoint: --events https://<public>/ --listen <port>.');
+  if (!streamed) process.exitCode = EXIT.ERROR;
+}
+
 async function voiceAiInbound(flags) {
   // Inbound without a flow: Exotel support attaches the DID to the event endpoint (no public API); the CLI answers
   // each call and streams it to the bot.
@@ -164,7 +222,6 @@ async function voiceAiInbound(flags) {
   const url = need(flags, 'stream-url', /^wss:\/\/\S{1,594}$/, 'bot wss:// URL');
   const events = need(flags, 'events', /^https:\/\/\S+$/, 'public HTTPS URL of the event endpoint');
   const port = Number(need(flags, 'listen', /^\d{2,5}$/, 'local port behind the --events URL'));
-  const greeting = flags.greeting && flags.greeting !== true ? String(flags.greeting) : '';
   const P = '/v2/accounts/{sid}/legs';
   const setup = require('./legs').inboundSteps(number, events);
   if (flags['dry-run']) return out({ dryRun: true, setup, onLegIncoming: '<Flow><Answer/></Flow>', onLegAnswered: `<Flow><StartStream streamType="bidirectional" streamUrl="${xa(url)}"/></Flow>` });
@@ -183,7 +240,6 @@ async function voiceAiInbound(flags) {
       if (e.event_name === 'leg_incoming') info(`    → Answer ${(await act(leg, '<Flow><Answer/></Flow>', 'answer')).status}`);
       if (e.event_name === 'leg_answered' && !handled.has(leg)) {
         handled.add(leg);
-        if (greeting) info(`    → Say ${(await act(leg, `<Flow><Say>${xt(greeting)}</Say></Flow>`, 'greeting')).status}`);
         info(`    → StartStream ${(await act(leg, `<Flow><StartStream streamType="bidirectional" streamUrl="${xa(url)}"/></Flow>`, 'start-stream')).status}`);
       }
     },

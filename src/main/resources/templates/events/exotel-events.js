@@ -50,9 +50,9 @@ async function handle(event) {
       await legAction(leg, '<Flow><Answer/></Flow>', 'answer');
       break;
     case 'leg_answered':
-      // Greet, then hand the call to your bot. Act only after leg_answered: actions sent while ringing are lost.
-      await legAction(leg, '<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>', 'greeting');
+      // Hand the call to your bot at once (no greeting: the bot speaks first). Act only after leg_answered: actions sent while ringing are lost.
       if (process.env.BOT_WSS) await legAction(leg, `<Flow><StartStream streamType="bidirectional" streamUrl="${process.env.BOT_WSS.replace(/&/g, '&amp;')}"/></Flow>`, 'stream');
+      else await legAction(leg, '<Flow><Say>Hello from your Exotel event endpoint.</Say></Flow>', 'hello');
       break;
     case 'leg_terminated':
     case 'leg_failed_to_create':
