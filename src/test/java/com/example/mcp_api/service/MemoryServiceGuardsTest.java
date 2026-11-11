@@ -50,9 +50,11 @@ class MemoryServiceGuardsTest {
     @Test
     void openingLineThatAsksForTheNameIsShortened() {
         String g = "Hello, thank you for calling Exotel Bank support. I can help you with a lost debit card. May I have your name please?";
-        assertTrue(MemoryService.asksForName(g));
+        assertTrue(MemoryService.asksQuestion(g));
         assertEquals("Hello, thank you for calling Exotel Bank support. I can help you with a lost debit card.", MemoryService.shortenGreeting(g));
-        assertFalse(MemoryService.asksForName("Hi, this is City Dental."));
+        assertFalse(MemoryService.asksQuestion("Hi, this is City Dental."));
+        assertTrue(MemoryService.asksQuestion("Hi, this is Exotel Bank support. How can I assist you today?"));
+        assertEquals("Hi, this is Exotel Bank support.", MemoryService.shortenGreeting("Hi, this is Exotel Bank support. How can I assist you today?"));
         assertEquals("Hello!", MemoryService.shortenGreeting("What is your name?"));
     }
 

@@ -50,18 +50,19 @@ public class MemoryService {
     /** Every version of the section starts with this, so older sections are found and replaced, never duplicated. */
     static final String MEMORY_BLOCK_PREFIX = "### EXOTEL MEMORY (";
     static final String MEMORY_BLOCK = MEMORY_BLOCK_START + "\n"
-        + "What you remember about this caller (filled in by Exotel Memory at the start of every call; may be empty):\n"
+        + "Your first reply, in this order:\n"
+        + "1. Who called whom: if the newest note below starts with \"Outbound call:\", you placed this call. Greet them by name, "
+        + "say that reason in one sentence and ask if now is a good time. Never ask how you can help, and do not bring up older topics "
+        + "unless they do. Otherwise the caller called you.\n"
+        + "2. Returning caller who called you: use their name, recap in one sentence what you already know (newest notes first, then "
+        + "the open topic), and never ask again for anything you already know.\n"
+        + "3. If the memory below is empty or still shows curly braces, you know nothing about this caller: treat them as new.\n"
+        + "What you remember about this caller (filled in by Exotel Memory at the start of every call):\n"
         + "- name: {{entities.person_name}}\n"
+        + "- notes (newest first) and open topics: {{entities.memory_context}}\n"
         + "- summary: {{entities.memory_summary}}\n"
         + "- current topic: {{entities.current_topic}}\n"
-        + "- notes and open topics: {{entities.memory_context}}\n"
         + "Rules:\n"
-        + "- If these are empty or still show curly braces, you know nothing about this caller: treat them as new.\n"
-        + "- Returning caller: use their name in your first reply, recap in one sentence what you already know, never ask again for "
-        + "anything you already know, and continue from the open topic.\n"
-        + "- Who called whom: if the newest note starts with \"Outbound call:\", you placed this call. Open with that reason in one "
-        + "sentence and ask if now is a good time; never ask how you can help. Otherwise the caller called you.\n"
-        + "- New notes (an offer, a delivery, a payment, an update) come before older topics.\n"
         + "- Never say something was done (a card blocked, a refund sent, an appointment booked) unless a tool result or a note confirms it.\n"
         + "- Never use titles or guess gender: no sir, madam, Mr, Mrs or Ms. Use the first name only.\n"
         + "- Do not read back phone numbers, account numbers or IDs from memory unless the caller asks.\n"
@@ -245,7 +246,7 @@ public class MemoryService {
           description = "Gives any Exotel VoiceBot memory in one step, so callers are remembered across calls (inbound and outbound): "
               + "1) points the bot's session_start/session_end webhooks at Exotel Memory, 2) adds a memory section to the bot's prompt "
               + "(every place the prompt lives) that greets returning callers by name and puts new notes first, 3) if the bot's fixed "
-              + "opening line asks for the caller's name, shortens it so the first reply can use memory (pass greeting to choose the "
+              + "opening line asks a question (name, how can I help), keeps only its introduction so the first reply can use memory (pass greeting to choose the "
               + "line yourself, or keepGreeting=true). Safe to run again. A different existing session_start/session_end webhook is only "
               + "replaced when replaceExisting=true.")
     public String enableVoicebotMemory(
@@ -275,7 +276,7 @@ public class MemoryService {
             JsonNode gm = bot.path("greeting_message");
             String oldGreeting = gm.path("text").asText("");
             String newGreeting = notBlank(greeting) ? greeting.trim()
-                : (!Boolean.TRUE.equals(keepGreeting) && asksForName(oldGreeting) ? shortenGreeting(oldGreeting) : oldGreeting);
+                : (!Boolean.TRUE.equals(keepGreeting) && asksQuestion(oldGreeting) ? shortenGreeting(oldGreeting) : oldGreeting);
             boolean greetingChanged = !newGreeting.equals(oldGreeting);
             if (greetingChanged) {
                 ObjectNode g = gm.isObject() ? (ObjectNode) gm.deepCopy() : objectMapper.createObjectNode();
@@ -515,9 +516,12 @@ public class MemoryService {
         return (prompt.substring(0, s).stripTrailing() + prompt.substring(e + MEMORY_BLOCK_END.length())).stripTrailing();
     }
 
-    /** A fixed opening line that asks for the name runs before the AI (and memory), so returning callers get asked again. */
-    static boolean asksForName(String greeting) {
-        return greeting != null && greeting.matches("(?is).*\\bname\\b.*\\?.*");
+    /**
+     * A fixed opening line plays before the AI (and memory). A question in it ("May I have your name?", "How can I help?")
+     * makes returning callers repeat themselves and makes outbound calls sound like incoming ones.
+     */
+    static boolean asksQuestion(String greeting) {
+        return greeting != null && greeting.contains("?");
     }
 
     /** Keeps the sentences that are not questions: "Hi, I'm Asha from X. May I have your name?" becomes "Hi, I'm Asha from X." */
