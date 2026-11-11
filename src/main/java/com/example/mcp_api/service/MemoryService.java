@@ -125,32 +125,22 @@ public class MemoryService {
         }
     }
 
-    @Tool(name = "exotel_memory_delete_contact",
-          description = "Deletes everything Exotel Memory knows about one contact (profile, notes, interactions), so the next call or "
-              + "chat starts from zero. Cannot be undone: tell the user what will be deleted and get a clear yes first. Identify the "
-              + "contact by phone or profileId. Needs the profile:delete scope on the Memory API key.")
-    public String deleteContact(
-            @ToolParam(description = "Contact phone, e.g. +919876543210", required = false) String phone,
-            @ToolParam(description = "Memory profile ID (from exotel_memory_search_contacts)", required = false) String profileId) {
+    @Tool(name = "exotel_memory_forget_contact",
+          description = "Clears what Exotel Memory knows about one contact (facts, open topics, notes, past interactions) so the next "
+              + "call or chat starts from zero; memory stays on and keeps learning from the next one. Uses Memory's consent reset "
+              + "(opted_out, then granted). Cannot be undone: tell the user and get a clear yes first.")
+    public String forgetContact(@ToolParam(description = "Contact phone, e.g. +919876543210") String phone) {
         try {
             Ctx c = ctx();
-            String id = notBlank(profileId) ? profileId.trim() : null;
-            if (id == null) {
-                if (!notBlank(phone)) return "Error: give phone or profileId";
-                Resp r = send(c, "GET", c.apiBase + "/memory?format=markdown&budget=100&audience=internal&phone=" + enc(normalizePhone(phone)), null);
-                if (r.status == 404) return "{\"deleted\":false,\"note\":\"Memory has nothing for this contact: it already starts from zero.\"}";
-                id = objectMapper.readTree(r.body).path("profileId").asText("");
+            ArrayNode details = objectMapper.createArrayNode();
+            details.addObject().put("type", "phone").put("value", normalizePhone(phone));
+            for (String consent : new String[] {"opted_out", "granted"}) {
+                ObjectNode body = objectMapper.createObjectNode().put("consent", consent);
+                body.set("contact_details", details);
+                if (send(c, "POST", c.apiBase + "/consent", body).status == 404)
+                    return "{\"forgotten\":false,\"note\":\"Memory has nothing for this contact: it already starts from zero.\"}";
             }
-            if (!SAFE_ID.matcher(id).matches()) return "Error: profileId has invalid characters";
-            Resp d = send(c, "DELETE", c.apiBase + "/profiles/" + enc(id), null);
-            if (d.status == 404) return "{\"deleted\":false,\"note\":\"No such contact in Memory.\"}";
-            return objectMapper.writeValueAsString(objectMapper.createObjectNode().put("deleted", true).put("profileId", id)
-                .put("next", "The next call or chat with this contact starts from zero. Memory stays on for your bots."));
-        } catch (IllegalStateException e) {
-            if (String.valueOf(e.getMessage()).contains("Memory API 403"))
-                return "Error: this Memory API key may not delete contacts (it lacks the profile:delete scope). Nothing was deleted. "
-                    + "Ask the Exotel Memory team to add profile:delete to the key.";
-            return "Error: " + e.getMessage();
+            return "{\"forgotten\":true,\"next\":\"The next call or chat starts from zero (only the contact's name is kept). Memory stays on.\"}";
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
