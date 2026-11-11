@@ -283,7 +283,6 @@ async function forget(flags) {
     request: { method: 'DELETE', host: 'memory', path: `/accounts/{sid}/profiles/${rest.seg(id, 'profile-id')}` },
     render: () => `✔ Deleted. The next call with ${who} starts from zero; memory stays on for your bots.`,
   });
-  if (res && res.status === 403) info('This Memory API key may not delete contacts (no profile:delete scope). Ask the Exotel Memory team to add it.');
   return res;
 }
 
