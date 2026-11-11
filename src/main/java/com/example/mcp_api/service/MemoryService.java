@@ -125,6 +125,37 @@ public class MemoryService {
         }
     }
 
+    @Tool(name = "exotel_memory_delete_contact",
+          description = "Deletes everything Exotel Memory knows about one contact (profile, notes, interactions), so the next call or "
+              + "chat starts from zero. Cannot be undone: tell the user what will be deleted and get a clear yes first. Identify the "
+              + "contact by phone or profileId. Needs the profile:delete scope on the Memory API key.")
+    public String deleteContact(
+            @ToolParam(description = "Contact phone, e.g. +919876543210", required = false) String phone,
+            @ToolParam(description = "Memory profile ID (from exotel_memory_search_contacts)", required = false) String profileId) {
+        try {
+            Ctx c = ctx();
+            String id = notBlank(profileId) ? profileId.trim() : null;
+            if (id == null) {
+                if (!notBlank(phone)) return "Error: give phone or profileId";
+                Resp r = send(c, "GET", c.apiBase + "/memory?format=markdown&budget=100&audience=internal&phone=" + enc(normalizePhone(phone)), null);
+                if (r.status == 404) return "{\"deleted\":false,\"note\":\"Memory has nothing for this contact: it already starts from zero.\"}";
+                id = objectMapper.readTree(r.body).path("profileId").asText("");
+            }
+            if (!SAFE_ID.matcher(id).matches()) return "Error: profileId has invalid characters";
+            Resp d = send(c, "DELETE", c.apiBase + "/profiles/" + enc(id), null);
+            if (d.status == 404) return "{\"deleted\":false,\"note\":\"No such contact in Memory.\"}";
+            return objectMapper.writeValueAsString(objectMapper.createObjectNode().put("deleted", true).put("profileId", id)
+                .put("next", "The next call or chat with this contact starts from zero. Memory stays on for your bots."));
+        } catch (IllegalStateException e) {
+            if (String.valueOf(e.getMessage()).contains("Memory API 403"))
+                return "Error: this Memory API key may not delete contacts (it lacks the profile:delete scope). Nothing was deleted. "
+                    + "Ask the Exotel Memory team to add profile:delete to the key.";
+            return "Error: " + e.getMessage();
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
     @Tool(name = "exotel_memory_search_contacts",
           description = "Finds contacts in Exotel Memory by an exact phone, email or ID (never by name). Without q, lists the most recently active contacts.")
     public String searchContacts(
