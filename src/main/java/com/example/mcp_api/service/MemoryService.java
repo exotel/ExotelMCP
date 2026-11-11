@@ -83,9 +83,11 @@ public class MemoryService {
 
     @Tool(name = "exotel_memory_get",
           description = "Reads what Exotel Memory knows about a contact as a short brief: name, summary, open topics and promises, notes, "
-              + "recent interactions. Identify the contact by phone (E.164, e.g. +919876543210), email, or idType + idValue. "
+              + "recent interactions. Identify the contact by profileId (from exotel_memory_search_contacts), phone (E.164, e.g. "
+              + "+919876543210), email, or idType + idValue. "
               + "detail=full returns the structured data. found=false: Memory has never seen this contact.")
     public String getMemory(
+            @ToolParam(description = "Memory profile ID, e.g. from exotel_memory_search_contacts", required = false) String profileId,
             @ToolParam(description = "Contact phone, e.g. +919876543210 (0XXXXXXXXXX and 91XXXXXXXXXX are accepted for India)", required = false) String phone,
             @ToolParam(description = "Contact email", required = false) String email,
             @ToolParam(description = "Your own ID type, e.g. customer_id (use with idValue)", required = false) String idType,
@@ -98,10 +100,13 @@ public class MemoryService {
             boolean full = "full".equalsIgnoreCase(detail);
             StringBuilder q = new StringBuilder(full ? "format=json&audience=" : "format=markdown&budget=500&audience=");
             q.append("customer".equalsIgnoreCase(audience) ? "customer" : "internal");
-            if (notBlank(phone)) q.append("&phone=").append(enc(normalizePhone(phone)));
+            if (notBlank(profileId)) {
+                if (!SAFE_ID.matcher(profileId.trim()).matches()) return "Error: profileId has invalid characters";
+                q.append("&profile_id=").append(enc(profileId.trim()));
+            } else if (notBlank(phone)) q.append("&phone=").append(enc(normalizePhone(phone)));
             else if (notBlank(email)) q.append("&email=").append(enc(email.trim()));
             else if (notBlank(idType) && notBlank(idValue)) q.append("&type=").append(enc(idType.trim())).append("&value=").append(enc(idValue.trim()));
-            else return "Error: give phone, email, or idType + idValue";
+            else return "Error: give profileId, phone, email, or idType + idValue";
             if (notBlank(query)) q.append("&query=").append(enc(query));
             Resp r = send(c, "GET", c.apiBase + "/memory?" + q, null);
             if (r.status == 404) return "{\"found\":false,\"note\":\"Memory has nothing for this contact yet. Start without memory.\"}";
@@ -366,7 +371,7 @@ public class MemoryService {
                 try {
                     String closed = closeOutboundNote(caller);
                     if (closed != null) out.put("outboundReason", closed);
-                    out.set("memory", objectMapper.readTree(getMemory(caller, null, null, null, null, null, null)));
+                    out.set("memory", objectMapper.readTree(getMemory(null, caller, null, null, null, null, null, null)));
                 } catch (Exception e) {
                     out.put("memory", "not available: " + e.getMessage());
                 }
@@ -448,7 +453,7 @@ public class MemoryService {
     /** The newest note is an open "Outbound call:" note: mark it done so later inbound calls are not treated as this outbound call. */
     private String closeOutboundNote(String phone) {
         try {
-            JsonNode m = objectMapper.readTree(getMemory(phone, null, null, null, null, "customer", null));
+            JsonNode m = objectMapper.readTree(getMemory(null, phone, null, null, null, null, "customer", null));
             String brief = m.path("memory").asText("");
             String newest = newestNote(brief);
             if (newest != null && newest.startsWith(OUTBOUND_PREFIX)) {
