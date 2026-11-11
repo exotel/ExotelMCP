@@ -3,7 +3,6 @@ package com.example.mcp_api.service;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -44,12 +43,9 @@ class LegsServiceTest {
 
     @Test
     void legsRunOnlyOnTheMumbaiHost() {
-        assertEquals("https://cpaas-api.in.exotel.com", LegsService.cpaasBase("https://api.in.exotel.com", null));
-        assertEquals("https://cpaas-api.in.exotel.com", LegsService.cpaasBase(null, ""));
-        assertThrows(IllegalStateException.class, () -> LegsService.cpaasBase("https://api.exotel.com", null));
-        assertEquals("https://cpaas-api.qa.exotel.com", LegsService.cpaasBase(null, "https://cpaas-api.qa.exotel.com/"));
-        assertThrows(IllegalArgumentException.class, () -> LegsService.cpaasBase(null, "https://evil.example.com"));
-        assertThrows(IllegalArgumentException.class, () -> LegsService.cpaasBase(null, "http://cpaas-api.in.exotel.com"));
+        assertEquals("https://cpaas-api.in.exotel.com", LegsService.cpaasBase("https://api.in.exotel.com"));
+        assertEquals("https://cpaas-api.in.exotel.com", LegsService.cpaasBase(null));
+        assertThrows(IllegalStateException.class, () -> LegsService.cpaasBase("https://api.exotel.com"));
     }
 
     // ---------------------------------------------------------------- outbound bot call (poll-driven)
@@ -101,12 +97,11 @@ class LegsServiceTest {
             new String[]{},
             new String[]{"leg_answered@2026-11-11T05:04:23.687Z"},
             new String[]{"stream_started@2026-11-11T05:04:25.781Z"}));
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, null);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0);
         assertTrue(out.path("ok").asBoolean(), out.toString());
         assertTrue(out.path("botConnected").asBoolean());
         assertEquals(2094, out.path("answerToBotMs").asLong());
         assertEquals(605, out.path("answerToStartStreamMs").asLong(), "measured with Exotel's own timestamps");
-        assertEquals("polling", out.path("mode").asText());
         assertEquals("LEG123456789", out.path("legSid").asText());
         long streams = api.requests.stream().filter(r -> r.contains("<Flow><StartStream")).count();
         assertEquals(1, streams, "StartStream is sent exactly once: " + api.requests);
@@ -119,20 +114,6 @@ class LegsServiceTest {
         assertEquals(answeredPoll, firstAction, "no action while ringing: " + api.requests);
     }
 
-    @Test
-    void inWebhookModeOnlyTheWebhookSendsStartStream() throws Exception {
-        FakeLegs api = new FakeLegs(List.of(
-            new String[]{"leg_answered@2026-11-11T05:04:23.687Z"},
-            new String[]{"stream_started@2026-11-11T05:04:24.900Z"}));
-        LegsInboundRegistry reg = new LegsInboundRegistry();
-        var r = reg.register(api, "acme1", "+919999999999", LegsService.streamXml("wss://bot/x"), Duration.ofMinutes(15));
-        r.startStreamAt().put("LEG123456789", java.time.Instant.parse("2026-11-11T05:04:23.790Z"));
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, r);
-        assertTrue(out.path("ok").asBoolean(), out.toString());
-        assertEquals("webhook", out.path("mode").asText());
-        assertEquals(103, out.path("answerToStartStreamMs").asLong());
-        assertEquals(0, api.requests.stream().filter(x -> x.contains("/actions")).count(), "polling must not send a second StartStream");
-    }
 
     @Test
     void exotelActionTimestampsAreParsed() {
@@ -146,7 +127,7 @@ class LegsServiceTest {
         FakeLegs api = new FakeLegs(List.of(
             new String[]{"leg_ringing@2026-11-11T05:00:00Z"},
             new String[]{"leg_terminated@2026-11-11T05:00:30Z"}));
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, null);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0);
         assertFalse(out.path("ok").asBoolean());
         assertFalse(out.path("answered").asBoolean());
         assertEquals("The call ended without an answer.", out.path("note").asText());
@@ -156,48 +137,15 @@ class LegsServiceTest {
     @Test
     void aFailedDialStopsAtOnce() throws Exception {
         LegsService.Api api = (m, p, j) -> new LegsService.Resp(401, "{\"response\":{\"error_data\":{\"message\":\"Unauthorized\"}}}", "rq");
-        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0, null);
+        ObjectNode out = new LegsService().runBotCall(api, body(), LegsService.streamXml("wss://bot/x"), 5000, 0);
         assertFalse(out.path("ok").asBoolean());
         assertTrue(out.path("error").asText().contains("no Legs access"), out.toString());
     }
 
     // ---------------------------------------------------------------- hosted inbound
 
-    private static String event(String name, String sid, String leg, String account) {
-        return "{\"event_name\":\"" + name + "\",\"event_sid\":\"" + sid + "\",\"data\":{\"leg_sid\":\"" + leg + "\",\"account_sid\":\"" + account + "\"}}";
-    }
 
-    @Test
-    void hostedInboundAnswersThenStreamsOncePerCall() throws Exception {
-        LegsInboundRegistry reg = new LegsInboundRegistry();
-        List<String> sent = new CopyOnWriteArrayList<>();
-        LegsService.Api api = (m, p, j) -> { sent.add(p + " " + j.replaceAll(".*\"exoml\":\"(<Flow><[A-Za-z]+).*", "$1")); return new LegsService.Resp(202, "{}", "r"); };
-        var r = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), Duration.ofHours(1));
-        assertEquals(43, r.id().length());
-        assertEquals(200, reg.handle(r.id(), event("leg_incoming", "e1", "L1", "acme1")));
-        assertEquals(200, reg.handle(r.id(), event("leg_answered", "e2", "L1", "acme1")));
-        assertEquals(200, reg.handle(r.id(), event("leg_answered", "e2", "L1", "acme1")));  // retried delivery
-        assertEquals(200, reg.handle(r.id(), event("leg_answered", "e3", "L1", "acme1")));  // second answered event
-        assertEquals(200, reg.handle(r.id(), event("leg_incoming", "e4", "L2", "other")));  // another account's leg
-        assertEquals(200, reg.handle(r.id(), "not json"));
-        for (int i = 0; i < 50 && sent.size() < 2; i++) Thread.sleep(20);
-        Thread.sleep(100);
-        assertEquals(List.of("/legs/L1/actions <Flow><Answer", "/legs/L1/actions <Flow><StartStream"), sent);
-    }
 
-    @Test
-    void hostedInboundRejectsUnknownIdsAndOnlyItsAccountCanStopIt() {
-        LegsInboundRegistry reg = new LegsInboundRegistry();
-        LegsService.Api api = (m, p, j) -> new LegsService.Resp(202, "{}", "r");
-        var r = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), Duration.ofHours(1));
-        assertEquals(404, reg.handle("x".repeat(43), event("leg_incoming", "e1", "L1", "acme1")));
-        assertEquals(404, reg.handle("../etc", "{}"));
-        assertFalse(reg.stop(r.id(), "someone-else"));
-        assertTrue(reg.stop(r.id(), "acme1"));
-        assertEquals(404, reg.handle(r.id(), event("leg_incoming", "e1", "L1", "acme1")));
-        var expired = reg.register(api, "acme1", "02048566332", LegsService.streamXml("wss://bot/x"), Duration.ofMillis(-1));
-        assertEquals(404, reg.handle(expired.id(), event("leg_incoming", "e1", "L1", "acme1")));
-    }
 
     @Test
     void phoneNumbersAreMaskedInLogs() {

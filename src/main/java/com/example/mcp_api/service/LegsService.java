@@ -50,7 +50,6 @@ public class LegsService {
     private static final Pattern CONTACT = Pattern.compile("^(\\+?\\d{6,15}|sips?:[^\\s<>\"']{3,200})$");
     private static final Pattern SID = Pattern.compile("^[A-Za-z0-9_-]{8,64}$");
     private static final Pattern WSS = Pattern.compile("^wss://[^\\s<>\"']{4,1500}$");
-    private static final Pattern EXOTEL_HOST = Pattern.compile("^([a-z0-9-]+\\.)*(exotel\\.com|exotel\\.in)$");
     private static final int MAX_EXOML = 20_000;
     /** ExoML verbs from the Legs API reference v2.4 (top-level children of Flow). */
     static final Set<String> LEG_ACTIONS = Set.of("Answer", "Hangup", "Dial", "Gather", "Hold", "UnHold", "JoinBridge",
@@ -66,18 +65,8 @@ public class LegsService {
     @Value("${exotel.legs.public-base-url:https://mcp.exotel.com}")
     private String publicBaseUrl;
 
-    @Value("${exotel.legs.cpaas-base-url:}")
-    private String cpaasOverride;
-
-    /** Exotel posts leg events to this server, which acts at once (outbound bot calls, hosted inbound). Off until approved. */
-    @Value("${exotel.legs.webhooks.enabled:false}")
-    private boolean webhooks;
-
     @Autowired
     private VoiceBotService voiceBotService;
-
-    @Autowired
-    private LegsInboundRegistry inboundRegistry;
 
     // ======================== TOOLS ========================
 
@@ -101,16 +90,7 @@ public class LegsService {
             ObjectNode body = legBody(to, exophone, null, customParam);
             body.put("ring_timeout", ring);
             logger.info("Legs bot call: to={}, from={}, bot={}", mask(to), mask(exophone), botId != null ? botId : "custom");
-            Api api = api(c);
-            if (!webhooks) return om.writeValueAsString(runBotCall(api, body, streamXml(url), (ring + 15) * 1000L, 100, null));
-            // Webhook mode: leg_answered reaches this server and StartStream goes out at once (no polling delay).
-            LegsInboundRegistry.Registration reg = inboundRegistry.register(api, c.accountSid(), to.trim(), streamXml(url), Duration.ofMinutes(15));
-            try {
-                body.put("leg_event_endpoint", trimSlash(publicBaseUrl) + "/legs/inbound/" + reg.id());
-                return om.writeValueAsString(runBotCall(api, body, streamXml(url), (ring + 15) * 1000L, 100, reg));
-            } finally {
-                inboundRegistry.stop(reg.id(), c.accountSid());
-            }
+            return om.writeValueAsString(runBotCall(api(c), body, streamXml(url), (ring + 15) * 1000L, 100));
         } catch (IllegalArgumentException | IllegalStateException e) {
             return "Error: " + e.getMessage();
         } catch (Exception e) {
@@ -244,44 +224,18 @@ public class LegsService {
     }
 
     @Tool(name = "exotel_legs_inbound_bot",
-          description = "Puts a voice bot on incoming calls to a Legs-enabled number, with ExoML instead of an App Bazaar flow. "
-              + "mode=guide (default): the exact steps and ExoML for the user's own event server, plus the no-support alternative "
-              + "(route the number to a flow with a VoiceBot applet). mode=hosted: this MCP server answers the calls itself "
-              + "(Answer, then StartStream to the bot) at a private URL that Exotel support attaches to the number; only when the "
-              + "server operator has turned hosted answering on. Calls ring the bot only after support has attached the number.")
+          description = "How to put a voice bot on incoming calls to a Legs-enabled number with ExoML instead of an App Bazaar flow: "
+              + "the exact steps and ExoML for the user's own event server, plus the no-support alternative (route the number to a "
+              + "flow with a VoiceBot applet). Read-only: changes nothing.")
     public String inboundBot(
             @ToolParam(description = "Your Legs-enabled number (DID) that callers dial") String number,
             @ToolParam(description = "Exotel VoiceBot ID (use this or streamUrl)", required = false) String botId,
-            @ToolParam(description = "Your own bot's wss:// URL (use this or botId)", required = false) String streamUrl,
-            @ToolParam(description = "guide (default) or hosted", required = false) String mode,
-            @ToolParam(description = "hosted only: hours to keep answering (1-168, default 24)", required = false) Integer hours) {
+            @ToolParam(description = "Your own bot's wss:// URL (use this or botId)", required = false) String streamUrl) {
         try {
             if (number == null || !NUMBER.matcher(number.trim()).matches()) return "Error: number must be a phone number, e.g. 02048566332";
             String url = resolveStream(botId, streamUrl);
             ObjectNode out = om.createObjectNode();
             out.put("number", number.trim());
-            boolean hosted = "hosted".equalsIgnoreCase(mode);
-            if (hosted && !webhooks) {
-                out.put("hosted", "off");
-                out.put("note", "Hosted answering is turned off on this MCP server (exotel.legs.webhooks.enabled). Use the steps below.");
-            }
-            if (hosted && webhooks) {
-                Cpaas c = cpaas();
-                LegsInboundRegistry.Registration reg = inboundRegistry.register(api(c), c.accountSid(), number.trim(), streamXml(url),
-                    Duration.ofHours(clamp(hours, 1, 168, 24)));
-                String endpoint = trimSlash(publicBaseUrl) + "/legs/inbound/" + reg.id();
-                out.put("hosted", "on");
-                out.put("registrationId", reg.id());
-                out.put("eventEndpoint", endpoint);
-                out.put("until", reg.expiresAt().toString());
-                ArrayNode steps = out.putArray("steps");
-                steps.add("1. Ask Exotel support to attach " + number.trim() + " (Legs inbound) to this event endpoint: " + endpoint
-                    + " . Share it only with support: the URL is the key.");
-                steps.add("2. Call the number. This server sends Answer on leg_incoming and StartStream on leg_answered.");
-                steps.add("3. Stop answering any time with exotel_legs_inbound_stop registrationId=" + reg.id()
-                    + ". A server restart also stops it; register again after one.");
-                return om.writeValueAsString(out);
-            }
             ArrayNode a = out.putArray("withoutSupport");
             a.add("Route the number to an App Bazaar flow with a VoiceBot applet (no ExoML, works on any ExoPhone): "
                 + "exotel voicebot attach --number " + number.trim() + " --app-id <flow id>, or Dashboard > ExoPhones.");
@@ -302,27 +256,10 @@ public class LegsService {
         }
     }
 
-    @Tool(name = "exotel_legs_inbound_stop",
-          description = "Stops this MCP server answering incoming calls for a registration made with exotel_legs_inbound_bot mode=hosted. "
-              + "Ask Exotel support to detach the number too, or calls to it will not be answered.")
-    public String inboundStop(@ToolParam(description = "registrationId from exotel_legs_inbound_bot") String registrationId) {
-        try {
-            Cpaas c = cpaas();
-            boolean removed = inboundRegistry.stop(registrationId, c.accountSid());
-            return removed ? "{\"stopped\":true}" : "{\"stopped\":false,\"note\":\"No active registration with that id on this account.\"}";
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return "Error: " + e.getMessage();
-        }
-    }
-
     // ======================== OUTBOUND BOT CALL ========================
 
-    /**
-     * Dial, wait for leg_answered, send StartStream at once (no greeting: the bot speaks first), wait for stream_started. With a webhook
-     * registration the registry sends the actions the moment leg_answered arrives; the history is only read for the report.
-     */
-    ObjectNode runBotCall(Api api, ObjectNode createBody, String streamXml, long budgetMs, long pollMs,
-                          LegsInboundRegistry.Registration webhook) throws Exception {
+    /** Dial, wait for leg_answered, send StartStream at once (no greeting: the bot speaks first), wait for stream_started. */
+    ObjectNode runBotCall(Api api, ObjectNode createBody, String streamXml, long budgetMs, long pollMs) throws Exception {
         long start = System.currentTimeMillis();
         ObjectNode out = om.createObjectNode();
         Resp created = api.call("POST", "/legs", om.writeValueAsString(createBody));
@@ -351,11 +288,6 @@ public class LegsService {
                 if ("leg_answered".equals(name)) answeredAt = instant(e);
                 if ("stream_started".equals(name)) streamAt = instant(e);
             }
-            if (seen.contains("leg_answered") && !sent && webhook != null) {
-                sent = true;
-                timeline.addObject().put("action", "StartStream sent by this server on the leg_answered webhook");
-                streamDeadline = System.currentTimeMillis() + 12_000;
-            }
             if (seen.contains("leg_answered") && !sent) {
                 sent = true;
                 Resp s = api.call("POST", "/legs/" + leg + "/actions", actionBody(streamXml, "start-stream"));
@@ -374,14 +306,12 @@ public class LegsService {
         boolean streaming = seen.contains("stream_started");
         out.put("answered", answered);
         out.put("botConnected", streaming);
-        if (webhook != null && webhook.startStreamAt().get(leg) != null) startStreamAt = webhook.startStreamAt().get(leg);
-        out.put("mode", webhook != null ? "webhook" : "polling");
         if (answeredAt != null && startStreamAt != null) {
             long ms = Duration.between(answeredAt, startStreamAt).toMillis();
             out.put("answerToStartStreamMs", ms);
-            if (ms > 700 && webhook == null)
-                out.put("latencyNote", "Polling sees leg_answered 1-5 s late (the event history lags). For StartStream within 700 ms of "
-                    + "the answer, the MCP server must receive the event itself: exotel.legs.webhooks.enabled=true on a public server.");
+            if (ms > 700)
+                out.put("latencyNote", "This tool reads the leg's event history, which shows leg_answered 1-5 s late. For StartStream within "
+                    + "700 ms, act on the pushed event: give exotel_legs_dial your own eventsUrl and send StartStream on leg_answered.");
         }
         if (answeredAt != null && streamAt != null) out.put("answerToBotMs", Duration.between(answeredAt, streamAt).toMillis());
         out.put("ok", streaming);
@@ -441,17 +371,11 @@ public class LegsService {
         }
         if (!sid.matches("^[A-Za-z0-9_-]{3,64}$")) throw new IllegalArgumentException("account_sid has invalid characters");
         String domain = notBlank(c.getApiDomain()) ? c.getApiDomain() : c.getCallsBaseUrl();
-        return new Cpaas(cpaasBase(domain, cpaasOverride), sid, basic);
+        return new Cpaas(cpaasBase(domain), sid, basic);
     }
 
-    /** cpaas-api.in.exotel.com for Mumbai accounts; Legs does not run in Singapore. An override must be an Exotel https host. */
-    static String cpaasBase(String apiDomain, String override) {
-        if (notBlank(override)) {
-            URI u = URI.create(override.trim());
-            if (!"https".equals(u.getScheme()) || u.getHost() == null || !EXOTEL_HOST.matcher(u.getHost()).matches())
-                throw new IllegalArgumentException("exotel.legs.cpaas-base-url must be an https://*.exotel.com URL");
-            return trimSlash(override.trim());
-        }
+    /** cpaas-api.in.exotel.com for Mumbai accounts; Legs does not run in Singapore. */
+    static String cpaasBase(String apiDomain) {
         if (apiDomain == null || apiDomain.isBlank() || apiDomain.contains("api.in.exotel.com")) return DEFAULT_CPAAS;
         throw new IllegalStateException("Legs, Bridges and ExoML run only on Mumbai (India) accounts (api.in.exotel.com). "
             + "This login is for " + apiDomain + ". Use Connect Voice AI (exotel_voicebot_place_call) instead.");

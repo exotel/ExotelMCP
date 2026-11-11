@@ -45,8 +45,6 @@ public class StreamableHttpConfig {
     @Autowired
     private com.example.mcp_api.service.LegsService legsService;
 
-    @Autowired
-    private com.example.mcp_api.service.LegsInboundRegistry legsInboundRegistry;
 
     @Autowired
     private com.example.mcp_api.service.VoiceBotService voiceBotService;
@@ -84,24 +82,12 @@ public class StreamableHttpConfig {
                 this::handleMcpPost)
             .andRoute(RequestPredicates.GET("/mcp"), 
                 this::handleMcpGet)
-            // Legs events from Exotel (no MCP Authorization header): ack-only, and hosted inbound answering.
+            // Leg events from Exotel when a tool follows the leg through its event history: acknowledged and discarded.
             .andRoute(RequestPredicates.POST("/legs/events"), request -> ServerResponse.ok().build())
-            .andRoute(RequestPredicates.POST("/legs/inbound/{id}"), this::handleLegsInbound)
             .andRoute(RequestPredicates.path("/.well-known/**"),
                 request -> ServerResponse.status(404).body(Map.of("error", "not_found")))
             .andRoute(RequestPredicates.all(),
                 request -> ServerResponse.status(404).body(Map.of("error", "not_found")));
-    }
-
-    private ServerResponse handleLegsInbound(org.springframework.web.servlet.function.ServerRequest request) throws Exception {
-        byte[] b;
-        try (java.io.InputStream in = request.servletRequest().getInputStream()) {
-            b = in.readNBytes(256 * 1024 + 1);
-        }
-        if (b.length > 256 * 1024) return ServerResponse.status(413).build();
-        int status = legsInboundRegistry.handle(request.pathVariable("id"), new String(b, java.nio.charset.StandardCharsets.UTF_8));
-        return ServerResponse.status(status).contentType(MediaType.APPLICATION_JSON)
-            .body(status == 200 ? Map.of() : Map.of("error", "not_found"));
     }
 
     /**
