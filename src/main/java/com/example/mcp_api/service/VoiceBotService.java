@@ -350,24 +350,10 @@ public class VoiceBotService {
                     return "Error: statusCallback URL too long (max 2000 chars)";
             }
 
-            String accountId = getAccountId();
             String effectiveCallerId = (callerId != null && !callerId.isBlank()) ? callerId : defaultCallerId;
 
             // Step 1: Fetch WebSocket stream URL from bot dp-endpoint
-            String dpBase = getVoicebotBaseUrl().replaceFirst("/api/v\\d+$", "/api/v1");
-            String dpEndpointUrl = dpBase + "/accounts/" + accountId + "/bots/" + voiceBotId + "/dp-endpoint";
-
-            HttpHeaders dpHeaders = new HttpHeaders();
-            dpHeaders.set("Authorization", "Basic " + basicToken());
-            dpHeaders.setAccept(List.of(MediaType.APPLICATION_JSON));
-            ResponseEntity<String> dpResponse = restTemplate.exchange(
-                    dpEndpointUrl, HttpMethod.GET, new HttpEntity<>(dpHeaders), String.class);
-
-            String streamUrl = extractStreamUrl(safeBody(dpResponse));
-            if (streamUrl == null || streamUrl.isBlank())
-                return "Error: Could not extract stream URL from VoiceBot dp-endpoint. Verify the bot ID is correct and active.";
-            if (!streamUrl.startsWith("wss://"))
-                return "Error: VoiceBot returned insecure WebSocket URL. Contact support.";
+            String streamUrl = botStreamUrl(voiceBotId);
 
             // Step 2: POST to Calls connect.json (production endpoint:
             // https://api.in.exotel.com/v1/Accounts/<sid>/Calls/connect.json)
@@ -401,6 +387,29 @@ public class VoiceBotService {
         } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_place_call", e);
         } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
         } catch (Exception e) { return "Error making outbound bot call: " + e.getMessage(); }
+    }
+
+    /**
+     * The bot's WebSocket (wss://) URL for one call, from its dp-endpoint. Used to put the bot on a call, whether
+     * through Connect Voice AI or an ExoML StartStream. Throws IllegalStateException with a user-facing message.
+     */
+    public String botStreamUrl(String voiceBotId) {
+        String authErr = requireVoiceBotCreds();
+        if (authErr != null) throw new IllegalStateException(authErr);
+        validateId(voiceBotId, "voiceBotId");
+        String dpBase = getVoicebotBaseUrl().replaceFirst("/api/v\\d+$", "/api/v1");
+        String dpEndpointUrl = dpBase + "/accounts/" + getAccountId() + "/bots/" + voiceBotId + "/dp-endpoint";
+        HttpHeaders dpHeaders = new HttpHeaders();
+        dpHeaders.set("Authorization", "Basic " + basicToken());
+        dpHeaders.setAccept(List.of(MediaType.APPLICATION_JSON));
+        ResponseEntity<String> dpResponse = restTemplate.exchange(
+                dpEndpointUrl, HttpMethod.GET, new HttpEntity<>(dpHeaders), String.class);
+        String streamUrl = extractStreamUrl(safeBody(dpResponse));
+        if (streamUrl == null || streamUrl.isBlank())
+            throw new IllegalStateException("Could not get the bot's stream URL. Check the bot ID is correct and active.");
+        if (!streamUrl.startsWith("wss://"))
+            throw new IllegalStateException("The VoiceBot returned an insecure WebSocket URL. Contact support.");
+        return streamUrl;
     }
 
     @Tool(name = "exotel_voicebot_call_status",

@@ -43,6 +43,12 @@ public class StreamableHttpConfig {
     private com.example.mcp_api.service.MemoryService memoryService;
 
     @Autowired
+    private com.example.mcp_api.service.LegsService legsService;
+
+    @Autowired
+    private com.example.mcp_api.service.LegsInboundRegistry legsInboundRegistry;
+
+    @Autowired
     private com.example.mcp_api.service.VoiceBotService voiceBotService;
 
     @Autowired
@@ -78,10 +84,24 @@ public class StreamableHttpConfig {
                 this::handleMcpPost)
             .andRoute(RequestPredicates.GET("/mcp"), 
                 this::handleMcpGet)
+            // Legs events from Exotel (no MCP Authorization header): ack-only, and hosted inbound answering.
+            .andRoute(RequestPredicates.POST("/legs/events"), request -> ServerResponse.ok().build())
+            .andRoute(RequestPredicates.POST("/legs/inbound/{id}"), this::handleLegsInbound)
             .andRoute(RequestPredicates.path("/.well-known/**"),
                 request -> ServerResponse.status(404).body(Map.of("error", "not_found")))
             .andRoute(RequestPredicates.all(),
                 request -> ServerResponse.status(404).body(Map.of("error", "not_found")));
+    }
+
+    private ServerResponse handleLegsInbound(org.springframework.web.servlet.function.ServerRequest request) throws Exception {
+        byte[] b;
+        try (java.io.InputStream in = request.servletRequest().getInputStream()) {
+            b = in.readNBytes(256 * 1024 + 1);
+        }
+        if (b.length > 256 * 1024) return ServerResponse.status(413).build();
+        int status = legsInboundRegistry.handle(request.pathVariable("id"), new String(b, java.nio.charset.StandardCharsets.UTF_8));
+        return ServerResponse.status(status).contentType(MediaType.APPLICATION_JSON)
+            .body(status == 200 ? Map.of() : Map.of("error", "not_found"));
     }
 
     /**
@@ -216,7 +236,8 @@ public class StreamableHttpConfig {
         "messaging", List.of("exotel_sms_", "exotel_whatsapp_", "exotel_engage_"),
         "cqa", List.of("exotel_cqa_"),
         "aiassist", List.of("exotel_aiassist_"),
-        "audio", List.of("exotel_audio_"));
+        "audio", List.of("exotel_audio_"),
+        "legs", List.of("exotel_legs_", "exotel_events_endpoint_guide"));
     static final java.util.Set<String> ALWAYS = java.util.Set.of("exotel_setup_guide", "exotel_build_config");
 
     static java.util.Set<String> parseToolsets(String raw) {
@@ -250,7 +271,7 @@ public class StreamableHttpConfig {
         java.util.Set<String> toolsets = requestedToolsets();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, memoryService};
+        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, memoryService, legsService};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
@@ -340,7 +361,7 @@ public class StreamableHttpConfig {
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, memoryService};
+            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, memoryService, legsService};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();

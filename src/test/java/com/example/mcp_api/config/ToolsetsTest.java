@@ -28,6 +28,15 @@ class ToolsetsTest {
     }
 
     @Test
+    void legsToolsetHasTheExomlTools() {
+        Set<String> sets = StreamableHttpConfig.parseToolsets("voicebot,legs");
+        assertTrue(StreamableHttpConfig.inToolsets("exotel_legs_call_bot", sets));
+        assertTrue(StreamableHttpConfig.inToolsets("exotel_legs_action", sets));
+        assertTrue(StreamableHttpConfig.inToolsets("exotel_events_endpoint_guide", sets));
+        assertFalse(StreamableHttpConfig.inToolsets("exotel_legs_call_bot", StreamableHttpConfig.parseToolsets("voicebot,memory")));
+    }
+
+    @Test
     void unknownToolsetsAreIgnored() {
         assertEquals(Set.of("calls"), StreamableHttpConfig.parseToolsets("calls,nonsense"));
         assertTrue(StreamableHttpConfig.parseToolsets(null).isEmpty());
