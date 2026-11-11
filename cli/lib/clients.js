@@ -57,7 +57,7 @@ function tomlString(s) {
 }
 
 /** Only these tool groups exist on the server (see exotel mcp tools); anything else is dropped. */
-const TOOLSETS = ['voicebot', 'memory', 'calls', 'messaging', 'cqa', 'aiassist', 'audio', 'toolserver'];
+const TOOLSETS = ['voicebot', 'memory', 'legs', 'calls', 'messaging', 'cqa', 'aiassist', 'audio', 'toolserver'];
 function normToolsets(v) {
   if (!v || v === true) return '';
   return String(v).toLowerCase().split(/[,\s]+/).filter((t) => TOOLSETS.includes(t)).join(',');
