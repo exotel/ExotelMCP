@@ -10,7 +10,7 @@ const { run, need, opt, requireAuth } = require('./core');
 
 const USAGE = `Exotel Memory: remember every contact across calls and chats (any bot, any channel).
 exotel memory login [--account <Memory account SID>] [--url https://memory.in.exotel.com]   key: prompt, EXOTEL_MEMORY_API_KEY or --key-stdin
-exotel memory get --phone <number> [--query "what they ask about"] [--audience customer]     what Memory knows
+exotel memory get --phone <number> | --profile-id <id> [--query "…"] [--audience customer]   what Memory knows
 exotel memory search [--q <phone|email|id>] [--limit 20]                                    find contacts (exact match, never by name)
 exotel memory save --phone <number> --id <interaction id> (--messages @turns.json | --transcript @call.txt | --audio-url https://…)
                    [--channel VOICE|CHAT|WHATSAPP|SMS|EMAIL] [--direction inbound|outbound] [--source voicebot]
@@ -81,14 +81,15 @@ async function login(flags) {
 
 function get(flags) {
   memoryAuth();
-  const p = phone(need(flags, 'phone'));
+  const profileId = flags['profile-id'] !== undefined ? need(flags, 'profile-id', /^[A-Za-z0-9_.:-]{1,128}$/, 'profile ID from exotel memory search') : undefined;
+  const p = profileId ? undefined : phone(need(flags, 'phone'));
   return run(flags, {
-    kind: 'read', summary: `What Memory knows about ${p}`,
-    request: { host: 'memory', path: '/accounts/{sid}/memory', query: { phone: p, format: 'json', audience: flags.audience === 'customer' ? 'customer' : 'internal', query: opt(flags, 'query') } },
+    kind: 'read', summary: `What Memory knows about ${p || profileId}`,
+    request: { host: 'memory', path: '/accounts/{sid}/memory', query: { phone: p, profile_id: profileId, format: 'json', audience: flags.audience === 'customer' ? 'customer' : 'internal', query: opt(flags, 'query') } },
     notFoundHint: 'Memory has nothing for this contact yet. Calls are saved automatically once the bot has memory on (exotel voicebot memory on).',
     render: (d) => {
       const pr = d.profile || {};
-      const lines = [`${pr.displayName || 'Unknown name'} · ${p}`];
+      const lines = [`${pr.displayName || 'Unknown name'} · ${p || profileId}`];
       if (pr.summary) lines.push(pr.summary);
       for (const c of d.openCases || []) {
         lines.push(`• Open: ${c.title} (${String(c.status || '').replace(/_/g, ' ')})${c.next ? ` → next: ${c.next}` : ''}`);
