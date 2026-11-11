@@ -12,7 +12,7 @@ const USAGE = `Exotel Memory: remember every contact across calls and chats (any
 exotel memory login [--account <Memory account SID>] [--url https://memory.in.exotel.com]   key: prompt, EXOTEL_MEMORY_API_KEY or --key-stdin
 exotel memory get --phone <number> | --profile-id <id> [--query "…"] [--audience customer]   what Memory knows
 exotel memory search [--q <phone|email|id>] [--limit 20]                                    find contacts (exact match, never by name)
-exotel memory forget --phone <number> | --profile-id <id>                                  delete a contact's memory (start from zero)
+exotel memory forget --phone <number>                                                      clear a contact's memory (start from zero)
 exotel memory save --phone <number> --id <interaction id> (--messages @turns.json | --transcript @call.txt | --audio-url https://…)
                    [--channel VOICE|CHAT|WHATSAPP|SMS|EMAIL] [--direction inbound|outbound] [--source voicebot]
 exotel memory note --phone <number> --text "Offer: 20% off this week" [--agents-only]      bots see it on the very next call
@@ -267,23 +267,20 @@ async function botFromGeneration(a, id) {
   }
 }
 
-/** Deletes one contact's memory so the next call starts from zero. Cannot be undone; needs the profile:delete scope. */
+/** Clears what Memory knows about a contact (consent opted_out, then granted): the next call starts from zero. */
 async function forget(flags) {
   const auth = memoryAuth();
-  let id = flags['profile-id'] !== undefined ? need(flags, 'profile-id', /^[A-Za-z0-9_.:-]{1,128}$/, 'profile ID from exotel memory search') : null;
-  const who = id || phone(need(flags, 'phone'));
-  if (!id) {
-    const r = await rest.send(rest.buildRequest(auth, { host: 'memory', path: '/accounts/{sid}/memory', query: { phone: who, format: 'markdown', budget: 100 } }));
-    if (r.status === 404) return out({ ok: true, deleted: false, note: 'Memory has nothing for this contact: it already starts from zero.' }, `Memory has nothing for ${who}: it already starts from zero.`);
-    id = r.data && r.data.profileId;
-    if (!r.ok || !id) throw new CliError(`Could not find ${who} in Memory (HTTP ${r.status}).`, EXIT.ERROR);
-  }
+  const p = phone(need(flags, 'phone'));
+  const contact = [{ type: 'phone', value: p }];
   const res = await run(flags, {
-    kind: 'destructive', summary: `Delete everything Memory knows about ${who} (profile ${id}). Cannot be undone`,
-    request: { method: 'DELETE', host: 'memory', path: `/accounts/{sid}/profiles/${rest.seg(id, 'profile-id')}` },
-    render: () => `✔ Deleted. The next call with ${who} starts from zero; memory stays on for your bots.`,
+    kind: 'destructive', summary: `Forget everything Memory learned about ${p} (facts, topics, notes, past interactions). Cannot be undone`,
+    request: { method: 'POST', host: 'memory', path: '/accounts/{sid}/consent', json: { contact_details: contact, consent: 'opted_out' } },
+    quiet: flags['dry-run'] ? false : 'success', // one result line: printed below after both steps
   });
-  return res;
+  if (!res || res.dryRun || !res.ok) return res;
+  const again = await rest.send(rest.approve(rest.buildRequest(auth, { method: 'POST', host: 'memory', path: '/accounts/{sid}/consent', json: { contact_details: contact, consent: 'granted' } })));
+  if (!again.ok) throw new CliError(`Memory forgot ${p} but did not turn learning back on (HTTP ${again.status}). Run the command again.`, EXIT.ERROR);
+  return out({ ok: true, forgotten: true, phone: p }, `✔ Memory forgot ${p}. The next call starts from zero (only the name is kept); memory stays on.`);
 }
 
 function cmd(sub, flags) {
