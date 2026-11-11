@@ -39,7 +39,20 @@ async function to(flags) {
 
 /** --caller-id, else saved, else pick one of your ExoPhones. */
 async function callerId(flags) {
-  if (flags['caller-id'] && flags['caller-id'] !== true) return String(flags['caller-id']);
+  if (flags['caller-id'] && flags['caller-id'] !== true) {
+    // Exotel only places calls from your own ExoPhones: check now, with a clear message, instead of a failed call.
+    const want = String(flags['caller-id']);
+    const last10 = (n) => String(n).replace(/\D/g, '').slice(-10);
+    if (!flags['dry-run']) {
+      const nums = await ui.spin('Checking the caller ID…', require('./voicebot').listAllNumbers(requireAuth()));
+      if (nums.length && !nums.some((n) => last10(n.phone_number) === last10(want))) {
+        throw new CliError(`${want} is not an ExoPhone on this account, so Exotel cannot call from it. `
+          + `Use one of yours (exotel numbers list), e.g. ${nums.slice(0, 3).map((n) => n.phone_number).join(', ')}. `
+          + 'Any number can be the one you call (--to).', EXIT.USAGE);
+      }
+    }
+    return want;
+  }
   const saved = cfg.get('caller-id');
   if (saved) return saved;
   if (!interactive()) throw new CliError('Pass --caller-id <one of your ExoPhones> (see: exotel numbers list), or save one: exotel config set caller-id <number>', EXIT.USAGE);

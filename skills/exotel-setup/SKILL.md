@@ -21,6 +21,7 @@ from memory: the portals sometimes disagree, and `ask` records which one the liv
 | Find, buy, route or release phone numbers; check balance | `exotel-phone-numbers` | `exotel numbers …`, `exotel balance` |
 | SMS, WhatsApp, a simple call, click-to-call, connect a caller to a flow | `exotel-messaging-and-calls` | MCP tools |
 | An AI voice bot hosted by Exotel | `exotel-voicebot-quickstart` | MCP tools |
+| A bot or agent that remembers callers across calls and chats; CRM facts and offers the bot knows on the next call | `exotel-memory` | `exotel memory …`, `exotel voicebot memory on` |
 | Their own voice bot (OpenAI, Gemini, Sarvam, Pipecat…) on calls | `exotel-connect-voice-ai` | `exotel voice-ai connect`, `exotel voice-ai setup` |
 | ElevenLabs or Bolna agents on Exotel numbers | `exotel-connect-voice-ai` (path B) | `exotel voice-ai setup --platform …`, `exotel integrate elevenlabs\|bolna …` |
 | Connect a PBX / SBC / Voice AI platform over SIP | `exotel-sip-trunking` | `exotel trunk …` |
@@ -101,7 +102,7 @@ a ready-to-fill snippet.
 ## 4. Verify
 
 1. Call `exotel_voicebot_list_phone_numbers`. It must return at least one number. That number is the
-   `callerId` for test calls.
+   `callerId` for calls.
 2. Call `exotel_voicebot_list_all` with `status: ""`, `limit: "10"`, `offset: "0"`.
 3. Report what is configured. Do not place a call or send a message as a "test" unless the user asks;
    both cost money.

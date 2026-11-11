@@ -118,5 +118,5 @@ For your own storage use `storageType="https"` with `storageURL`, `storageURLKey
 ## Check before going live
 
 - `exotel exoml validate step.xml` for every ExoML you send (the CLI one-liners validate automatically).
-- `exotel leg events --leg-sid <sid>` to see the actual event sequence of a test call.
+- `exotel leg events --leg-sid <sid>` to see the actual event sequence of a call.
 - `exotel explain <code>` for any `*_failed` event's `error_code`.

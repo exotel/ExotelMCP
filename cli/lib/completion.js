@@ -6,8 +6,9 @@ const { CliError, EXIT } = require('./io');
 const COMMANDS = {
   init: 'log in and connect your coding agent', login: 'save your API credentials', logout: 'forget saved credentials',
   whoami: 'who you are logged in as', doctor: 'check your setup', config: 'saved defaults (your number, caller ID, bot)',
-  call: 'place a test call, step by step', balance: 'account balance', numbers: 'search, buy, route, release numbers',
+  call: 'place a call, step by step', balance: 'account balance', numbers: 'search, buy, route, release numbers',
   calls: 'call logs and recordings', campaigns: 'outbound call campaigns', voicebot: 'Exotel-hosted AI voice agents',
+  memory: 'remember contacts across calls and chats',
   'voice-ai': 'your own bot over WebSocket', integrate: 'ElevenLabs and Bolna', leg: 'call control with ExoML (Legs API)',
   bridge: 'join legs into one conversation', events: 'receive call events locally', exoml: 'validate ExoML',
   applet: 'test or scaffold flow webhooks', trunk: 'SIP trunking', api: 'call any Exotel REST endpoint',
@@ -20,6 +21,7 @@ function data() {
   const subs = { ...v.SUBCOMMANDS };
   delete subs.campaign;
   delete subs.skills;
+  subs.voicebot = subs.voicebot.filter((s) => s !== 'test-call'); // earlier name, still accepted
   try {
     subs.leg = ['create', 'get', 'events', 'inbound', 'action', ...Object.keys(require('./commands/legs').LEG_VERBS)];
   } catch { /* keep static list */ }

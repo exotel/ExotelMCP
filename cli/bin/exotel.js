@@ -135,7 +135,7 @@ function cmdLogout(flags = {}) {
   if (c && c.source !== 'env') {
     const a = c.auth;
     const pair = creds.apiKeyPair(a);
-    secrets.push(a.token, JSON.stringify(a), pair.apiKey, pair.apiToken, a.voicebot_api_token, a.calls_api_token, a.cqa_api_key);
+    secrets.push(a.token, JSON.stringify(a), pair.apiKey, pair.apiToken, a.voicebot_api_token, a.calls_api_token, a.cqa_api_key, a.memory_api_key);
   }
   const changed = flags['keep-agents'] ? [] : clients.uninstall({ secrets: secrets.filter(Boolean) });
   const removed = creds.remove();
@@ -189,12 +189,12 @@ async function cmdMcp(sub, flags) {
     requireAuth(); // the relay reads these credentials at run time; nothing is copied into client configs
     const ids = clients.resolveClients(flags.client);
     if (!ids.length) throw new CliError('No supported agent clients detected. Pass --client claude-code|cursor|codex|vscode|windsurf|claude-desktop.', EXIT.USAGE);
-    const results = clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'] });
+    const results = clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'], toolsets: flags.toolsets });
     out({ results }, () => results.map((r) => `${r.client.padEnd(15)} ${r.status}${r.file ? `  ${r.file}` : ''}${r.hint ? `  (${r.hint})` : ''}${r.error ? `  ${r.error}` : ''}${r.next && /added|replaced/.test(r.status) ? `\n${''.padEnd(16)}→ ${r.next}` : ''}`).join('\n'));
     if (results.some((r) => r.status === 'error')) process.exitCode = EXIT.ERROR;
     return results;
   }
-  if (sub === 'proxy') return require('../lib/mcp-proxy').run();
+  if (sub === 'proxy') return require('../lib/mcp-proxy').run(flags);
   if (sub === 'config') {
     // The setup to paste into any MCP client: it runs the local relay, so it contains no credentials.
     const pc = clients.proxyCommand();
@@ -381,6 +381,7 @@ async function placeAndMaybeWait(tool, args, flags, statusTool, { label = 'call'
   result.final = await waitForCall(callSid, statusTool, flags);
   if (result.final.status !== 'completed') process.exitCode = EXIT.ERROR;
   out(result, () => progress.summary({ status: result.final.status, callSid, next: progress.nextSteps(result.final.status, callSid, { voicebot }) }));
+  return result;
 }
 
 async function listBots(flags) {
@@ -394,7 +395,7 @@ const CALL_USAGE = `exotel call [phone number]          guided: asks what should
   --stream-url wss://…               your own bot (Connect Voice AI)
   --caller-id <ExoPhone>  --record  --no-wait  --yes`;
 
-/** `exotel call`: one command for a test call; asks for anything missing (pickers), then follows the call live. */
+/** `exotel call`: one command for a call; asks for anything missing (pickers), then follows the call live. */
 async function cmdCall(numberArg, flags) {
   const ui = require('../lib/ui');
   const guided = require('../lib/guided');
@@ -409,7 +410,7 @@ async function cmdCall(numberArg, flags) {
     ]);
   }
   if (flags.wait === undefined && !flags['no-wait']) flags.wait = true;
-  if (mode === 'bot') return cmdVoicebot('test-call', flags);
+  if (mode === 'bot') return cmdVoicebot('call', flags);
   flags.to = await guided.to(flags);
   if (mode === 'flow' && !flags.flow) {
     if (!interactive()) throw new CliError('Pass --app-id <flow id>', EXIT.USAGE);
@@ -423,7 +424,10 @@ async function cmdCall(numberArg, flags) {
   return platform.voiceAi('connect', flags);
 }
 
-async function cmdVoicebot(sub, flags) {
+async function cmdVoicebot(sub, flags, rest = []) {
+  if (sub === 'memory') return require('../lib/memory').voicebot(rest[0], flags);
+  if (sub === 'prompt') return require('../lib/memory').prompt(flags);
+  if (sub === 'result') return require('../lib/memory').result(flags);
   if (sub === 'list') {
     const res = await runTool('exotel_voicebot_list_all', { status: flags.status || '', limit: String(flags.limit || 50), offset: String(flags.offset || 0) }, flags, { quiet: true, spinText: 'Loading your VoiceBots…' });
     const ui = require('../lib/ui');
@@ -435,22 +439,30 @@ async function cmdVoicebot(sub, flags) {
         { key: 'status', label: 'STATUS', fmt: ui.statusColor },
         { key: 'date_created', label: 'CREATED', fmt: (v) => String(v || '').slice(0, 16).replace('T', ' ') },
         { key: 'id', label: 'BOT ID' },
-      ])}\n${ui.c.dim('Call one: exotel call   ·   or: exotel voicebot test-call --bot-id <name or id>')}`);
+      ])}\n${ui.c.dim('Call one: exotel call   ·   or: exotel voicebot call --bot-id <name or id>')}`);
   }
-  if (sub === 'test-call') {
+  if (sub === 'call' || sub === 'test-call') { // test-call: earlier name, still accepted
     const guided = require('../lib/guided');
     flags.bot = await guided.bot(flags, () => listBots(flags));
     flags.to = await guided.to(flags);
     const callerId = await guided.callerId(flags);
     if (flags.wait === undefined && !flags['no-wait'] && interactive()) flags.wait = true;
-    return placeAndMaybeWait('exotel_voicebot_place_call', {
-      toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '',
-    }, flags, 'exotel_voicebot_call_status', {
-      label: `a VoiceBot test call to ${flags.to} from ${callerId}`,
+    // --reason: the bot knows it placed this call and opens with the reason (saved as a Memory note, closed after the call).
+    const reason = flags.reason && flags.reason !== true ? String(flags.reason).trim() : '';
+    const res = await placeAndMaybeWait(reason ? 'exotel_voicebot_call_customer' : 'exotel_voicebot_place_call', reason
+      ? { toNumber: flags.to, voiceBotId: flags.bot, callerId, reason, record: !!flags.record }
+      : { toNumber: flags.to, voiceBotId: flags.bot, callerId, customField: '', record: !!flags.record, statusCallback: '' }, flags, 'exotel_voicebot_call_status', {
+      label: `a VoiceBot call to ${flags.to} from ${callerId}`,
       voicebot: true,
-      confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}`
-        + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; change it with --caller-id or: exotel config set caller-id <ExoPhone>)`),
+      confirmText: `Call ${flags.to} from ${callerId} with VoiceBot ${flags._botName || flags.bot}${flags.record ? ', recorded' : ''}${reason ? `\n  The bot opens with: "${reason}"` : ''}`
+        + (flags['caller-id'] ? '' : `\n  (caller ID ${callerId} is your saved default; use --caller-id <your ExoPhone> or: exotel config set caller-id <ExoPhone>)`),
     });
+    if (reason && res && res.callSid) {
+      // Mark the reason note done so later incoming calls are not treated as this outbound call.
+      if (flags.wait) await runTool('exotel_voicebot_call_result', { callSid: res.callSid }, { ...flags, 'dry-run': false }, { quiet: true }).catch(() => {});
+      else info(`When the call ends, run: exotel voicebot result --call-sid ${res.callSid}   (marks the reason done, so later incoming calls are not treated as this one)`);
+    }
+    return res;
   }
   const vb = require('../lib/voicebot');
   if (sub === 'create') return vb.create(flags);
@@ -477,7 +489,7 @@ async function cmdInit(flags) {
   steps.credentials = { source: c.source, products: creds.products(c.auth) };
   if (!flags['no-mcp']) {
     const ids = clients.resolveClients(flags.client);
-    steps.mcp = ids.length ? clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'] }) : [];
+    steps.mcp = ids.length ? clients.install(ids, { url: serverUrl(), scope: flags.scope || 'user', force: !!flags.force, dryRun: !!flags['dry-run'], toolsets: flags.toolsets }) : [];
   }
   if (!flags['no-skills']) {
     const agents = skills.resolveAgents(flags.agent);
@@ -494,7 +506,7 @@ async function cmdInit(flags) {
     '  2. Inside the agent, check Exotel shows "connected" (Claude Code: type /mcp inside it, not in this shell).',
     '  3. Ask it in plain words, for example:',
     '     "What is my Exotel balance and which phone numbers do I have?"',
-    '     "Create an Exotel VoiceBot that confirms tomorrow\'s appointment, then test-call +91XXXXXXXXXX"',
+    '     "Create an Exotel VoiceBot that confirms tomorrow\'s appointment, then call +91XXXXXXXXXX"',
     '  Prefer the terminal? Try: exotel balance · exotel numbers list · exotel ask "connect my bot to a call"',
   ].filter((x) => x !== null).join('\n'));
 }
@@ -508,7 +520,7 @@ NOT SURE WHICH API?
   exotel explain <code|word> | explain --list            what a status / error code means (e.g. 408, 1012, no-answer, 23005)
 
 GET STARTED
-  exotel call [number]        place a test call; asks what to connect (VoiceBot, flow or your wss bot)
+  exotel call [number]        place a call; asks what to connect (VoiceBot, flow or your wss bot)
   exotel config               saved defaults: your number, caller ID, default bot
   exotel completion zsh|bash|fish   tab-completion for your shell
   exotel init                 log in, connect your coding agents (MCP), install Exotel skills
@@ -536,7 +548,13 @@ SIP TRUNKING (Dynamic SIP trunks)
 AI VOICE  → exotel voice-ai --help
   exotel voice-ai connect --to <E.164> --stream-url wss://…   $   call a number, connect it to YOUR bot (Connect Voice AI)
   exotel voice-ai connect --to <E.164> --app-id <app_id>        $   …or to an App Bazaar flow with a Voicebot applet
-  exotel voicebot create | attach | test-call | transcript | debug   Exotel-hosted VoiceBots → exotel voicebot --help
+  exotel voicebot create | call | result | prompt | attach | debug   Exotel-hosted VoiceBots → exotel voicebot --help
+
+MEMORY (remember every contact across calls and chats, any bot)  → exotel memory --help
+  exotel memory login                         add your Memory API key (cm_…) and Memory account SID
+  exotel voicebot memory on|off --bot-id <id>  ~  give a VoiceBot memory: each call loads and saves it
+  exotel memory get --phone <number>          what Memory knows about a contact
+  exotel memory note | event | save | search  push CRM facts (instant), save calls from any bot, find contacts
 
 VOICE-AI PLATFORMS (already connected to Exotel)  → exotel integrate --help
   exotel integrate elevenlabs|bolna status | setup | call --agent <id> --to <E.164> [--wait] | result --id <id>
@@ -557,6 +575,7 @@ EVERYTHING ELSE
   exotel api <GET|POST|PUT|DELETE> </path/with/{sid}> [--host api|cpaas] [--query …] [--data '{json}'] [--form …]
   exotel mcp tools [--filter text] | mcp tool <name> | mcp call <tool> key=value…   (VoiceBot, SMS, WhatsApp, CQA, AI Assist…)
   exotel mcp install | config | clients   connect agents; they run "exotel mcp proxy", so their configs hold no token
+                                        --toolsets voicebot,memory gives the agent only those tools (faster)
   exotel skill list | install
 
   $ = billed or rings a real phone   ~ = changes live routing   ! = cannot be undone
@@ -586,7 +605,7 @@ const SUBHELP = {
   voiceai: platform.USAGE.VOICE_AI_USAGE,
 };
 
-const COMMANDS = ['init', 'login', 'logout', 'whoami', 'doctor', 'config', 'call', 'balance', 'numbers', 'calls', 'campaigns', 'voicebot', 'voice-ai',
+const COMMANDS = ['init', 'login', 'logout', 'whoami', 'doctor', 'config', 'call', 'balance', 'numbers', 'calls', 'campaigns', 'voicebot', 'memory', 'voice-ai',
   'integrate', 'leg', 'bridge', 'events', 'exoml', 'applet', 'trunk', 'api', 'mcp', 'skill', 'ask', 'explain', 'docs', 'completion', 'help'];
 
 const HOME = () => {
@@ -597,7 +616,7 @@ const HOME = () => {
 
 ${b('Start here')}
   ${loggedIn ? ui.c.green('✔ logged in') + ui.c.dim(' (exotel whoami)') : 'exotel init           log in and connect your coding agent'}
-  exotel call           place a test call — it asks you what to connect, step by step
+  exotel call           place a call — it asks you what to connect, step by step
   exotel balance        your account balance
   exotel numbers list   your Exotel phone numbers
 
@@ -663,7 +682,8 @@ async function main(argv) {
     case 'agentstream':
       throw new CliError('"exotel agentstream call" is now "exotel voice-ai connect" (Connect Voice AI API). Run: exotel voice-ai --help', EXIT.USAGE);
     case 'api': return platform.api([sub, ...rest], flags);
-    case 'voicebot': return cmdVoicebot(sub, flags);
+    case 'voicebot': return cmdVoicebot(sub, flags, rest);
+    case 'memory': return require('../lib/memory').cmd(sub, flags);
     case 'integrate': return require('../lib/integrations').run(sub, rest[0], flags);
     case 'ask': return require('../lib/ask').ask([sub, ...rest].filter(Boolean).join(' '), flags);
     case 'explain': {

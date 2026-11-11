@@ -153,7 +153,8 @@ function suggest(word, options) {
   const w = String(word || '').toLowerCase();
   if (!w) return null;
   const prefix = options.filter((o) => o.startsWith(w));
-  if (prefix.length === 1) return prefix[0];
+  // A unique prefix wins, unless another option is a one-letter typo away ("too" means "to", not "toolsets").
+  if (prefix.length === 1 && !options.some((o) => o !== prefix[0] && distance(w, o) <= 1)) return prefix[0];
   let best = null;
   let bestD = Infinity;
   for (const o of options) {

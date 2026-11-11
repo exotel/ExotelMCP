@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const SECRET_KEYS = new Set([
-  'token', 'voicebot_api_key', 'voicebot_api_token', 'calls_api_key', 'calls_api_token', 'cqa_api_key',
+  'token', 'voicebot_api_key', 'voicebot_api_token', 'calls_api_key', 'calls_api_token', 'cqa_api_key', 'memory_api_key',
 ]);
 
 const REGIONS = {
@@ -29,7 +29,8 @@ function credentialsPath() {
 
 /** Build the Authorization-header object from plain inputs. */
 function buildAuth({ accountSid, apiKey, apiToken, apiDomain, callerId, fromNumber, whatsappFrom,
-  voicebotApiKey, voicebotApiToken, voicebotAccountId, cqaApiKey, cqaAccountId, cqaHost, portalUrl }) {
+  voicebotApiKey, voicebotApiToken, voicebotAccountId, cqaApiKey, cqaAccountId, cqaHost, portalUrl,
+  memoryApiKey, memoryAccountSid, memoryBaseUrl }) {
   const auth = {
     token: Buffer.from(`${apiKey}:${apiToken}`).toString('base64'),
     account_sid: accountSid,
@@ -52,6 +53,11 @@ function buildAuth({ accountSid, apiKey, apiToken, apiDomain, callerId, fromNumb
     auth.cqa_api_key = cqaApiKey;
     auth.cqa_account_id = cqaAccountId || accountSid;
     auth.cqa_host = cqaHost || 'https://cqa-console.in.exotel.com';
+  }
+  if (memoryApiKey && memoryAccountSid) {
+    auth.memory_api_key = memoryApiKey;
+    auth.memory_account_sid = memoryAccountSid;
+    if (memoryBaseUrl) auth.memory_base_url = memoryBaseUrl;
   }
   return auth;
 }
@@ -77,6 +83,9 @@ function fromEnv(env = process.env) {
       cqaApiKey: env.EXOTEL_CQA_API_KEY,
       cqaAccountId: env.EXOTEL_CQA_ACCOUNT_ID,
       cqaHost: env.EXOTEL_CQA_HOST,
+      memoryApiKey: env.EXOTEL_MEMORY_API_KEY,
+      memoryAccountSid: env.EXOTEL_MEMORY_ACCOUNT_SID,
+      memoryBaseUrl: env.EXOTEL_MEMORY_BASE_URL,
     });
   }
   return null;
@@ -130,6 +139,7 @@ function products(auth) {
   if (auth.voicebot_api_key && auth.voicebot_account_id) p.push('voicebot');
   if (auth.whatsapp_from) p.push('whatsapp');
   if (auth.cqa_api_key) p.push('cqa');
+  if (auth.memory_api_key && auth.memory_account_sid) p.push('memory');
   return p;
 }
 

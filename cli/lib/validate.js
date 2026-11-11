@@ -12,7 +12,8 @@ const SUBCOMMANDS = {
   calls: ['list', 'get', 'recording'],
   campaigns: ['list', 'get', 'calls', 'lists', 'create', 'pause', 'resume', 'complete', 'archive', 'delete'],
   campaign: null, // alias of campaigns, checked through it
-  voicebot: ['list', 'create', 'attach', 'test-call', 'transcript', 'debug'],
+  voicebot: ['list', 'create', 'call', 'result', 'prompt', 'memory', 'attach', 'transcript', 'debug', 'test-call'],
+  memory: ['login', 'get', 'search', 'save', 'note', 'event', 'forget'],
   'voice-ai': ['connect', 'setup', 'inbound'],
   bridge: ['create', 'get', 'update', 'stop', 'join', 'leave', 'action', 'say', 'play', 'record'],
   events: ['listen', 'scaffold'],
