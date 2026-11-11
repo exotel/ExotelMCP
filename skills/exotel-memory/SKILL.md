@@ -20,6 +20,7 @@ recent interactions. Works for any bot or agent on any channel.
 | A trusted business event (payment, delivery…) | `exotel memory event --phone <n> --type delivery --event-id <id> --yes` | `exotel_memory_record_event` |
 | Save a conversation from any other bot | `exotel memory save --phone <n> --id <id> --messages @turns.json --yes` | `exotel_memory_save_interaction` |
 | Turn memory off | `exotel voicebot memory off --bot-id <id> --yes` | `exotel_voicebot_memory_disable` |
+| Start a contact from zero (delete their memory; cannot be undone, ask first) | `exotel memory forget --phone <number> --yes` | `exotel_memory_delete_contact` |
 
 `memory on` does the whole job in one call: Memory webhooks on the bot, a memory section in every place the
 prompt lives (greet returning callers by name, never re-ask, new notes first, no titles), and it turns off the
@@ -71,4 +72,5 @@ note done, so later incoming calls are treated as incoming. The CLI does that it
 | Bot still asks everything again | Memory is off (`voicebot memory on`), or the call's details were not learned: check `voicebot result`. |
 | `memory get` shows no name after a clear call | Memory may have judged the call off-topic for the account's business (disposition wrong_number). Tell the user; the Memory account must be set up for this business. |
 | 401 / 403 from Memory | Run `exotel memory login` again; 403 = the key lacks the scope. |
+| `memory forget` says the key may not delete | The Memory API key needs the `profile:delete` scope: ask the Exotel Memory team. |
 | "already sends session_start" | The bot has its own webhook. Ask the user before `--replace-existing`. |
