@@ -223,7 +223,7 @@ public class LegsService {
         }
     }
 
-    @Tool(name = "exotel_legs_inbound_bot",
+    @Tool(name = "exotel_legs_inbound_guide",
           description = "How to put a voice bot on incoming calls to a Legs-enabled number with ExoML instead of an App Bazaar flow: "
               + "the exact steps and ExoML for the user's own event server, plus the no-support alternative (route the number to a "
               + "flow with a VoiceBot applet). Read-only: changes nothing.")
