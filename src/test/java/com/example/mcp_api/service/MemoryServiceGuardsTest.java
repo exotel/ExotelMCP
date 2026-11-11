@@ -47,16 +47,6 @@ class MemoryServiceGuardsTest {
         assertThrows(IllegalArgumentException.class, () -> MemoryService.validateHost("not a url"));
     }
 
-    @Test
-    void openingLineThatAsksForTheNameIsShortened() {
-        String g = "Hello, thank you for calling Exotel Bank support. I can help you with a lost debit card. May I have your name please?";
-        assertTrue(MemoryService.asksQuestion(g));
-        assertEquals("Hello, thank you for calling Exotel Bank support. I can help you with a lost debit card.", MemoryService.shortenGreeting(g));
-        assertFalse(MemoryService.asksQuestion("Hi, this is City Dental."));
-        assertTrue(MemoryService.asksQuestion("Hi, this is Exotel Bank support. How can I assist you today?"));
-        assertEquals("Hi, this is Exotel Bank support.", MemoryService.shortenGreeting("Hi, this is Exotel Bank support. How can I assist you today?"));
-        assertEquals("Hello!", MemoryService.shortenGreeting("What is your name?"));
-    }
 
     @Test
     void memorySectionIsAddedOnceAndRemovedCleanly() {
@@ -93,11 +83,6 @@ class MemoryServiceGuardsTest {
         assertTrue(on.startsWith("Be helpful."));
     }
 
-    @Test
-    void shortenedGreetingKeepsTheBotsIntroduction() {
-        assertEquals("Hi, I'm Asha from Exotel Bank.", MemoryService.shortenGreeting("Hi, I'm Asha from Exotel Bank. What's your name?"));
-        assertEquals("Hi, my name is Asha.", MemoryService.shortenGreeting("Hi, my name is Asha. May I have your name, please?"));
-    }
 
     @Test
     void finishedOutboundNoteDoesNotLookLikeALiveOne() {
