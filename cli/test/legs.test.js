@@ -25,7 +25,8 @@ function sandbox() {
 test('Legs MCP tools that place calls ask first and count as spend', () => {
   for (const t of ['exotel_legs_call_bot', 'exotel_legs_dial', 'exotel_legs_action']) assert.strictEqual(classify(t), 'spend', t);
   assert.strictEqual(classify('exotel_legs_get'), 'safe');
-  for (const t of ['exotel_legs_bridge_create', 'exotel_legs_inbound_bot', 'exotel_legs_inbound_stop']) assert.notStrictEqual(classify(t), 'safe', t);
+  assert.notStrictEqual(classify('exotel_legs_bridge_create'), 'safe');
+  assert.strictEqual(classify('exotel_legs_inbound_guide'), 'safe', 'read-only guide');
 });
 
 test('legs is a toolset agents can ask for', () => {
