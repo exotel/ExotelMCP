@@ -12,6 +12,7 @@ const USAGE = `Exotel Memory: remember every contact across calls and chats (any
 exotel memory login [--account <Memory account SID>] [--url https://memory.in.exotel.com]   key: prompt, EXOTEL_MEMORY_API_KEY or --key-stdin
 exotel memory get --phone <number> | --profile-id <id> [--query "…"] [--audience customer]   what Memory knows
 exotel memory search [--q <phone|email|id>] [--limit 20]                                    find contacts (exact match, never by name)
+exotel memory forget --phone <number> | --profile-id <id>                                  delete a contact's memory (start from zero)
 exotel memory save --phone <number> --id <interaction id> (--messages @turns.json | --transcript @call.txt | --audio-url https://…)
                    [--channel VOICE|CHAT|WHATSAPP|SMS|EMAIL] [--direction inbound|outbound] [--source voicebot]
 exotel memory note --phone <number> --text "Offer: 20% off this week" [--agents-only]      bots see it on the very next call
@@ -266,6 +267,26 @@ async function botFromGeneration(a, id) {
   }
 }
 
+/** Deletes one contact's memory so the next call starts from zero. Cannot be undone; needs the profile:delete scope. */
+async function forget(flags) {
+  const auth = memoryAuth();
+  let id = flags['profile-id'] !== undefined ? need(flags, 'profile-id', /^[A-Za-z0-9_.:-]{1,128}$/, 'profile ID from exotel memory search') : null;
+  const who = id || phone(need(flags, 'phone'));
+  if (!id) {
+    const r = await rest.send(rest.buildRequest(auth, { host: 'memory', path: '/accounts/{sid}/memory', query: { phone: who, format: 'markdown', budget: 100 } }));
+    if (r.status === 404) return out({ ok: true, deleted: false, note: 'Memory has nothing for this contact: it already starts from zero.' }, `Memory has nothing for ${who}: it already starts from zero.`);
+    id = r.data && r.data.profileId;
+    if (!r.ok || !id) throw new CliError(`Could not find ${who} in Memory (HTTP ${r.status}).`, EXIT.ERROR);
+  }
+  const res = await run(flags, {
+    kind: 'destructive', summary: `Delete everything Memory knows about ${who} (profile ${id}). Cannot be undone`,
+    request: { method: 'DELETE', host: 'memory', path: `/accounts/{sid}/profiles/${rest.seg(id, 'profile-id')}` },
+    render: () => `✔ Deleted. The next call with ${who} starts from zero; memory stays on for your bots.`,
+  });
+  if (res && res.status === 403) info('This Memory API key may not delete contacts (no profile:delete scope). Ask the Exotel Memory team to add it.');
+  return res;
+}
+
 function cmd(sub, flags) {
   switch (sub) {
     case 'login': return login(flags);
@@ -274,6 +295,7 @@ function cmd(sub, flags) {
     case 'save': return save(flags);
     case 'note': return note(flags);
     case 'event': return event(flags);
+    case 'forget': return forget(flags);
     default: throw new CliError(USAGE, EXIT.USAGE);
   }
 }

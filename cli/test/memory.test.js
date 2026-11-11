@@ -79,6 +79,16 @@ test('memory note: asks first, dry-run previews the exact request, nothing is se
   assert.deepStrictEqual(dry.json.request.body, { contact_details: [{ type: 'phone', value: '+919876543210' }], text: 'Offer: 10% off this week', visible_to_bots: true });
 });
 
+test('memory forget: cannot be undone, so it asks first; dry-run shows the DELETE', async () => {
+  const ask = await cli(['memory', 'forget', '--profile-id', 'prof-1']);
+  assert.strictEqual(ask.code, 3);
+  assert.strictEqual(ask.json.kind, 'destructive');
+  const dry = await cli(['memory', 'forget', '--profile-id', 'prof-1', '--dry-run']);
+  assert.strictEqual(dry.json.request.method, 'DELETE');
+  assert.strictEqual(dry.json.request.url, 'https://memory.in.exotel.com/memory/api/v1/accounts/mem_acme/profiles/prof-1');
+  assert.strictEqual(classify('exotel_memory_delete_contact'), 'destructive');
+});
+
 test('memory event and save validate input before anything is sent', async () => {
   const badType = await cli(['memory', 'event', '--phone', '+919876543210', '--type', 'refund', '--event-id', 'E1', '--dry-run']);
   assert.strictEqual(badType.code, 2);
