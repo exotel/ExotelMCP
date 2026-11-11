@@ -146,6 +146,7 @@ async function send(req, { timeoutMs = 30000 } = {}) {
     else if (data && typeof data === 'object' && typeof data.detail === 'string') result.message = data.detail; // Memory API (RFC 7807)
     if (code === 1000 && /\/(legs|bridges)(\/|$)/.test(String(req.url))) result.hint = 'Not found: check the leg or bridge SID (they are kept for a limited time; a new leg shows up after about a second).';
     else if (code !== undefined && TRUNK_ERRORS[code]) result.hint = TRUNK_ERRORS[code];
+    else if (res.status === 403 && /^Not allowed: [\w:.-]+$/.test(result.message || '')) result.hint = `This API key lacks the ${result.message.slice(13)} permission. Ask the Exotel Memory team to add it to the key.`;
     else if (res.status === 401 || res.status === 403) result.hint = 'Credentials rejected or this API is not enabled on the account. Check `exotel whoami` and the region; ask Exotel support to enable the product if needed.';
     else if (res.status === 429) result.hint = 'Rate limited. Wait and retry.';
     if (code !== undefined) result.code = code;
