@@ -222,7 +222,7 @@ async function voicebot(action, flags) {
   if (flags['keep-greeting']) args.keepGreeting = true;
   if (flags['replace-existing']) args.replaceExisting = true;
   return tool('exotel_voicebot_memory_enable', args, flags, {
-    summary: `Turn memory ON for VoiceBot ${bot}: Memory webhooks, a memory section in its prompt${args.keepGreeting ? '' : ', and a shorter opening line if it asks for the caller\'s name'}`,
+    summary: `Turn memory ON for VoiceBot ${bot}: Memory webhooks, a memory section in its prompt${args.keepGreeting || args.greeting ? '' : ', and its first line written with memory (fixed opening line off)'}`,
     render: (d) => [`✔ Memory is ON for ${bot}.`, `  Opening line: ${d.greeting || 'unchanged'}`,
       `  Prompt: ${d.prompt && d.prompt.changed ? `memory section added (version ${d.prompt.version}, ${d.prompt.promptLocations} places)` : (d.prompt && d.prompt.note) || 'unchanged'}`,
       '  Next: exotel voicebot call --bot-id <id> --to <number>, then exotel voicebot result --call-sid <CallSid>'].join('\n'),

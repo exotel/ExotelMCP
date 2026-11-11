@@ -22,10 +22,10 @@ recent interactions. Works for any bot or agent on any channel.
 | Turn memory off | `exotel voicebot memory off --bot-id <id> --yes` | `exotel_voicebot_memory_disable` |
 
 `memory on` does the whole job in one call: Memory webhooks on the bot, a memory section in every place the
-prompt lives (greet returning callers by name, never re-ask, new notes first, no titles), and a shorter
-opening line if the fixed greeting asks for the caller's name (it plays before the AI, so returning callers
-would be asked again). Pass `--greeting "Hi, this is …"` to choose the line, or `--keep-greeting`. Running it
-again changes nothing. Use the bot ID; a generation ID from `voicebot create` also works.
+prompt lives (greet returning callers by name, never re-ask, new notes first, no titles), and it turns off the
+fixed opening line, which plays before memory is loaded, so the bot's first line uses memory ("Hi Saurabh, this
+is Exotel Bank support…"). `--greeting "Hi, this is …"` keeps a fixed line instead; `--keep-greeting` leaves it.
+`memory off` turns the fixed line back on. Running it again changes nothing. Use the bot ID; a generation ID from `voicebot create` also works.
 
 ## Rules
 
@@ -67,7 +67,7 @@ note done, so later incoming calls are treated as incoming. The CLI does that it
 
 | Symptom | Cause and fix |
 |---|---|
-| Bot asks the name, then says "welcome back" | The fixed opening line asks for the name. `exotel voicebot memory on --bot-id <id> --greeting "Hi, this is …"`. |
+| Bot asks the name, then says "welcome back" | A fixed opening line plays before memory. Run `exotel voicebot memory on --bot-id <id>` again (without `--keep-greeting`). |
 | Bot still asks everything again | Memory is off (`voicebot memory on`), or the call's details were not learned: check `voicebot result`. |
 | `memory get` shows no name after a clear call | Memory may have judged the call off-topic for the account's business (disposition wrong_number). Tell the user; the Memory account must be set up for this business. |
 | 401 / 403 from Memory | Run `exotel memory login` again; 403 = the key lacks the scope. |

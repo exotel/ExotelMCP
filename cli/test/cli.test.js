@@ -21,6 +21,7 @@ test('parseArgs handles booleans, values, = form and -y', () => {
 });
 
 test('classify marks billed and destructive tools', () => {
+  assert.strictEqual(classify('exotel_voicebot_find_session_by_call_sid'), 'safe');
   assert.strictEqual(classify('exotel_voicebot_place_call'), 'spend');
   assert.strictEqual(classify('exotel_connect_voice_ai'), 'spend');
   assert.strictEqual(classify('exotel_sms_send_single'), 'spend');

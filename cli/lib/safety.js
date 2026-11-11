@@ -14,7 +14,7 @@ const SPEND = [
 const DESTRUCTIVE = [/(^|_)delete($|_)/, /revoke/, /terminate/, /archive/, /detach/];
 // Any of these words in a tool name means it changes something, even if it also says get/list.
 const WRITE_VERB = /(^|_)(create|update|delete|publish|send|place|initiate|connect|spawn|terminate|revoke|archive|detach|attach|ingest|import|upload|login|configure|duplicate|push|improve|smoke|test|set|add|remove|assign|enable|disable|start|stop|pause|resume|retry|run|execute|trigger|reset|rotate)(_|$)/;
-const READ = /(^|_)(get|list|search|status|result|details|metadata|whoami|guide|track|timeline|settings|wait|build|play|open|download|template|providers|voices|languages)(_|$)/;
+const READ = /(^|_)(get|list|search|find|status|result|details|metadata|whoami|guide|track|timeline|settings|wait|build|play|open|download|template|providers|voices|languages)(_|$)/;
 
 function classify(toolName) {
   const name = String(toolName).replace(/^exotel_/, '');
