@@ -52,10 +52,10 @@ public class MemoryService {
     static final String MEMORY_BLOCK = MEMORY_BLOCK_START + "\n"
         + "Your first reply, in this order:\n"
         + "1. Who called whom: find the first line in the memory below that starts with \"- note:\". If it starts with "
-        + "\"- note: Outbound call:\", you placed this call to tell them that: greet them by name, say that reason in one sentence and ask "
+        + "\"- note: Outbound call:\", you placed this call to tell them that: say \"Hi\" and their first name, who you are in a few words, that reason in one sentence, and ask "
         + "if now is a good time. This comes before your usual task. Never ask how you can help, and do not bring up older topics "
         + "unless they do. Otherwise the caller called you.\n"
-        + "2. Returning caller who called you: use their name, recap in one sentence what you already know (newest notes first, then "
+        + "2. Returning caller who called you: say \"Hi\" and their first name, who you are in a few words, then recap in one sentence what you already know (newest notes first, then "
         + "the open topic), and never ask again for anything you already know.\n"
         + "3. If the memory below is empty or still shows curly braces, you know nothing about this caller: treat them as new.\n"
         + "What you remember about this caller (filled in by Exotel Memory at the start of every call):\n"
@@ -120,6 +120,37 @@ public class MemoryService {
             out.put("memory", b.path("memory").asText(""));
             if (b.path("truncated").asBoolean(false)) out.put("more", "Shortened; pass detail=full for everything.");
             return objectMapper.writeValueAsString(out);
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "exotel_memory_delete_contact",
+          description = "Deletes everything Exotel Memory knows about one contact (profile, notes, interactions), so the next call or "
+              + "chat starts from zero. Cannot be undone: tell the user what will be deleted and get a clear yes first. Identify the "
+              + "contact by phone or profileId. Needs the profile:delete scope on the Memory API key.")
+    public String deleteContact(
+            @ToolParam(description = "Contact phone, e.g. +919876543210", required = false) String phone,
+            @ToolParam(description = "Memory profile ID (from exotel_memory_search_contacts)", required = false) String profileId) {
+        try {
+            Ctx c = ctx();
+            String id = notBlank(profileId) ? profileId.trim() : null;
+            if (id == null) {
+                if (!notBlank(phone)) return "Error: give phone or profileId";
+                Resp r = send(c, "GET", c.apiBase + "/memory?format=markdown&budget=100&audience=internal&phone=" + enc(normalizePhone(phone)), null);
+                if (r.status == 404) return "{\"deleted\":false,\"note\":\"Memory has nothing for this contact: it already starts from zero.\"}";
+                id = objectMapper.readTree(r.body).path("profileId").asText("");
+            }
+            if (!SAFE_ID.matcher(id).matches()) return "Error: profileId has invalid characters";
+            Resp d = send(c, "DELETE", c.apiBase + "/profiles/" + enc(id), null);
+            if (d.status == 404) return "{\"deleted\":false,\"note\":\"No such contact in Memory.\"}";
+            return objectMapper.writeValueAsString(objectMapper.createObjectNode().put("deleted", true).put("profileId", id)
+                .put("next", "The next call or chat with this contact starts from zero. Memory stays on for your bots."));
+        } catch (IllegalStateException e) {
+            if (String.valueOf(e.getMessage()).contains("Memory API 403"))
+                return "Error: this Memory API key may not delete contacts (it lacks the profile:delete scope). Nothing was deleted. "
+                    + "Ask the Exotel Memory team to add profile:delete to the key.";
+            return "Error: " + e.getMessage();
         } catch (Exception e) {
             return "Error: " + e.getMessage();
         }
@@ -246,9 +277,9 @@ public class MemoryService {
     @Tool(name = "exotel_voicebot_memory_enable",
           description = "Gives any Exotel VoiceBot memory in one step, so callers are remembered across calls (inbound and outbound): "
               + "1) points the bot's session_start/session_end webhooks at Exotel Memory, 2) adds a memory section to the bot's prompt "
-              + "(every place the prompt lives) that greets returning callers by name and puts new notes first, 3) if the bot's fixed "
-              + "opening line asks a question (name, how can I help), keeps only its introduction so the first reply can use memory (pass greeting to choose the "
-              + "line yourself, or keepGreeting=true). Safe to run again. A different existing session_start/session_end webhook is only "
+              + "(every place the prompt lives) that greets returning callers by name and puts new notes first, 3) turns off the fixed "
+              + "opening line, so the bot's first line is written with memory (\"Hi Saurabh, this is ...\"). Pass greeting to use a fixed "
+              + "line instead, or keepGreeting=true to leave it. Safe to run again. A different existing session_start/session_end webhook is only "
               + "replaced when replaceExisting=true.")
     public String enableVoicebotMemory(
             @ToolParam(description = "VoiceBot ID") String voiceBotId,
@@ -274,16 +305,19 @@ public class MemoryService {
             ObjectNode patch = objectMapper.createObjectNode();
             patch.set("webhook_config", hooks);
 
+            // A fixed opening line plays before memory is loaded, so it can never use the caller's name. By default it is turned
+            // off and the bot's first line is written with memory; its text is kept, and memory off turns it back on.
             JsonNode gm = bot.path("greeting_message");
-            String oldGreeting = gm.path("text").asText("");
-            String newGreeting = notBlank(greeting) ? greeting.trim()
-                : (!Boolean.TRUE.equals(keepGreeting) && asksQuestion(oldGreeting) ? shortenGreeting(oldGreeting) : oldGreeting);
-            boolean greetingChanged = !newGreeting.equals(oldGreeting);
-            if (greetingChanged) {
-                ObjectNode g = gm.isObject() ? (ObjectNode) gm.deepCopy() : objectMapper.createObjectNode();
-                g.put("text", newGreeting);
-                patch.set("greeting_message", g);
+            ObjectNode g = gm.isObject() ? (ObjectNode) gm.deepCopy() : objectMapper.createObjectNode();
+            String greetingNote = "unchanged";
+            if (notBlank(greeting)) {
+                g.put("text", greeting.trim()).put("enabled", true);
+                greetingNote = "fixed line: " + greeting.trim();
+            } else if (!Boolean.TRUE.equals(keepGreeting) && gm.path("enabled").asBoolean(true)) {
+                g.put("enabled", false);
+                greetingNote = "off: the bot's first line now uses memory (Hi <name>, ...)";
             }
+            if (!"unchanged".equals(greetingNote)) patch.set("greeting_message", g);
             String res = voiceBotAdminTools.updateBotConfig(botId, objectMapper.writeValueAsString(patch));
             if (failed(res)) return res;
 
@@ -298,7 +332,7 @@ public class MemoryService {
             out.put("ok", true);
             out.put("voiceBotId", botId);
             out.put("memory", "on");
-            out.put("greeting", greetingChanged ? "changed to: " + newGreeting : "unchanged: " + oldGreeting);
+            out.put("greeting", greetingNote);
             out.set("prompt", prompt);
             out.put("next", "Call the bot (exotel_voicebot_place_call). After a call: exotel_voicebot_call_result shows the transcript and what Memory learned.");
             return objectMapper.writeValueAsString(out);
@@ -309,7 +343,7 @@ public class MemoryService {
 
     @Tool(name = "exotel_voicebot_memory_disable",
           description = "Turns Exotel Memory off for a VoiceBot: removes the Memory webhooks and the memory section from its prompt. "
-              + "Other webhooks, the opening line and saved memory are kept.")
+              + "Turns the fixed opening line back on. Other webhooks and saved memory are kept.")
     public String disableVoicebotMemory(@ToolParam(description = "VoiceBot ID") String voiceBotId) {
         try {
             String botId = checkBotId(voiceBotId);
@@ -322,6 +356,9 @@ public class MemoryService {
             }
             ObjectNode patch = objectMapper.createObjectNode();
             patch.set("webhook_config", hooks);
+            JsonNode gm = bot.path("greeting_message");
+            if (gm.isObject() && !gm.path("enabled").asBoolean(true) && notBlank(gm.path("text").asText("")))
+                patch.set("greeting_message", ((ObjectNode) gm.deepCopy()).put("enabled", true));
             String res = voiceBotAdminTools.updateBotConfig(botId, objectMapper.writeValueAsString(patch));
             if (failed(res)) return res;
             ObjectNode prompt;
@@ -515,25 +552,6 @@ public class MemoryService {
         // Someone edited the section and removed its end line: remove only the start line, never the text after it.
         if (e < 0) return (prompt.substring(0, s) + prompt.substring(s + startLen)).stripTrailing();
         return (prompt.substring(0, s).stripTrailing() + prompt.substring(e + MEMORY_BLOCK_END.length())).stripTrailing();
-    }
-
-    /**
-     * A fixed opening line plays before the AI (and memory). A question in it ("May I have your name?", "How can I help?")
-     * makes returning callers repeat themselves and makes outbound calls sound like incoming ones.
-     */
-    static boolean asksQuestion(String greeting) {
-        return greeting != null && greeting.contains("?");
-    }
-
-    /** Keeps the sentences that are not questions: "Hi, I'm Asha from X. May I have your name?" becomes "Hi, I'm Asha from X." */
-    static String shortenGreeting(String greeting) {
-        StringBuilder b = new StringBuilder();
-        for (String sentence : greeting.trim().split("(?<=[.!?])\\s+")) {
-            if (sentence.contains("?")) continue;
-            if (b.length() > 0) b.append(' ');
-            b.append(sentence.trim());
-        }
-        return b.length() > 0 ? b.toString() : "Hello!";
     }
 
     private void collectTurns(JsonNode n, ArrayNode out, int depth) {
