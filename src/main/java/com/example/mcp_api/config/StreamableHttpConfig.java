@@ -40,6 +40,9 @@ public class StreamableHttpConfig {
     private com.example.mcp_api.service.CqaService cqaService;
 
     @Autowired
+    private com.example.mcp_api.service.MemoryService memoryService;
+
+    @Autowired
     private com.example.mcp_api.service.VoiceBotService voiceBotService;
 
     @Autowired
@@ -200,17 +203,60 @@ public class StreamableHttpConfig {
     /**
      * Create tools list response using reflection to extract @Tool annotations from both ShoppingCart and ExotelService
      */
+    /**
+     * Toolsets: an agent that only needs some products asks for them (?toolsets=voicebot,memory on the MCP URL, or the
+     * X-Exotel-Toolsets header) and gets ~15 tools instead of ~130, which makes it faster and more accurate.
+     * No toolsets = every tool (unchanged behaviour). Calling a tool by name always works.
+     */
+    static final Map<String, List<String>> TOOLSETS = Map.of(
+        "voicebot", List.of("exotel_voicebot_"),
+        "toolserver", List.of("exotel_tools_server_"),
+        "memory", List.of("exotel_memory_", "exotel_voicebot_memory_", "exotel_voicebot_call_result", "exotel_voicebot_call_customer"),
+        "calls", List.of("exotel_voice_", "exotel_connect_voice_ai", "exotel_number_get_metadata", "exotel_events_endpoint_guide"),
+        "messaging", List.of("exotel_sms_", "exotel_whatsapp_", "exotel_engage_"),
+        "cqa", List.of("exotel_cqa_"),
+        "aiassist", List.of("exotel_aiassist_"),
+        "audio", List.of("exotel_audio_"));
+    static final java.util.Set<String> ALWAYS = java.util.Set.of("exotel_setup_guide", "exotel_build_config");
+
+    static java.util.Set<String> parseToolsets(String raw) {
+        java.util.Set<String> out = new java.util.TreeSet<>();
+        if (raw == null) return out;
+        for (String t : raw.toLowerCase().split("[,\\s]+")) if (TOOLSETS.containsKey(t.trim())) out.add(t.trim());
+        return out;
+    }
+
+    static boolean inToolsets(String tool, java.util.Set<String> sets) {
+        if (sets.isEmpty() || ALWAYS.contains(tool)) return true;
+        for (String set : sets) for (String prefix : TOOLSETS.get(set)) if (tool.startsWith(prefix)) return true;
+        return false;
+    }
+
+    private java.util.Set<String> requestedToolsets() {
+        try {
+            var attrs = (org.springframework.web.context.request.ServletRequestAttributes)
+                org.springframework.web.context.request.RequestContextHolder.currentRequestAttributes();
+            var req = attrs.getRequest();
+            String raw = req.getParameter("toolsets");
+            if (raw == null) raw = req.getHeader("X-Exotel-Toolsets");
+            return parseToolsets(raw);
+        } catch (Exception e) {
+            return java.util.Set.of();
+        }
+    }
+
     private Map<String, Object> createToolsListResponse(Object id) {
         List<Map<String, Object>> tools = new ArrayList<>();
+        java.util.Set<String> toolsets = requestedToolsets();
         
         // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
+        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, memoryService};
         
         for (Object service : services) {
             Method[] methods = service.getClass().getDeclaredMethods();
             for (Method method : methods) {
                 Tool toolAnnotation = method.getAnnotation(Tool.class);
-                if (toolAnnotation != null) {
+                if (toolAnnotation != null && inToolsets(toolAnnotation.name(), toolsets)) {
                     Map<String, Object> toolInfo = new HashMap<>();
                     toolInfo.put("name", toolAnnotation.name());
                     toolInfo.put("description", toolAnnotation.description());
@@ -294,7 +340,7 @@ public class StreamableHttpConfig {
             boolean isError = false;
             
             // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
+            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService, memoryService};
             
             for (Object service : services) {
                 Method[] methods = service.getClass().getDeclaredMethods();

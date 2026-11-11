@@ -54,6 +54,12 @@ public class AuthCredentials {
     private String cqaAccountId;
     private String cqaHost;
 
+    // Exotel Memory (contact memory across calls and chats)
+    private String memoryApiKey;
+    private String memoryAccountSid;
+    private String memoryBaseUrl;
+    private String memoryWebhookBaseUrl;
+
     // Tools Server
     private String toolsServerApiKey;
     private String toolsServerApiToken;
@@ -140,6 +146,12 @@ public class AuthCredentials {
             creds.cqaAccountId = textField(root, "cqa_account_id");
             creds.cqaHost = textField(root, "cqa_host");
 
+            // Exotel Memory
+            creds.memoryApiKey = textField(root, "memory_api_key");
+            creds.memoryAccountSid = textField(root, "memory_account_sid");
+            creds.memoryBaseUrl = textField(root, "memory_base_url");
+            creds.memoryWebhookBaseUrl = textField(root, "memory_webhook_base_url");
+
             // Tools Server
             creds.toolsServerApiKey = textField(root, "tools_server_api_key");
             creds.toolsServerApiToken = textField(root, "tools_server_api_token");
@@ -202,6 +214,11 @@ public class AuthCredentials {
     public boolean hasCqaCredentials() {
         return cqaApiKey != null && !cqaApiKey.isBlank()
             && cqaAccountId != null && !cqaAccountId.isBlank();
+    }
+
+    public boolean hasMemoryCredentials() {
+        return memoryApiKey != null && !memoryApiKey.isBlank()
+            && memoryAccountSid != null && !memoryAccountSid.isBlank();
     }
 
     public boolean hasToolsServerCredentials() {
@@ -329,6 +346,10 @@ public class AuthCredentials {
     public String getCqaApiKey() { return cqaApiKey; }
     public String getCqaAccountId() { return cqaAccountId; }
     public String getCqaHost() { return cqaHost; }
+    public String getMemoryApiKey() { return memoryApiKey; }
+    public String getMemoryAccountSid() { return memoryAccountSid; }
+    public String getMemoryBaseUrl() { return memoryBaseUrl; }
+    public String getMemoryWebhookBaseUrl() { return memoryWebhookBaseUrl; }
     public String getToolsServerApiKey() { return toolsServerApiKey; }
     public String getToolsServerApiToken() { return toolsServerApiToken; }
     public String getToolsServerTenantId() { return toolsServerTenantId; }
@@ -358,6 +379,7 @@ public class AuthCredentials {
         if (hasCallsCredentials()) sb.append("Calls ");
         if (hasAdminCredentials()) sb.append("Admin ");
         if (hasCqaCredentials()) sb.append("CQA ");
+        if (hasMemoryCredentials()) sb.append("Memory ");
         if (hasToolsServerCredentials()) sb.append("ToolsServer ");
         if (hasAiAssistCredentials()) sb.append("AIAssist ");
         return sb.length() > 0 ? sb.toString().trim() : "NONE";
