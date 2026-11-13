@@ -16,11 +16,13 @@ BASIC_PASS = os.environ.get("EXOTEL_EVENTS_PASS", "")
 CPAAS = "https://cpaas-api.in.exotel.com"
 AUTH = "Basic " + base64.b64encode(f"{os.environ.get('EXOTEL_API_KEY')}:{os.environ.get('EXOTEL_API_TOKEN')}".encode()).decode()
 MAX_BODY = 256 * 1024
-seen = set()
+seen = {}  # event_sid -> None, oldest first (dicts keep insertion order)
 lock = threading.Lock()
 
 if not TOKEN and not BASIC_USER and os.environ.get("ALLOW_UNAUTHENTICATED") != "1":
     sys.exit("Set EXOTEL_EVENTS_TOKEN (secret in the event URL) or EXOTEL_EVENTS_USER/PASS. Anyone could post fake call events otherwise.")
+if bool(BASIC_USER) != bool(BASIC_PASS):
+    sys.exit("Basic auth needs both EXOTEL_EVENTS_USER and EXOTEL_EVENTS_PASS. Set both, or neither.")
 
 
 def authorized(handler):
@@ -84,9 +86,9 @@ class Handler(BaseHTTPRequestHandler):
             if sid and sid in seen:                          # retry of an event already handled
                 return
             if sid:
-                seen.add(sid)
+                seen[sid] = None
                 if len(seen) > 10000:
-                    seen.pop()
+                    del seen[next(iter(seen))]  # drop the oldest, never the one just added
         # Log the event type and leg only: event data contains callers' phone numbers.
         print(event["event_name"], (event.get("data") or {}).get("leg_sid") if isinstance(event.get("data"), dict) else None)
         threading.Thread(target=handle, args=(event,), daemon=True).start()  # 2) decide 3) act

@@ -21,6 +21,10 @@ if (!TOKEN && !BASIC_USER && process.env.ALLOW_UNAUTHENTICATED !== '1') {
   console.error('Set EXOTEL_EVENTS_TOKEN (secret in the event URL) or EXOTEL_EVENTS_USER/PASS. Anyone could post fake call events otherwise.');
   process.exit(1);
 }
+if (Boolean(BASIC_USER) !== Boolean(BASIC_PASS)) {
+  console.error('Basic auth needs both EXOTEL_EVENTS_USER and EXOTEL_EVENTS_PASS. Set both, or neither.');
+  process.exit(1);
+}
 
 const same = (a, b) => { const x = Buffer.from(String(a)); const y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 function authorized(req) {
