@@ -37,6 +37,9 @@ public class SetupTools {
         if (target.equals("all") || target.equals("cqa")) {
             guide.append(cqaGuide(creds));
         }
+        if (target.equals("all") || target.equals("memory")) {
+            guide.append(memoryGuide(creds));
+        }
         if (target.equals("all") || target.equals("cpaas")) {
             guide.append(cpaasGuide(creds));
         }
@@ -48,7 +51,7 @@ public class SetupTools {
     @Tool(name = "exotel_build_config",
           description = "Interactive config builder — generates a ready-to-paste mcp.json or claude_desktop_config.json "
               + "snippet based on the products you want to use. "
-              + "Parameter 'products': comma-separated list of products to include (voicebot, cqa, cpaas). "
+              + "Parameter 'products': comma-separated list of products to include (voicebot, cqa, cpaas, memory). "
               + "Parameter 'client': 'cursor' or 'claude' (determines config format). "
               + "Returns a JSON config template with placeholder values you fill in.")
     public String buildConfig(String products, String client) {
@@ -58,6 +61,7 @@ public class SetupTools {
         boolean includeVoicebot = productList.contains("voicebot");
         boolean includeCqa = productList.contains("cqa");
         boolean includeCpaas = productList.contains("cpaas");
+        boolean includeMemory = productList.contains("memory");
 
         StringBuilder authFields = new StringBuilder();
         if (includeCpaas) {
@@ -79,6 +83,11 @@ public class SetupTools {
             authFields.append("\"cqa_api_key\":\"YOUR_CQA_API_KEY\",");
             authFields.append("\"cqa_account_id\":\"YOUR_CQA_ACCOUNT_ID\",");
             authFields.append("\"cqa_host\":\"https://cqa-console.in.exotel.com\",");
+        }
+
+        if (includeMemory) {
+            authFields.append("\"memory_api_key\":\"YOUR_MEMORY_API_KEY\",");
+            authFields.append("\"memory_account_sid\":\"YOUR_MEMORY_ACCOUNT_SID\",");
         }
 
         String authJson = authFields.toString();
@@ -151,6 +160,21 @@ public class SetupTools {
             + "- Ingest call recordings for analysis\n"
             + "- Get quality scores and insights\n"
             + "- Track analysis jobs\n\n";
+    }
+
+    private String memoryGuide(AuthCredentials creds) {
+        String status = creds.hasMemoryCredentials() ? "CONFIGURED" : "NOT CONFIGURED";
+        return "## Exotel Memory [" + status + "]\n\n"
+            + "Remember every contact across calls and chats, for any bot or agent.\n\n"
+            + "**Credentials needed:**\n"
+            + "- `memory_api_key` — Memory console → API keys (starts with cm_)\n"
+            + "- `memory_account_sid` — shared by Exotel during Memory onboarding\n"
+            + "- `memory_base_url` — (optional) defaults to https://memory.in.exotel.com\n\n"
+            + "**What you can do:**\n"
+            + "- Give any VoiceBot memory with one call: exotel_voicebot_memory_enable\n"
+            + "- Read what Memory knows about a contact: exotel_memory_get\n"
+            + "- Save calls and chats from any bot: exotel_memory_save_interaction\n"
+            + "- Push CRM updates the bot sees on the next call: exotel_memory_add_note, exotel_memory_record_event\n\n";
     }
 
     private String cpaasGuide(AuthCredentials creds) {

@@ -136,15 +136,111 @@ public class VoiceBotAdminTools {
         return input.replaceAll("[\\r\\n\\t]", " ").substring(0, Math.min(input.length(), 200));
     }
 
+    // ======================== ASSISTANT HELPERS ========================
+
+    /** Rewrites one prompt location. agentIndex is -1 for the top-level instruction, 0 for the first agent. */
+    public interface InstructionPatch { String apply(String current, String oldTopLevel, int agentIndex); }
+
+    /**
+     * Accepts an assistant ID or a VoiceBot ID (what people usually have: exotel_voicebot_create returns the bot ID)
+     * and returns the assistant ID.
+     */
+    public String resolveAssistantId(String id) throws Exception {
+        validateId(id, "assistantId");
+        try {
+            JsonNode d = getAssistantData(id);
+            if (d.has("id")) return id;
+        } catch (HttpClientErrorException notAnAssistant) { /* try as a bot */ }
+        String botUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + id;
+        JsonNode root = objectMapper.readTree(safeBody(restTemplate.exchange(botUrl, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class)));
+        JsonNode bot = root.path("response").has("data") ? root.path("response").path("data") : root.path("response");
+        String assistant = bot.path("assistant_config").path("id").asText("");
+        if (assistant.isBlank()) throw new IllegalArgumentException(id + " is neither an assistant ID nor a VoiceBot ID on this account");
+        return assistant;
+    }
+
+    /** The assistant's stable version: instruction, agents, stable_version. */
+    public JsonNode getAssistantData(String assistantId) throws Exception {
+        String url = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=stable";
+        JsonNode root = objectMapper.readTree(safeBody(restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class)));
+        return root.path("response").path("data");
+    }
+
+    /** The full VoiceBot config (v1), including greeting_message and webhook_config. */
+    public JsonNode getBotV1(String botId) throws Exception {
+        validateId(botId, "voiceBotId");
+        String url = getV1BaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + botId;
+        JsonNode root = objectMapper.readTree(safeBody(restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class)));
+        JsonNode d = root.path("response").path("data");
+        if (!d.isObject()) d = root.path("response");
+        if (!d.has("id")) throw new IllegalStateException("could not read VoiceBot " + botId);
+        return d;
+    }
+
+    /**
+     * Publishes a new stable assistant version with every prompt location rewritten: the top-level instruction and each
+     * agent's instruction. Generated bots keep the same prompt in both places and the agent's copy is the one used on calls.
+     * Returns {"version": "vN"} on success.
+     */
+    public JsonNode publishInstructions(String assistantId, InstructionPatch patch, String description) throws Exception {
+        JsonNode data = getAssistantData(assistantId);
+        String stable = data.path("stable_version").asText(data.path("latest_version").asText(""));
+        String oldTop = data.path("instruction").asText("");
+        JsonNode agents = data.path("agents");
+        if (!agents.isArray() || agents.isEmpty()) agents = data.path("versions").path(stable).path("agents");
+        int count = agents.isArray() ? agents.size() : 0;
+
+        ObjectNode version = objectMapper.createObjectNode();
+        int changed = 0;
+        if (!oldTop.isEmpty() || count == 0) {
+            String top = patch.apply(oldTop, oldTop, -1);
+            if (!top.equals(oldTop)) changed++;
+            version.put("instruction", top);
+        }
+        if (count > 0) {
+            ArrayNode out = objectMapper.createArrayNode();
+            int i = 0;
+            for (JsonNode a : agents) {
+                ObjectNode copy = (ObjectNode) a.deepCopy();
+                String before = a.path("instruction").asText("");
+                String after = patch.apply(before, oldTop, i++);
+                if (!after.equals(before)) changed++;
+                copy.put("instruction", after);
+                out.add(copy);
+            }
+            version.set("agents", out);
+        }
+        ObjectNode payload = objectMapper.createObjectNode();
+        if (!stable.isBlank()) payload.put("source_version", stable);
+        payload.put("mark_as_stable", "true");
+        payload.put("version_description", description);
+        payload.set("data", version);
+        String postUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "/versions";
+        JsonNode res = objectMapper.readTree(safeBody(restTemplate.exchange(postUrl, HttpMethod.POST,
+            new HttpEntity<>(objectMapper.writeValueAsString(payload), adminHeaders()), String.class)));
+        ObjectNode out = objectMapper.createObjectNode();
+        out.put("version", res.path("response").path("data").path("version").asText(""));
+        out.put("assistantId", assistantId);
+        out.put("promptLocations", 1 + count);
+        out.put("promptLocationsChanged", changed);
+        return out;
+    }
+
+    /** As before: the top-level prompt and the first agent change; so does any agent that shares the main prompt. */
+    static InstructionPatch promptPatch(String newInstruction) {
+        return (current, oldTop, agentIndex) -> (agentIndex <= 0 || current.isBlank() || current.equals(oldTop)) ? newInstruction : current;
+    }
+
     // ======================== ASSISTANT TOOLS ========================
 
     @Tool(name = "exotel_voicebot_assistant_get_config",
-          description = "Gets the full configuration of a VoiceBot assistant. Returns agents, instructions, llm_config, mcp_tools, intent_detection_config. Use version='stable' (default) or specific like 'v1', 'v2'.")
+          description = "Gets the full configuration of a VoiceBot assistant (agents, instructions, llm_config, tools, intent detection). "
+              + "assistantId may be the assistant ID or the VoiceBot ID. version: 'stable' (default) or e.g. 'v2'.")
     public String getAssistant(String assistantId, String version) {
         logger.info("Getting assistant: {} version={}", sanitize(assistantId), sanitize(version));
         try {
             String err = requireAuth(); if (err != null) return err;
-            validateId(assistantId, "assistantId");
+            assistantId = resolveAssistantId(assistantId);
             String ver = (version != null && !version.isBlank()) ? version : "stable";
             String url = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=" + ver;
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
@@ -155,88 +251,44 @@ public class VoiceBotAdminTools {
     }
 
     @Tool(name = "exotel_voicebot_assistant_update_prompt",
-          description = "Updates the instruction/prompt of a VoiceBot assistant by creating a new stable version. Fetches current config, replaces instruction on first agent, pushes new version.")
+          description = "Replaces a VoiceBot's prompt and publishes it as the new stable version. assistantId may be the VoiceBot ID or "
+              + "the assistant ID. Updates every place the prompt lives (the assistant's instruction and the agent that answers calls); "
+              + "on multi-agent assistants the first agent and any agent sharing the main prompt are changed. Returns the new version.")
     public String updateBotPrompt(String assistantId, String newInstruction, String versionDescription) {
         logger.info("Updating prompt for assistant={}", sanitize(assistantId));
         try {
             String err = requireAuth(); if (err != null) return err;
-            validateId(assistantId, "assistantId");
             if (newInstruction == null || newInstruction.isBlank()) return "Error: newInstruction is required";
             if (newInstruction.length() > 50_000) return "Error: newInstruction too long (max 50,000 characters)";
-
-            String getUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=stable";
-            ResponseEntity<String> currentResp = restTemplate.exchange(getUrl, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
-            JsonNode current = objectMapper.readTree(safeBody(currentResp));
-
-            JsonNode data = current.path("response").path("data");
-            String stableVersion = data.path("stable_version").asText(data.path("latest_version").asText("v1"));
-
-            // Agents live inside data.versions.{version}.agents, not at data.agents
-            // Use the version that actually has agents as the source_version for the POST
-            JsonNode existingAgents = com.fasterxml.jackson.databind.node.NullNode.getInstance();
-            String sourceVersion = stableVersion;
-            JsonNode versions = data.path("versions");
-            // Prefer stable version agents first, then fall back to any version with agents
-            JsonNode stableVersionAgents = versions.path(stableVersion).path("agents");
-            if (stableVersionAgents.isArray() && stableVersionAgents.size() > 0) {
-                existingAgents = stableVersionAgents;
-            } else {
-                java.util.Iterator<java.util.Map.Entry<String, JsonNode>> vIt = versions.fields();
-                while (vIt.hasNext()) {
-                    java.util.Map.Entry<String, JsonNode> entry = vIt.next();
-                    JsonNode vAgents = entry.getValue().path("agents");
-                    if (vAgents.isArray() && vAgents.size() > 0) {
-                        existingAgents = vAgents;
-                        sourceVersion = entry.getKey(); // use the version that has agents
-                        break;
-                    }
-                }
-            }
-
-            ArrayNode agentsArray = objectMapper.createArrayNode();
-            if (existingAgents.isArray() && existingAgents.size() > 0) {
-                boolean first = true;
-                for (JsonNode agent : existingAgents) {
-                    ObjectNode agentNode = (ObjectNode) agent.deepCopy();
-                    if (first) { agentNode.put("instruction", newInstruction); first = false; }
-                    agentsArray.add(agentNode);
-                }
-            } else {
-                ObjectNode agent = objectMapper.createObjectNode();
-                agent.put("instruction", newInstruction);
-                agentsArray.add(agent);
-            }
-
-            ObjectNode payload = objectMapper.createObjectNode();
-            payload.put("source_version", sourceVersion);
-            payload.put("mark_as_stable", "true");
-            payload.put("version_description", versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Prompt updated via MCP");
-            ObjectNode versionData = objectMapper.createObjectNode();
-            versionData.set("agents", agentsArray);
-            payload.set("data", versionData);
-
-            String postUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "/versions";
-            HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(payload), adminHeaders());
-            ResponseEntity<String> response = restTemplate.exchange(postUrl, HttpMethod.POST, entity, String.class);
-            return safeBody(response);
+            String aid = resolveAssistantId(assistantId);
+            JsonNode out = publishInstructions(aid, promptPatch(newInstruction),
+                versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Prompt updated via MCP");
+            return objectMapper.writeValueAsString(((ObjectNode) out).put("ok", true));
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_assistant_update_prompt", e);
         } catch (HttpServerErrorException e) { return serverError("exotel_voicebot_assistant_update_prompt", e);
         } catch (Exception e) { return "Error updating prompt: " + e.getMessage(); }
     }
 
     @Tool(name = "exotel_voicebot_assistant_push_version",
-          description = "Creates a new version of an assistant with custom data payload. For advanced updates: attaching tools, updating intent config, swapping agents. dataJson must be valid JSON.")
+          description = "Creates a new version of an assistant with custom data payload. For advanced updates: attaching tools, updating intent config, swapping agents, or the top-level instruction of a single-agent bot. dataJson must be valid JSON. sourceVersion defaults to the current stable version.")
     public String createAssistantVersion(String assistantId, String sourceVersion, String markAsStable, String versionDescription, String dataJson) {
         logger.info("Creating assistant version — assistant={}", sanitize(assistantId));
         try {
             String err = requireAuth(); if (err != null) return err;
-            validateId(assistantId, "assistantId");
+            assistantId = resolveAssistantId(assistantId);
             if (dataJson == null || dataJson.isBlank()) return "Error: dataJson is required";
             JsonNode dataNode;
             try { dataNode = objectMapper.readTree(dataJson); }
             catch (Exception e) { return "Error: dataJson is not valid JSON — " + e.getMessage(); }
 
             ObjectNode payload = objectMapper.createObjectNode();
+            if (sourceVersion == null || sourceVersion.isBlank()) {
+                // The API needs the version the new one is based on; default to the assistant's current stable version.
+                String getUrl = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=stable";
+                JsonNode cur = objectMapper.readTree(safeBody(restTemplate.exchange(getUrl, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class)));
+                JsonNode d = cur.path("response").path("data");
+                sourceVersion = d.path("stable_version").asText(d.path("latest_version").asText(""));
+            }
             if (sourceVersion != null && !sourceVersion.isBlank()) payload.put("source_version", sourceVersion);
             payload.put("mark_as_stable", markAsStable != null ? markAsStable : "true");
             payload.put("version_description", versionDescription != null && !versionDescription.isBlank() ? versionDescription : "Updated via MCP");
