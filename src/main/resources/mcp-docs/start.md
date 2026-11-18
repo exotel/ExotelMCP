@@ -15,7 +15,7 @@ account (tenant = account SID, case-sensitive)
  |   `- assistant_config {id, version, input, output} --> pins one assistant version
  |- assistant .......... versions v1, v2, ... (one is stable)
  |   |- instruction, llm_config, fallback_llm_config, persona_id, intent_detection_config
- |   `- agents [1..10] {name, instruction, llm_config, tools (handoffs), mcp_tools}
+ |   `- agents [1..10] {name, instruction, llm_config, mcp_tools}
  |                                                        `- {"tool_name": "tool_server.TOOL_NAME", "name": "TOOL_NAME"}
  |- persona ............ shared text blocks referenced by assistants (persona_id)
  |- Tools Server tenant  tools (openapi, python, knowledge_base, tabular_data), data tables, knowledge corpora
@@ -64,7 +64,7 @@ Names above drop the `exotel_voicebot_` prefix; tools-server names drop `exotel_
 | Know what a write affects and how to undo it | `safe-changes` |
 | Understand or set bot fields (greeting, timing, interruption, versions) | `objects/bot` |
 | Choose TTS voice, ASR model or VAD preset | `objects/voice` |
-| Write or change the prompt, LLM, agents, handoffs, persona | `objects/assistant` |
+| Write or change the prompt, LLM, agents, persona | `objects/assistant` |
 | Set webhooks, live insights or post-call insights | `objects/webhooks-insights` |
 | Give an agent a tool, table lookup or knowledge base | `tools-server` |
 | Call an API through a custom multi-step HTTP flow | `tools-extension` |

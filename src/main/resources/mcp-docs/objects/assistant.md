@@ -34,15 +34,17 @@ over the bot, which cancels and restarts the turn.
 {"name": "main", "description": "Greets and answers order questions",
  "instruction": "Ask for the order id, then call order_status.",
  "llm_config": {},
- "tools": ["billing"],
  "mcp_tools": [ ... ],
  "pre_agent_hooks": [ ... ]}
 ```
 
 - `name`, `description`, `instruction` are required. Names must be unique in the assistant; keep them short.
 - `llm_config` is required on every agent. `{}` inherits the assistant's LLM.
-- `tools` lists the names of other agents this agent may hand off to. Handoff names are saved but
-  read back as `[]`, so keep your own record and confirm handoffs with a test call.
+- Give an agent tools through `mcp_tools` only. Do not send `tools`: the API rejects tool ids and tool
+  objects there, plain names are stored but read by nothing, and this server rejects any non-empty `tools`
+  with `AGENT_TOOLS_REJECTED`. `exotel_voicebot_get_details` leaves `tools` out of agents for the same reason.
+- Handoffs between agents need no field: the platform gives the first agent a routing tool for each other
+  agent, built from the agent list. Describe in the instructions when to hand off.
 
 ### mcp_tools entry
 

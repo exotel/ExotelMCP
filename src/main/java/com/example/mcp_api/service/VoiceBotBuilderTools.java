@@ -260,6 +260,8 @@ public class VoiceBotBuilderTools {
             if (invalid != null) return invalid;
             Map<String, Object> wiring = mcpWiringProblem(cfg);
             if (wiring != null) return wiring;
+            Map<String, Object> agentTools = agentToolsProblem(cfg);
+            if (agentTools != null) return agentTools;
             List<String> warnings = new ArrayList<>(tagWarnings(cfg));
             warnings.addAll(botCreateWarnings(cfg));
 
@@ -288,7 +290,8 @@ public class VoiceBotBuilderTools {
               + "settings, the LCI ids (conversation_assistant_id, insights_assistant_id) and assistant_config input/output. "
               + "With version (vN): GET {v2}/accounts/{account}/voicebots/{botId}/versions/{version}, that version's status, "
               + "is_stable, traffic_percentage, assistant_version and config (greeting, filler, nudge, webhooks) including "
-              + "the resolved assistant. Secret values (API keys, auth configs, tokens) come back as <redacted>.")
+              + "the resolved assistant. Secret values (API keys, auth configs, tokens) come back as <redacted>. Agents' "
+              + "tools field is left out: it is not a way to attach tools, which are in mcp_tools.")
     public String botGetFull(
             @ToolParam(description = "Bot id (UUID).") String botId,
             @ToolParam(required = false, description = "Optional version such as v3. Omit it to read the stable version "
@@ -312,7 +315,9 @@ public class VoiceBotBuilderTools {
             out.put("read_via", v == null
                     ? "GET v1 bot: the stable version with every stored field"
                     : "GET v2 version " + v + ": version metadata plus its full config");
-            putData(out, unwrap(up.json()));
+            JsonNode data = unwrap(up.json());
+            dropAgentTools(data);
+            putData(out, data);
             return out;
         });
     }
@@ -356,6 +361,8 @@ public class VoiceBotBuilderTools {
             if (invalid != null) return invalid;
             Map<String, Object> wiring = mcpWiringProblem(data);
             if (wiring != null) return wiring;
+            Map<String, Object> agentTools = agentToolsProblem(data);
+            if (agentTools != null) return agentTools;
 
             ObjectNode body = MAPPER.createObjectNode();
             body.put("source_version", source);
@@ -522,6 +529,8 @@ public class VoiceBotBuilderTools {
             if (invalid != null) return invalid;
             Map<String, Object> wiring = mcpWiringProblem(assistant);
             if (wiring != null) return wiring;
+            Map<String, Object> agentTools = agentToolsProblem(assistant);
+            if (agentTools != null) return agentTools;
             List<String> warnings = new ArrayList<>(tagWarnings(assistant));
             if (!assistant.hasNonNull("llm_config")) {
                 warnings.add("DEFAULT_LLM: llm_config is omitted, so Java uses the account's default LLM mapping.");
@@ -2250,6 +2259,69 @@ public class VoiceBotBuilderTools {
             } catch (URISyntaxException e) {
                 out.add(path + ".url is not a valid URL");
             }
+        }
+    }
+
+    // ============================ AGENT TOOLS GUARD ============================
+    // CV-1870: an agent's tools field cannot attach tools. Version saves read tools from mcp_tools only; the API
+    // rejects tool ids and tool objects under tools, and stores plain names that nothing reads. The field is being
+    // removed, so this server rejects any non-empty tools and leaves it out of reads.
+
+    /** Null when no agent in the payload sends a non-empty tools field; else an error result. */
+    static Map<String, Object> agentToolsProblem(JsonNode root) {
+        List<String> agents = new ArrayList<>();
+        collectAgentTools(root, "", agents, 0);
+        if (agents.isEmpty()) return null;
+        Map<String, Object> e = error("AGENT_TOOLS_REJECTED",
+                "An agent's tools field cannot attach tools; it is set on " + agents + ". Tools are read from mcp_tools only.",
+                "Remove tools from the agent and send tools in mcp_tools, each as {\"tool_name\": \"tool_server.<name>\", "
+                        + "\"name\": \"<name>\"}. Handoffs between agents need no field. "
+                        + "Read exotel_voicebot_guide(\"objects/assistant\").", null, null);
+        e.put("agents_with_tools", agents);
+        return e;
+    }
+
+    private static void collectAgentTools(JsonNode node, String path, List<String> out, int depth) {
+        if (node == null || depth > 32) return;
+        if (node.isObject()) {
+            for (Map.Entry<String, JsonNode> e : node.properties()) {
+                String child = path.isEmpty() ? e.getKey() : path + "." + e.getKey();
+                JsonNode value = e.getValue();
+                if ("agents".equals(e.getKey()) && value.isArray()) {
+                    for (int i = 0; i < value.size(); i++) {
+                        JsonNode agent = value.get(i);
+                        JsonNode tools = agent == null ? null : agent.get("tools");
+                        if (tools == null || tools.isNull() || (tools.isArray() && tools.isEmpty())) continue;
+                        String name = agent.path("name").asText("");
+                        out.add(child + "[" + i + "]" + (name.isEmpty() ? "" : " (" + name + ")"));
+                    }
+                }
+                collectAgentTools(value, child, out, depth + 1);
+            }
+        } else if (node.isArray()) {
+            for (int i = 0; i < node.size(); i++) collectAgentTools(node.get(i), path + "[" + i + "]", out, depth + 1);
+        }
+    }
+
+    /** Removes the tools field from every agent in a read, in place; returns how many were removed. */
+    static int dropAgentTools(JsonNode node) {
+        int[] count = {0};
+        dropAgentTools(node, count, 0);
+        return count[0];
+    }
+
+    private static void dropAgentTools(JsonNode node, int[] count, int depth) {
+        if (node == null || depth > 32) return;
+        if (node.isObject()) {
+            JsonNode agents = node.get("agents");
+            if (agents != null && agents.isArray()) {
+                for (JsonNode agent : agents) {
+                    if (agent != null && agent.isObject() && ((ObjectNode) agent).remove("tools") != null) count[0]++;
+                }
+            }
+            for (Map.Entry<String, JsonNode> e : node.properties()) dropAgentTools(e.getValue(), count, depth + 1);
+        } else if (node.isArray()) {
+            for (JsonNode child : node) dropAgentTools(child, count, depth + 1);
         }
     }
 }
