@@ -1,0 +1,120 @@
+# Release the Exotel CLI: single-file binaries for 5 platforms, a GitHub release, the Homebrew formula,
+# and npm with provenance.
+# Trigger: after the version bump is merged, tag that commit on main with cli-v<version> (matching
+# cli/package.json):  git checkout main && git pull && git tag cli-v0.2.0 && git push origin cli-v0.2.0
+# Releases are made only here, only from commits on main; nobody publishes from a laptop.
+# npm: Trusted Publishing (OIDC). npmjs.com → exotel-cli → Settings → Trusted publisher → GitHub Actions:
+#   exotel / ExotelMCP / cli-release.yml. No npm token is stored anywhere; provenance is added automatically.
+# Secrets:
+#   HOMEBREW_TAP_TOKEN  optional: write access to exotel/homebrew-tap → the formula is pushed there
+name: cli-release
+
+on:
+  push:
+    tags: ['cli-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  from-main:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The tagged commit must be on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not on main. Merge the change first, then tag main."
+            exit 1
+          fi
+      - name: Tag matches cli/package.json
+        run: test "cli-v$(node -p "require('./cli/package.json').version")" = "${GITHUB_REF_NAME}"
+
+  binaries:
+    needs: from-main
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, target: darwin-arm64 }
+          - { os: macos-15-intel, target: darwin-x64 }   # macos-13 runners are retired
+          - { os: ubuntu-24.04, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { os: windows-latest, target: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'   # --build-sea needs Node >= 25.5
+      - name: Tag matches package.json
+        shell: bash
+        run: test "cli-v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+      - run: npm test
+      - run: node scripts/build-binary.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exotel-${{ matrix.target }}
+          path: |
+            cli/dist/exotel-*.tar.gz
+            cli/dist/exotel-*.tar.gz.sha256
+            cli/dist/exotel-*.zip
+            cli/dist/exotel-*.zip.sha256
+
+  release:
+    needs: [binaries, npm]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Homebrew formula
+        run: node cli/scripts/homebrew-formula.js artifacts
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --title "Exotel CLI ${GITHUB_REF_NAME#cli-v}" \
+            --notes "Install: \`brew install exotel/tap/exotel\`, \`npm install -g exotel-cli\`, or download the binary for your platform below (no Node.js needed). Checksums: *.sha256."
+      - name: Push formula to exotel/homebrew-tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        if: env.TAP_TOKEN != ''
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/exotel/homebrew-tap.git" tap
+          mkdir -p tap/Formula && cp artifacts/exotel.rb tap/Formula/exotel.rb
+          cd tap
+          git config user.name "exotel-cli release" && git config user.email "noreply@exotel.com"
+          git add Formula/exotel.rb && git commit -m "exotel ${GITHUB_REF_NAME#cli-v}" && git push
+
+  npm:
+    needs: binaries
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write   # Trusted Publishing: GitHub proves to npm which repo and workflow is publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: npm 11.5.1 or later (needed for Trusted Publishing)
+        run: npm install -g npm@^11.5.1 && npm --version
+      - name: npm publish (Trusted Publishing, provenance automatic)
+        working-directory: cli
+        run: npm publish --access public

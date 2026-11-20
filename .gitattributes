@@ -1,0 +1,6 @@
+# Keep LF everywhere so generated files and tests match on Windows too
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.mp3 binary
+*.wav binary
