@@ -1,5 +1,6 @@
 package com.example.mcp_api.service;
 
+import com.example.mcp_api.auth.ExotelHostGuard;
 import com.example.mcp_api.auth.AuthContext;
 import com.example.mcp_api.auth.AuthCredentials;
 import org.slf4j.Logger;
@@ -73,7 +74,7 @@ public class VoiceBotToolsService {
                 connMgrBuilder.setSSLSocketFactory(SSLConnectionSocketFactoryBuilder.create()
                         .setSslContext(sslCtx).setHostnameVerifier(NoopHostnameVerifier.INSTANCE).build());
             }
-            var httpClient = HttpClients.custom().setConnectionManager(connMgrBuilder.build()).build();
+            var httpClient = HttpClients.custom().setConnectionManager(connMgrBuilder.build()).disableRedirectHandling().addResponseInterceptorFirst(UpstreamRedirectGuard.apacheInterceptor()).build();
             var factory = new HttpComponentsClientHttpRequestFactory(httpClient);
             factory.setConnectTimeout(10_000);
             factory.setReadTimeout(30_000);
@@ -206,6 +207,7 @@ public class VoiceBotToolsService {
         try {
             String authErr = requireAuth(); if (authErr != null) return authErr;
             if (tenantId == null || tenantId.isBlank()) return "Error: tenantId is required";
+            ExotelHostGuard.requireSafeId("tenantId", tenantId);
             String url = getBaseUrl() + "/tools/api/v1/tenants/" + tenantId + "/spawn";
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST,
                     new HttpEntity<>(jsonHeaders()), String.class);
@@ -223,6 +225,7 @@ public class VoiceBotToolsService {
         try {
             String authErr = requireAuth(); if (authErr != null) return authErr;
             if (tenantId == null || tenantId.isBlank()) return "Error: tenantId is required";
+            ExotelHostGuard.requireSafeId("tenantId", tenantId);
             String url = getBaseUrl() + "/tools/api/v1/tenants/" + tenantId + "/terminate";
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST,
                     new HttpEntity<>(jsonHeaders()), String.class);
@@ -245,6 +248,8 @@ public class VoiceBotToolsService {
             String authErr = requireAuth(); if (authErr != null) return authErr;
             validateNumericParam(limit, "limit");
             validateNumericParam(offset, "offset");
+            if (active != null && !active.isBlank()) ExotelHostGuard.requireSafeQueryValue("active", active);
+            if (type != null && !type.isBlank()) ExotelHostGuard.requireSafeQueryValue("type", type);
 
             StringBuilder url = new StringBuilder(getBaseUrl())
                     .append("/tools/api/v1/tenants/").append(getTenantId()).append("/tools?");
@@ -717,6 +722,9 @@ public class VoiceBotToolsService {
             String authErr = requireAuth(); if (authErr != null) return authErr;
             validateNumericParam(limit, "limit");
             validateNumericParam(offset, "offset");
+            if (status != null && !status.isBlank()) ExotelHostGuard.requireSafeQueryValue("status", status);
+            if (fromDate != null && !fromDate.isBlank()) ExotelHostGuard.requireSafeQueryValue("fromDate", fromDate);
+            if (toDate != null && !toDate.isBlank()) ExotelHostGuard.requireSafeQueryValue("toDate", toDate);
 
             StringBuilder url = new StringBuilder(getBaseUrl())
                     .append("/tools/api/v1/tenants/").append(getTenantId()).append("/knowledge-corpora?");

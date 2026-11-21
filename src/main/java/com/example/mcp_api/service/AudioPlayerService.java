@@ -9,8 +9,6 @@ import org.slf4j.LoggerFactory;
 import javax.sound.sampled.*;
 import java.awt.GraphicsEnvironment;
 import java.io.*;
-import java.net.URL;
-import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -83,8 +81,14 @@ public class AudioPlayerService {
     }
     
     @Tool(name = "audio_player_play_file",
-          description = "Play an audio file from local filename or remote URL. Supports local files in audio directory or remote URLs to audio files. Examples: 'song.mp3' for local file or 'https://example.com/audio.mp3' for remote URL. Note: Audio plays on the server machine in SSE mode.")
+          description = "Play an audio file by plain filename from the configured audio directory (see audio_player_list_local_files). URLs are not supported. Example: 'song.mp3'. Note: Audio plays on the server machine in SSE mode.")
     public Map<String, Object> playAudio(String filenameOrUrl) {
+        if (filenameOrUrl == null || filenameOrUrl.isBlank()) {
+            return errorResult("filename is required");
+        }
+        if (looksLikeUrl(filenameOrUrl)) {
+            return errorResult("URLs are not supported; provide a plain filename from the audio directory");
+        }
         logger.info("Attempting to play audio: {}", filenameOrUrl);
         
         // Check if audio system is available
@@ -99,32 +103,19 @@ public class AudioPlayerService {
                 stopCurrentPlayback();
             }
             
-            Path audioFile;
-            String displayName;
-            boolean isUrl = isValidUrl(filenameOrUrl);
-            
-            if (isUrl) {
-                // Handle URL
-                logger.info("Detected URL: {}", filenameOrUrl);
-                audioFile = downloadAudioFromUrl(filenameOrUrl);
-                displayName = filenameOrUrl;
-            } else {
-                // Handle local file
-                logger.info("Detected local file: {}", filenameOrUrl);
-                Path audioDir = Paths.get(audioDirectoryPath);
-                audioFile = audioDir.resolve(Paths.get(filenameOrUrl).getFileName());
-                displayName = filenameOrUrl;
-                
-                if (!Files.exists(audioFile)) {
-                    throw new FileNotFoundException("Audio file not found: " + filenameOrUrl);
-                }
-                
-                // Security check - ensure file is within audio directory
-                if (!audioFile.toAbsolutePath().startsWith(audioDir.toAbsolutePath())) {
-                    throw new SecurityException("File must be in the audio directory");
-                }
+            Path audioDir = Paths.get(audioDirectoryPath);
+            Path audioFile = audioDir.resolve(Paths.get(filenameOrUrl).getFileName());
+            String displayName = audioFile.getFileName().toString();
+
+            if (!Files.exists(audioFile)) {
+                throw new FileNotFoundException("Audio file not found: " + displayName);
             }
-            
+
+            // Security check - ensure file is within audio directory
+            if (!audioFile.toAbsolutePath().normalize().startsWith(audioDir.toAbsolutePath().normalize())) {
+                throw new SecurityException("File must be in the audio directory");
+            }
+
             // Load and play the audio
             playAudioFile(audioFile, displayName);
             
@@ -132,7 +123,7 @@ public class AudioPlayerService {
             result.put("status", "playing");
             result.put("file", displayName);
             result.put("volume", volume);
-            result.put("source", isUrl ? "url" : "local");
+            result.put("source", "local");
             result.put("server_info", "Audio playing on server machine: " + getServerInfo());
             
             return result;
@@ -270,73 +261,18 @@ public class AudioPlayerService {
     
     // Helper methods
     
-    private boolean isValidUrl(String url) {
-        try {
-            new URL(url);
-            return url.startsWith("http://") || url.startsWith("https://");
-        } catch (Exception e) {
-            return false;
-        }
+    private static Map<String, Object> errorResult(String message) {
+        Map<String, Object> error = new HashMap<>();
+        error.put("status", "error");
+        error.put("message", message);
+        return error;
     }
-    
-    private Path downloadAudioFromUrl(String urlString) throws IOException {
-        logger.info("Downloading audio from URL: {}", urlString);
-        
-        URL url = new URL(urlString);
-        URLConnection connection = url.openConnection();
-        connection.setConnectTimeout(10000); // 10 seconds
-        connection.setReadTimeout(30000); // 30 seconds
-        
-        // Determine filename
-        String filename = getFilenameFromUrl(urlString);
-        if (filename == null || !hasAudioExtension(filename)) {
-            filename = "downloaded_audio_" + System.currentTimeMillis() + ".mp3";
-        }
-        
-        // Create temporary file
-        Path tempDir = Paths.get(System.getProperty("java.io.tmpdir"), "audio_player_mcp");
-        Files.createDirectories(tempDir);
-        Path tempFile = tempDir.resolve(filename);
-        
-        // Download file
-        try (InputStream in = connection.getInputStream();
-             OutputStream out = Files.newOutputStream(tempFile)) {
-            
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = in.read(buffer)) != -1) {
-                out.write(buffer, 0, bytesRead);
-            }
-        }
-        
-        // Track for cleanup
-        temporaryFiles.add(tempFile);
-        
-        logger.info("Successfully downloaded audio to: {}", tempFile);
-        return tempFile;
+
+    private static boolean looksLikeUrl(String value) {
+        String v = value.trim().toLowerCase(Locale.ROOT);
+        return v.contains("://") || v.startsWith("//") || v.matches("^[a-z][a-z0-9+.-]*:.*");
     }
-    
-    private String getFilenameFromUrl(String urlString) {
-        try {
-            URL url = new URL(urlString);
-            String path = url.getPath();
-            if (path != null && !path.isEmpty()) {
-                int lastSlash = path.lastIndexOf('/');
-                if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-                    return path.substring(lastSlash + 1);
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not extract filename from URL: {}", urlString);
-        }
-        return null;
-    }
-    
-    private boolean hasAudioExtension(String filename) {
-        String lowerFilename = filename.toLowerCase();
-        return SUPPORTED_FORMATS.stream().anyMatch(lowerFilename::endsWith);
-    }
-    
+
     private void playAudioFile(Path audioFile, String displayName) throws Exception {
         logger.info("Loading audio file: {}", audioFile);
         

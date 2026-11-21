@@ -524,32 +524,12 @@ public class StreamableHttpConfig {
         
         // ========== QUICK AUDIO PROMPTS ==========
         
-        // 11. Quick Play Audio Prompt
-        prompts.add(createPrompt(
-            "quick_play_audio",
-            "Quick Play Audio",
-            "🎵 Play any audio URL instantly in your browser with one click",
-            List.of(
-                createArgument("audio_url", "The URL of the audio file to play (e.g., https://example.com/audio.mp3)", true)
-            )
-        ));
-        
         // 12. Open Audio Player Prompt
         prompts.add(createPrompt(
             "open_audio_player",
             "Open Audio Player",
             "🎛️ Open the web-based audio player interface for manual audio control",
             List.of()
-        ));
-        
-        // 13. Quick Download Audio Prompt
-        prompts.add(createPrompt(
-            "download_audio",
-            "Download Audio File",
-            "💾 Get a direct download link for any audio URL",
-            List.of(
-                createArgument("audio_url", "The URL of the audio file to download", true)
-            )
         ));
         
         // 14. Communication Workflow Prompt
@@ -924,28 +904,12 @@ public class StreamableHttpConfig {
                 
             // ========== QUICK AUDIO PROMPTS ==========
             
-            case "quick_play_audio":
-                return createPromptResponse(
-                    "quick_play_audio",
-                    "🎵 Play any audio URL instantly in your browser with one click",
-                    "Please play this audio: {{audio_url}}",
-                    "🎵 I'll create a direct playback link for {{audio_url}} using the quickPlayAudio tool. You'll get a clickable link to play the audio instantly in your browser!"
-                );
-                
             case "open_audio_player":
                 return createPromptResponse(
                     "open_audio_player",
                     "🎛️ Open the web-based audio player interface for manual audio control",
                     "Please open the audio player interface",
                     "🎛️ I'll provide you with a link to the web-based audio player using the openAudioPlayer tool. You can use it to play any audio file or URL with full controls!"
-                );
-                
-            case "download_audio":
-                return createPromptResponse(
-                    "download_audio",
-                    "💾 Get a direct download link for any audio URL",
-                    "Please provide a download link for this audio: {{audio_url}}",
-                    "💾 I'll create a direct download link for {{audio_url}} using the downloadAudioQuick tool. You'll get a clickable link to download the audio file to your computer!"
                 );
                 
             // ========== WORKFLOW PROMPTS ==========

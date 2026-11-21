@@ -97,46 +97,6 @@ public class ClientAudioService {
         }
     }
     
-    @Tool(name = "audio_client_download_file", 
-          description = "Download audio file from URL to a local client directory for offline playback. Useful for caching audio files locally.")
-    public Map<String, Object> downloadAudioToClient(String url, String clientDirectory) {
-        logger.info("Preparing audio download from URL: {} to client directory: {}", url, clientDirectory);
-        
-        try {
-            if (!isValidUrl(url)) {
-                throw new IllegalArgumentException("Invalid URL provided");
-            }
-            
-            // Get filename from URL
-            String filename = getFilenameFromUrl(url);
-            if (filename == null || !hasAudioExtension(filename)) {
-                filename = "downloaded_audio_" + System.currentTimeMillis() + ".mp3";
-            }
-            
-            // Provide download instructions
-            Map<String, Object> result = new HashMap<>();
-            result.put("status", "download_ready");
-            result.put("download_url", baseUrl + "/audio/download?url=" + java.net.URLEncoder.encode(url, "UTF-8"));
-            result.put("suggested_filename", filename);
-            result.put("client_directory", clientDirectory != null ? clientDirectory : "~/Downloads");
-            result.put("instructions", Arrays.asList(
-                "1. Use the download_url to download the file to your client machine",
-                "2. Save it as: " + filename,
-                "3. Play using your local audio player",
-                "Command: curl -o '" + filename + "' '" + result.get("download_url") + "'"
-            ));
-            
-            return result;
-            
-        } catch (Exception e) {
-            logger.error("Error preparing audio download: {}", e.getMessage(), e);
-            Map<String, Object> error = new HashMap<>();
-            error.put("status", "error");
-            error.put("message", "Error preparing download: " + e.getMessage());
-            return error;
-        }
-    }
-    
     @Tool(name = "audio_client_list_downloaded_files", 
           description = "List available audio files with client-side streaming URLs. Returns files that can be played on client side.")
     public Map<String, Object> listClientAudioFiles() {
@@ -226,26 +186,5 @@ public class ClientAudioService {
         } catch (Exception e) {
             return false;
         }
-    }
-    
-    private String getFilenameFromUrl(String urlString) {
-        try {
-            URL url = new URL(urlString);
-            String path = url.getPath();
-            if (path != null && !path.isEmpty()) {
-                int lastSlash = path.lastIndexOf('/');
-                if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-                    return path.substring(lastSlash + 1);
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not extract filename from URL: {}", urlString);
-        }
-        return null;
-    }
-    
-    private boolean hasAudioExtension(String filename) {
-        String lowerFilename = filename.toLowerCase();
-        return SUPPORTED_FORMATS.stream().anyMatch(lowerFilename::endsWith);
     }
 }
