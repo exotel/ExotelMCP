@@ -1,6 +1,7 @@
 package com.example.mcp_api.auth;
 
 import com.example.mcp_api.auth.ExotelCredentialVerifier.Outcome;
+import com.example.mcp_api.auth.ExotelCredentialVerifier.ProbeResponse;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -22,7 +23,7 @@ class ExotelCredentialVerifierTest {
 
     private ExotelCredentialVerifier verifierReturning(int status) {
         return new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
-                (url, headers) -> { calls.incrementAndGet(); urls.add(url); headersSeen.add(headers); return status; }, now::get);
+                (url, headers) -> { calls.incrementAndGet(); urls.add(url); headersSeen.add(headers); return ProbeResponse.json(status); }, now::get);
     }
 
     @Test
@@ -116,9 +117,9 @@ class ExotelCredentialVerifierTest {
                     urls.add(url);
                     headersSeen.add(headers);
                     for (int i = 0; i < substringStatusPairs.length; i += 2) {
-                        if (url.contains((String) substringStatusPairs[i])) return (Integer) substringStatusPairs[i + 1];
+                        if (url.contains((String) substringStatusPairs[i])) return ProbeResponse.json((Integer) substringStatusPairs[i + 1]);
                     }
-                    return 500;
+                    return ProbeResponse.json(500);
                 }, now::get);
     }
 
@@ -211,8 +212,8 @@ class ExotelCredentialVerifierTest {
         assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
                 "{\"voicebot_api_key\":\"vk\",\"voicebot_api_token\":\"vt\",\"voicebot_account_id\":\"vacct\","
                         + "\"tools_server_api_key\":\"tk\",\"tools_server_tenant_id\":\"ten1\","
-                        + "\"tools_server_base_url\":\"https://tools.exotel.com/base/\"}")).outcome());
-        assertEquals("https://tools.exotel.com/base/tools/api/v1/tenants/ten1/tools?limit=1", urls.get(1));
+                        + "\"tools_server_base_url\":\"https://Tools-Server-Prod.mum1.exotel.com/\"}")).outcome());
+        assertEquals("https://tools-server-prod.mum1.exotel.com/tools/api/v1/tenants/ten1/tools?limit=1", urls.get(1));
         assertEquals("Basic " + java.util.Base64.getEncoder().encodeToString("tk:vt".getBytes()),
                 headersSeen.get(1).get("Authorization"));
     }
@@ -257,8 +258,8 @@ class ExotelCredentialVerifierTest {
                 headersSeen.get(0).get("Authorization"));
 
         assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
-                "{" + base + ",\"ai_assist_auth_token\":\"jwt1\",\"ai_assist_context_path\":\"/custom/api/\"}")).outcome());
-        assertEquals("https://ai-assist.in.exotel.com/custom/api/v1/accounts/sid1/ai-assistants?limit=1", urls.get(1));
+                "{" + base + ",\"ai_assist_auth_token\":\"jwt1\",\"ai_assist_context_path\":\"/ai-assist/api/\"}")).outcome());
+        assertEquals("https://ai-assist.in.exotel.com/ai-assist/api/v1/accounts/sid1/ai-assistants?limit=1", urls.get(1));
         assertEquals("Bearer jwt1", headersSeen.get(1).get("Authorization"));
 
         assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
@@ -353,7 +354,7 @@ class ExotelCredentialVerifierTest {
                     urls.add(url);
                     Object r = byHost.apply(java.net.URI.create(url).getHost());
                     if (r instanceof IOException io) throw io;
-                    return (Integer) r;
+                    return ProbeResponse.json((Integer) r);
                 }, now::get);
     }
 
@@ -422,5 +423,171 @@ class ExotelCredentialVerifierTest {
         assertEquals(Outcome.REJECTED, v.verify(AuthCredentials.parse(
                 "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"api_domain\":\"https://api.exotel.com\"}")).outcome());
         assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(CORE)).outcome());
+    }
+
+    // ---- known API bases (SL-3868 review finding) ----
+
+    private static final String HOSTILE_VOICEBOT_HOST =
+            "{\"voicebot_api_key\":\"made-up\",\"voicebot_api_token\":\"made-up\",\"voicebot_account_id\":\"x1\","
+                    + "\"voicebot_base_url\":\"https://voicebot.in.exotel.com\"}";
+
+    private void assertRefusedBeforeAnyProbe(ExotelCredentialVerifier v, String header, String field) {
+        ExotelHostGuard.InvalidCredentialException e = assertThrows(ExotelHostGuard.InvalidCredentialException.class,
+                () -> v.verify(AuthCredentials.parse(header)), header);
+        assertEquals(field + " must be one of the Exotel", e.getMessage().substring(0, field.length() + 26));
+        assertFalse(e.getMessage().contains("evil") || e.getMessage().contains("made-up"));
+        assertEquals(0, calls.get(), "no probe may be sent for an unknown base");
+    }
+
+    @Test
+    void voicebotBaseOutsideTheKnownBaseIsRefusedWithoutProbing() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        assertRefusedBeforeAnyProbe(v, HOSTILE_VOICEBOT_HOST, "voicebot_base_url");
+        assertRefusedBeforeAnyProbe(v, HOSTILE_VOICEBOT_HOST.replace("https://voicebot.in.exotel.com",
+                "https://other.exotel.com/voicebot/api/v2"), "voicebot_base_url");
+        assertRefusedBeforeAnyProbe(v, HOSTILE_VOICEBOT_HOST.replace("https://voicebot.in.exotel.com",
+                "https://voicebot.in.exotel.com/voicebot/api/v2/extra"), "voicebot_base_url");
+        assertRefusedBeforeAnyProbe(v, HOSTILE_VOICEBOT_HOST.replace("https://voicebot.in.exotel.com",
+                "https://voicebot.in.exotel.com/voicebot/api/v1"), "voicebot_base_url");
+    }
+
+    @Test
+    void adminBaseOutsideTheKnownBaseIsRefusedWithoutProbing() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        assertRefusedBeforeAnyProbe(v, "{\"admin_username\":\"a\",\"admin_password\":\"p\",\"voicebot_account_id\":\"x1\","
+                + "\"voicebot_base_url\":\"https://voicebot.in.exotel.com\"}", "voicebot_base_url");
+        assertRefusedBeforeAnyProbe(v, "{\"admin_username\":\"a\",\"admin_password\":\"p\",\"voicebot_account_id\":\"x1\","
+                + "\"voicebot_base_url\":\"https://x.exotel.com/voicebot/api/v2\"}", "voicebot_base_url");
+    }
+
+    @Test
+    void toolsServerBaseOutsideTheKnownBaseIsRefusedWithoutProbing() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        String header = "{\"tools_server_api_key\":\"made-up\",\"tools_server_tenant_id\":\"t1\","
+                + "\"tools_server_base_url\":\"%s\"}";
+        assertRefusedBeforeAnyProbe(v, header.formatted("https://tools.exotel.com"), "tools_server_base_url");
+        assertRefusedBeforeAnyProbe(v, header.formatted("https://tools-server-prod.mum1.exotel.com/ui"),
+                "tools_server_base_url");
+    }
+
+    @Test
+    void aiAssistBaseOrContextOutsideTheKnownBaseIsRefusedWithoutProbing() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        String header = "{\"ai_assist_base_url\":\"%s\",\"ai_assist_account_sid\":\"sid1\",\"ai_assist_auth_token\":\"made-up\"%s}";
+        assertRefusedBeforeAnyProbe(v, header.formatted("https://ai-assist.other.exotel.com", ""), "ai_assist_base_url");
+        assertRefusedBeforeAnyProbe(v, header.formatted("https://ai-assist.in.exotel.com/ui", ""), "ai_assist_base_url");
+        assertRefusedBeforeAnyProbe(v, header.formatted("https://ai-assist.in.exotel.com",
+                ",\"ai_assist_context_path\":\"web/ui\""), "ai_assist_context_path");
+        assertRefusedBeforeAnyProbe(v, header.formatted("https://ai-assist.in.exotel.com",
+                ",\"ai_assist_context_path\":\"ai-assist\""), "ai_assist_context_path");
+    }
+
+    @Test
+    void callerBaseEqualToKnownBaseIsProbedOnThatBaseOnly() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        for (String base : new String[] {"https://voicebot.in.exotel.com/voicebot/api/v2",
+                "https://VoiceBot.IN.exotel.com/voicebot/api/v2/", "https://voicebot.in.exotel.com:443/voicebot/api/v2"}) {
+            calls.set(0);
+            urls.clear();
+            assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(VOICEBOT.replace("}",
+                    ",\"voicebot_base_url\":\"" + base + "\"}").replace("vacct", "va" + base.length()))).outcome(), base);
+            assertEquals(1, calls.get());
+            assertEquals("https://voicebot.in.exotel.com/voicebot/api/v2/accounts/va" + base.length() + "/voicebots?limit=1",
+                    urls.get(0));
+        }
+        urls.clear();
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
+                "{\"admin_username\":\"a\",\"admin_password\":\"p\",\"voicebot_account_id\":\"adm1\","
+                        + "\"voicebot_base_url\":\"https://voicebot.in.exotel.com/voicebot/api/v2\"}")).outcome());
+        assertEquals("https://voicebot.in.exotel.com/voicebot/api/v1/accounts/adm1/personas?limit=1", urls.get(0));
+    }
+
+    @Test
+    void aiAssistCallerBaseWithKnownContextIsProbedOnTheKnownBase() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
+                "{\"ai_assist_base_url\":\"https://AI-Assist.in.exotel.com/\",\"ai_assist_account_sid\":\"sid1\","
+                        + "\"ai_assist_auth_token\":\"jwt\",\"ai_assist_context_path\":\"/ai-assist/api/\"}")).outcome());
+        assertEquals("https://ai-assist.in.exotel.com/ai-assist/api/v1/accounts/sid1/ai-assistants?limit=1", urls.get(0));
+    }
+
+    @Test
+    void noCallerBaseProbesTheDefaultKnownBase() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(VOICEBOT)).outcome());
+        assertEquals("https://voicebot.in.exotel.com/voicebot/api/v2/accounts/vacct/voicebots?limit=1", urls.get(0));
+    }
+
+    @Test
+    void htmlAnswerIsUnavailableNotCachedAndNotAccepted() {
+        for (String contentType : new String[] {"text/html", "text/html; charset=utf-8", "text/plain", null}) {
+            calls.set(0);
+            ExotelCredentialVerifier v = new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
+                    (url, headers) -> { calls.incrementAndGet(); return new ProbeResponse(200, contentType); }, now::get);
+            AuthCredentials creds = AuthCredentials.parse(VOICEBOT);
+            assertEquals(Outcome.UNAVAILABLE, v.verify(creds).outcome(), String.valueOf(contentType));
+            assertEquals(Outcome.UNAVAILABLE, v.verify(creds).outcome());
+            assertEquals(2, calls.get(), "non-JSON answers are not cached");
+        }
+    }
+
+    @Test
+    void jsonContentTypesAreAccepted() {
+        for (String contentType : new String[] {"application/json", "Application/JSON; charset=UTF-8",
+                "application/problem+json", "application/vnd.api+json;version=2"}) {
+            ExotelCredentialVerifier v = new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
+                    (url, headers) -> new ProbeResponse(200, contentType), now::get);
+            assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(VOICEBOT)).outcome(), contentType);
+        }
+    }
+
+    @Test
+    void coreAndCallsAnswerWithHtmlIsUnavailable() {
+        ExotelCredentialVerifier v = new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
+                (url, headers) -> new ProbeResponse(200, "text/html"), now::get);
+        assertEquals(Outcome.UNAVAILABLE, v.verify(AuthCredentials.parse(CORE)).outcome());
+        assertEquals(Outcome.UNAVAILABLE, v.verify(AuthCredentials.parse(
+                "{\"calls_api_key\":\"k\",\"calls_api_token\":\"t\",\"calls_account_id\":\"acct9\"}")).outcome());
+    }
+
+    @Test
+    void configuredBasesReplaceTheDefaultsAndFallBackInOrder() {
+        List<String> seen = new ArrayList<>();
+        ExotelCredentialVerifier v = new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
+                "https://voicebot.uat.exotel.com/voicebot/api/v2, https://voicebot.eu.exotel.com/voicebot/api/v2/",
+                "", "https://tools.uat.exotel.com", "https://ai.uat.exotel.com/assist",
+                (url, headers) -> {
+                    seen.add(url);
+                    return ProbeResponse.json(url.contains("voicebot.uat") ? 401 : 200);
+                }, now::get);
+
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(VOICEBOT)).outcome());
+        assertEquals(List.of("https://voicebot.uat.exotel.com/voicebot/api/v2/accounts/vacct/voicebots?limit=1",
+                "https://voicebot.eu.exotel.com/voicebot/api/v2/accounts/vacct/voicebots?limit=1"), seen);
+
+        seen.clear();
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(VOICEBOT.replace("vacct", "other").replace("}",
+                ",\"voicebot_base_url\":\"https://voicebot.eu.exotel.com/voicebot/api/v2\"}"))).outcome());
+        assertEquals(1, seen.size());
+
+        assertThrows(ExotelHostGuard.InvalidCredentialException.class, () -> v.verify(AuthCredentials.parse(
+                VOICEBOT.replace("}", ",\"voicebot_base_url\":\"https://voicebot.in.exotel.com/voicebot/api/v2\"}"))));
+
+        seen.clear();
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
+                "{\"admin_username\":\"a\",\"admin_password\":\"p\",\"voicebot_account_id\":\"adm1\"}")).outcome());
+        assertEquals("https://voicebot.uat.exotel.com/voicebot/api/v1/accounts/adm1/personas?limit=1", seen.get(0));
+
+        seen.clear();
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
+                "{\"ai_assist_base_url\":\"https://ai.uat.exotel.com\",\"ai_assist_account_sid\":\"sid1\","
+                        + "\"ai_assist_auth_token\":\"jwt\",\"ai_assist_context_path\":\"assist\"}")).outcome());
+        assertEquals("https://ai.uat.exotel.com/assist/v1/accounts/sid1/ai-assistants?limit=1", seen.get(0));
+    }
+
+    @Test
+    void allKnownBasesRejectingIsRejected() {
+        ExotelCredentialVerifier v = verifierReturning(401);
+        assertEquals(Outcome.REJECTED, v.verify(AuthCredentials.parse(VOICEBOT)).outcome());
     }
 }

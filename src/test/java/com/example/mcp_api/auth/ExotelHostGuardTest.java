@@ -133,17 +133,4 @@ class ExotelHostGuardTest {
         AuthCredentials badToken = AuthCredentials.parse("{\"token\":\"abc def\\r\\nX: y\"}");
         assertThrows(InvalidCredentialException.class, badToken::validateFields);
     }
-
-    @Test
-    void completeCredentialSetDetection() {
-        assertFalse(AuthCredentials.parse("{}").hasCompleteCredentialSet());
-        assertFalse(AuthCredentials.parse("{\"token\":\"a2V5OnRvaw==\"}").hasCompleteCredentialSet());
-        assertFalse(AuthCredentials.parse("{\"account_sid\":\"acme1\"}").hasCompleteCredentialSet());
-        assertFalse(AuthCredentials.parse("{\"voicebot_api_key\":\"k\",\"voicebot_api_token\":\"t\"}").hasCompleteCredentialSet());
-        assertFalse(AuthCredentials.parse("{\"admin_username\":\"u\",\"admin_password\":\"p\"}").hasCompleteCredentialSet());
-        assertTrue(AuthCredentials.parse("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\"}").hasCompleteCredentialSet());
-        assertTrue(AuthCredentials.parse("{\"voicebot_api_key\":\"k\",\"voicebot_api_token\":\"t\",\"voicebot_account_id\":\"a\"}").hasCompleteCredentialSet());
-        assertTrue(AuthCredentials.parse("{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\"}").hasCompleteCredentialSet());
-        assertTrue(AuthCredentials.parse("{\"calls_api_key\":\"k\",\"calls_api_token\":\"t\",\"calls_account_id\":\"a\"}").hasCompleteCredentialSet());
-    }
 }

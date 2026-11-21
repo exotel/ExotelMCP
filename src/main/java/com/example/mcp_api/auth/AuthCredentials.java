@@ -379,21 +379,6 @@ public class AuthCredentials {
         return present;
     }
 
-    /**
-     * True if the header carries at least one complete, well-formed credential set:
-     * core (token + account_sid), VoiceBot, Calls, CQA, Tools Server, AI Assist, or
-     * VoiceBot Admin (admin_username/password + voicebot_account_id).
-     */
-    public boolean hasCompleteCredentialSet() {
-        return hasCoreExotelCredentials()
-            || hasVoicebotCredentials()
-            || hasCallsCredentials()
-            || hasCqaCredentials()
-            || hasToolsServerCredentials()
-            || hasAiAssistCredentials()
-            || (hasAdminCredentials() && voicebotAccountId != null);
-    }
-
     /** True if the given set has every field it needs. */
     public boolean isComplete(CredentialSet set) {
         return switch (set) {

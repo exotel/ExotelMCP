@@ -29,10 +29,10 @@ class AuthFilterTest {
                 (url, headers) -> {
                     probeCalls.incrementAndGet();
                     for (var e : statusBySubstring.entrySet()) {
-                        if (url.contains(e.getKey())) return e.getValue();
+                        if (url.contains(e.getKey())) return ExotelCredentialVerifier.ProbeResponse.json(e.getValue());
                     }
                     if (probeStatus < 0) throw new java.net.SocketTimeoutException("timeout");
-                    return probeStatus;
+                    return ExotelCredentialVerifier.ProbeResponse.json(probeStatus);
                 },
                 System::currentTimeMillis);
         filter = new AuthFilter(verifier);

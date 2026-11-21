@@ -25,15 +25,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.function.UnaryOperator;
 
 /**
  * Verifies caller-supplied credentials against Exotel itself, one cheap read-only authenticated GET per
- * credential set present in the Authorization header, on a host the guard allows for that product.
+ * credential set present in the Authorization header, always on a KNOWN API base for that product.
  *
  * A request is authenticated only if at least one set was VERIFIED by a real probe; shape alone never
- * logs anyone in. Every present set must be complete and pass its probe. Fails closed: only 2xx is VALID;
- * 401/403/404 is REJECTED; anything else (timeouts, 5xx, 429, unexpected statuses) is UNAVAILABLE and is
+ * logs anyone in. Every present set must be complete and pass its probe. Fails closed: only a 2xx with a
+ * JSON Content-Type is VALID (a 2xx of any other type means the probe did not reach the API); 401/403/404 is
+ * REJECTED; anything else (timeouts, 5xx, 429, non-JSON 2xx, unexpected statuses) is UNAVAILABLE and is
  * never treated as success. Results are cached in memory keyed by SHA-256 of set name, host and credential
  * values (never the raw values): VALID for a few minutes, REJECTED briefly, UNAVAILABLE not at all. The
  * cache is size-bounded.
@@ -41,13 +44,17 @@ import java.util.function.LongSupplier;
  * Probes (all GET, no redirects, 3 s connect / 5 s request timeout):
  *  - Core: api_domain {@code /v1/Accounts/{account_sid}/Calls.json?PageSize=1} (Basic token)
  *  - Calls: calls_base_url {@code /v1/Accounts/{calls_account_id}/Calls.json?PageSize=1} (Basic key:token)
- *  - VoiceBot: voicebot_base_url {@code /accounts/{id}/voicebots?limit=1} (Basic key:token)
- *  - Admin: voicebot_base_url (as /api/v1) {@code /accounts/{voicebot_account_id}/personas?limit=1} (Basic admin user:password)
- *  - Tools Server: tools_server_base_url {@code /tools/api/v1/tenants/{tenant}/tools?limit=1} (Basic key:token)
- *  - AI Assist: ai_assist_base_url {@code /{context}/v1/accounts/{sid}/ai-assistants?limit=1} (same auth the tools use)
- * Core and Calls are restricted to api.exotel.com / api.in.exotel.com; the other products use the host the
- * guard already allows (exotel.com or a subdomain) or the service's default. A 404 means the account or
- * tenant is unknown and is REJECTED for every product.
+ *  - VoiceBot: known VoiceBot base {@code /accounts/{id}/voicebots?limit=1} (Basic key:token)
+ *  - Admin: known Admin base (VoiceBot base at /api/v1) {@code /accounts/{voicebot_account_id}/personas?limit=1} (Basic admin user:password)
+ *  - Tools Server: known Tools Server base {@code /tools/api/v1/tenants/{tenant}/tools?limit=1} (Basic key:token)
+ *  - AI Assist: known AI Assist base (host + context path) {@code /v1/accounts/{sid}/ai-assistants?limit=1} (same auth the tools use)
+ * Core and Calls are restricted to api.exotel.com / api.in.exotel.com. The other products are probed only on
+ * the known API bases configured by the operator (scheme + host + base path, see application.properties). A
+ * caller-supplied base URL (or ai_assist_context_path) must equal a known base after normalisation (lower-case
+ * host, no trailing slash), otherwise the request is refused with a 400 naming the field; when the caller
+ * supplies none, the known bases are tried in order. The verifier builds the full probe URL itself, so no
+ * caller-supplied path ever reaches it. A 404 means the account or tenant is unknown and is REJECTED for
+ * every product.
  *
  * Unverifiable sets (no safe probe): AI Assist with only Auth0 client credentials (the bearer is minted
  * from an external token endpoint). It does not count towards login and does not block a request that has
@@ -65,10 +72,17 @@ public class ExotelCredentialVerifier {
         static final Result VALID = new Result(Outcome.VALID, null);
     }
 
-    /** Performs the GET with the given headers and returns the status code. Replaceable in tests. */
+    /** Status code and Content-Type (null if absent) of a probe response. */
+    record ProbeResponse(int status, String contentType) {
+        static ProbeResponse json(int status) {
+            return new ProbeResponse(status, "application/json");
+        }
+    }
+
+    /** Performs the GET with the given headers and returns the response. Replaceable in tests. */
     @FunctionalInterface
     interface StatusProbe {
-        int get(String url, Map<String, String> headers) throws IOException, InterruptedException;
+        ProbeResponse get(String url, Map<String, String> headers) throws IOException, InterruptedException;
     }
 
     private static final Logger logger = LoggerFactory.getLogger(ExotelCredentialVerifier.class);
@@ -80,6 +94,7 @@ public class ExotelCredentialVerifier {
     static final String DEFAULT_TOOLS_SERVER_BASE_URL = "https://tools-server-prod.mum1.exotel.com";
     /** Same default as AiAssistService.CONTEXT_PATH. */
     private static final String DEFAULT_AI_ASSIST_CONTEXT_PATH = "ai-assist/api";
+    static final String DEFAULT_AI_ASSIST_BASE_URL = "https://ai-assist.in.exotel.com/" + DEFAULT_AI_ASSIST_CONTEXT_PATH;
 
     static final long POSITIVE_TTL_MS = 5 * 60_000L;
     static final long NEGATIVE_TTL_MS = 30_000L;
@@ -91,8 +106,10 @@ public class ExotelCredentialVerifier {
 
     private final String defaultApiDomain;
     private final String defaultCallsBaseUrl;
-    private final String defaultVoicebotBaseUrl;
-    private final String defaultToolsServerBaseUrl;
+    private final List<String> voicebotBases;
+    private final List<String> adminBases;
+    private final List<String> toolsServerBases;
+    private final List<String> aiAssistBases;
     private final StatusProbe probe;
     private final LongSupplier clock;
     private final Map<String, CacheEntry> cache = new LinkedHashMap<>(256, 0.75f, false) {
@@ -102,30 +119,75 @@ public class ExotelCredentialVerifier {
         }
     };
 
+    /**
+     * The four lists are comma-separated API bases (scheme + host + base path) from operator configuration.
+     * A blank list falls back to the service default; a blank Admin list is derived from the VoiceBot list.
+     */
     @Autowired
     public ExotelCredentialVerifier(
             @Value("${exotel.auth.verify.api.domain:https://api.exotel.com}") String defaultApiDomain,
             @Value("${exotel.voicebot.calls.base.url:https://api.in.exotel.com}") String defaultCallsBaseUrl,
-            @Value("${exotel.voicebot.base.url:" + DEFAULT_VOICEBOT_BASE_URL + "}") String defaultVoicebotBaseUrl,
-            @Value("${exotel.tools.server.base.url:" + DEFAULT_TOOLS_SERVER_BASE_URL + "}") String defaultToolsServerBaseUrl) {
-        this(defaultApiDomain, defaultCallsBaseUrl, defaultVoicebotBaseUrl, defaultToolsServerBaseUrl,
+            @Value("${exotel.auth.verify.voicebot.api.bases:${exotel.voicebot.base.url:" + DEFAULT_VOICEBOT_BASE_URL + "}}")
+            String voicebotBases,
+            @Value("${exotel.auth.verify.admin.api.bases:}") String adminBases,
+            @Value("${exotel.auth.verify.tools.server.api.bases:${exotel.tools.server.base.url:" + DEFAULT_TOOLS_SERVER_BASE_URL + "}}")
+            String toolsServerBases,
+            @Value("${exotel.auth.verify.ai.assist.api.bases:" + DEFAULT_AI_ASSIST_BASE_URL + "}") String aiAssistBases) {
+        this(defaultApiDomain, defaultCallsBaseUrl, voicebotBases, adminBases, toolsServerBases, aiAssistBases,
                 httpProbe(), System::currentTimeMillis);
     }
 
     ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl,
                              StatusProbe probe, LongSupplier clock) {
-        this(defaultApiDomain, defaultCallsBaseUrl, DEFAULT_VOICEBOT_BASE_URL, DEFAULT_TOOLS_SERVER_BASE_URL,
-                probe, clock);
+        this(defaultApiDomain, defaultCallsBaseUrl, DEFAULT_VOICEBOT_BASE_URL, "", DEFAULT_TOOLS_SERVER_BASE_URL,
+                DEFAULT_AI_ASSIST_BASE_URL, probe, clock);
     }
 
-    ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl, String defaultVoicebotBaseUrl,
-                             String defaultToolsServerBaseUrl, StatusProbe probe, LongSupplier clock) {
+    ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl, String voicebotBases,
+                             String adminBases, String toolsServerBases, String aiAssistBases,
+                             StatusProbe probe, LongSupplier clock) {
         this.defaultApiDomain = defaultApiDomain;
         this.defaultCallsBaseUrl = defaultCallsBaseUrl;
-        this.defaultVoicebotBaseUrl = defaultVoicebotBaseUrl;
-        this.defaultToolsServerBaseUrl = defaultToolsServerBaseUrl;
+        this.voicebotBases = parseBases(voicebotBases, DEFAULT_VOICEBOT_BASE_URL);
+        List<String> admin = parseBases(adminBases, null);
+        this.adminBases = admin.isEmpty()
+                ? this.voicebotBases.stream().map(ExotelCredentialVerifier::toAdminBase).distinct().toList()
+                : admin.stream().map(ExotelCredentialVerifier::toAdminBase).distinct().toList();
+        this.toolsServerBases = parseBases(toolsServerBases, DEFAULT_TOOLS_SERVER_BASE_URL);
+        this.aiAssistBases = parseBases(aiAssistBases, DEFAULT_AI_ASSIST_BASE_URL);
         this.probe = probe;
         this.clock = clock;
+    }
+
+    /** Splits a comma-separated list of operator-configured bases into normalised https bases. */
+    private static List<String> parseBases(String csv, String fallback) {
+        String source = csv == null || csv.isBlank() ? fallback : csv;
+        if (source == null) return List.of();
+        List<String> bases = new ArrayList<>();
+        for (String part : source.split(",")) {
+            if (part.isBlank()) continue;
+            String base = normalizeBase(part);
+            if (!base.startsWith("https://")) {
+                throw new IllegalStateException("Configured Exotel API base must be an https URL: " + base);
+            }
+            if (!bases.contains(base)) bases.add(base);
+        }
+        return List.copyOf(bases);
+    }
+
+    /** Lower-case scheme and host, default port dropped, trailing slashes stripped. Query/fragment are dropped. */
+    static String normalizeBase(String url) {
+        URI uri = URI.create(url.trim());
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+        int port = uri.getPort();
+        String portPart = port == -1 || ("https".equals(scheme) && port == 443) ? "" : ":" + port;
+        String path = uri.getRawPath() == null ? "" : uri.getRawPath().replaceAll("/+$", "");
+        return scheme + "://" + host + portPart + path;
+    }
+
+    private static String toAdminBase(String voicebotBase) {
+        return voicebotBase.replaceFirst("/api/v\\d+$", "/api/v1");
     }
 
     /**
@@ -196,20 +258,25 @@ public class ExotelCredentialVerifier {
                     c.getAccountSid(), c.getToken()));
             case CALLS -> Optional.of(verifyAccount(set, "calls_base_url", c.getCallsBaseUrl(), defaultCallsBaseUrl,
                     c.getCallsAccountId(), c.callsBasicToken()));
-            case VOICEBOT -> Optional.of(probeProduct(set,
-                    productBaseUrl("voicebot_base_url", c.getVoicebotBaseUrl(), defaultVoicebotBaseUrl)
-                            + "/accounts/" + safeId("voicebot_account_id", c.getVoicebotAccountId()) + "/voicebots?limit=1",
-                    basic(c.voicebotBasicToken())));
-            case ADMIN -> Optional.of(probeProduct(set,
-                    productBaseUrl("voicebot_base_url", c.getVoicebotBaseUrl(), defaultVoicebotBaseUrl)
-                            .replaceFirst("/api/v\\d+$", "/api/v1")
-                            + "/accounts/" + safeId("voicebot_account_id", c.getVoicebotAccountId()) + "/personas?limit=1",
-                    basic(c.adminBasicToken())));
-            case TOOLS_SERVER -> Optional.of(probeProduct(set,
-                    productBaseUrl("tools_server_base_url", c.getToolsServerBaseUrl(), defaultToolsServerBaseUrl)
-                            + "/tools/api/v1/tenants/" + safeId("tools_server_tenant_id", c.getToolsServerTenantId())
-                            + "/tools?limit=1",
-                    basic(toolsServerBasicToken(c))));
+            case VOICEBOT -> {
+                String id = safeId("voicebot_account_id", c.getVoicebotAccountId());
+                yield Optional.of(probeKnownBases(set, "voicebot_base_url", "VoiceBot", c.getVoicebotBaseUrl(),
+                        voicebotBases, UnaryOperator.identity(),
+                        base -> base + "/accounts/" + id + "/voicebots?limit=1", basic(c.voicebotBasicToken())));
+            }
+            case ADMIN -> {
+                String id = safeId("voicebot_account_id", c.getVoicebotAccountId());
+                yield Optional.of(probeKnownBases(set, "voicebot_base_url", "VoiceBot Admin", c.getVoicebotBaseUrl(),
+                        adminBases, ExotelCredentialVerifier::toAdminBase,
+                        base -> base + "/accounts/" + id + "/personas?limit=1", basic(c.adminBasicToken())));
+            }
+            case TOOLS_SERVER -> {
+                String tenant = safeId("tools_server_tenant_id", c.getToolsServerTenantId());
+                yield Optional.of(probeKnownBases(set, "tools_server_base_url", "Tools Server",
+                        c.getToolsServerBaseUrl(), toolsServerBases, UnaryOperator.identity(),
+                        base -> base + "/tools/api/v1/tenants/" + tenant + "/tools?limit=1",
+                        basic(toolsServerBasicToken(c))));
+            }
             case AI_ASSIST -> probeAiAssist(c);
             case CQA -> Optional.empty();
         };
@@ -240,14 +307,59 @@ public class ExotelCredentialVerifier {
         if (c.getAiAssistSessionCookie() != null) {
             headers.put("Cookie", c.getAiAssistSessionCookie());
         }
+        String sid = safeId("ai_assist_account_sid", c.getAiAssistAccountSid());
+        Function<String, String> url = base -> base + "/v1/accounts/" + sid + "/ai-assistants?limit=1";
+        if (c.getAiAssistBaseUrl() == null) {
+            return Optional.of(probeFirstAccepted(CredentialSet.AI_ASSIST, aiAssistBases, url, headers));
+        }
+        String callerBase = normalizeBase(ExotelHostGuard.requireAllowedBaseUrl("ai_assist_base_url", c.getAiAssistBaseUrl()));
         String context = c.getAiAssistContextPath() != null
                 ? ExotelHostGuard.requireSafePath("ai_assist_context_path", c.getAiAssistContextPath())
                 : DEFAULT_AI_ASSIST_CONTEXT_PATH;
         context = context.replaceAll("^/+|/+$", "");
-        String url = productBaseUrl("ai_assist_base_url", c.getAiAssistBaseUrl(), null)
-                + (context.isEmpty() ? "" : "/" + context)
-                + "/v1/accounts/" + safeId("ai_assist_account_sid", c.getAiAssistAccountSid()) + "/ai-assistants?limit=1";
-        return Optional.of(probeProduct(CredentialSet.AI_ASSIST, url, headers));
+        String candidate = callerBase + (context.isEmpty() ? "" : "/" + context);
+        if (!aiAssistBases.contains(candidate)) {
+            boolean contextIsTheProblem = c.getAiAssistContextPath() != null
+                    && aiAssistBases.contains(callerBase + "/" + DEFAULT_AI_ASSIST_CONTEXT_PATH);
+            throw new ExotelHostGuard.InvalidCredentialException(contextIsTheProblem
+                    ? "ai_assist_context_path must be one of the Exotel AI Assist API paths"
+                    : "ai_assist_base_url must be one of the Exotel AI Assist API bases");
+        }
+        return Optional.of(probeProduct(CredentialSet.AI_ASSIST, url.apply(candidate), headers));
+    }
+
+    /**
+     * Probes a product on a KNOWN base. A caller-supplied base must (after the guard, normalisation and
+     * {@code canonical}) equal one of {@code known}; only that base is probed, otherwise
+     * InvalidCredentialException names the field. With no caller base the known bases are tried in order.
+     */
+    private Outcome probeKnownBases(CredentialSet set, String field, String product, String callerBase,
+                                    List<String> known, UnaryOperator<String> canonical,
+                                    Function<String, String> probeUrl, Map<String, String> headers) {
+        if (callerBase == null) {
+            return probeFirstAccepted(set, known, probeUrl, headers);
+        }
+        String normalized = canonical.apply(normalizeBase(ExotelHostGuard.requireAllowedBaseUrl(field, callerBase)));
+        if (!known.contains(normalized)) {
+            throw new ExotelHostGuard.InvalidCredentialException(
+                    field + " must be one of the Exotel " + product + " API bases");
+        }
+        return probeProduct(set, probeUrl.apply(normalized), headers);
+    }
+
+    /**
+     * Tries each known base in order: VALID as soon as one accepts, REJECTED only if every base rejects,
+     * UNAVAILABLE if none accepted and at least one could not be verified.
+     */
+    private Outcome probeFirstAccepted(CredentialSet set, List<String> known,
+                                       Function<String, String> probeUrl, Map<String, String> headers) {
+        Outcome result = Outcome.REJECTED;
+        for (String base : known) {
+            Outcome outcome = probeProduct(set, probeUrl.apply(base), headers);
+            if (outcome == Outcome.VALID) return Outcome.VALID;
+            if (outcome == Outcome.UNAVAILABLE) result = Outcome.UNAVAILABLE;
+        }
+        return result;
     }
 
     private Outcome probeProduct(CredentialSet set, String url, Map<String, String> headers) {
@@ -336,24 +448,20 @@ public class ExotelCredentialVerifier {
         return probeProduct(set, url, basic(basicToken));
     }
 
-    /**
-     * Picks the base URL a product probe is sent to: the operator default when the field is absent, else
-     * the caller's value, which must pass ExotelHostGuard (https, exotel.com, port 443). Any base path
-     * (for example /voicebot/api/v2) is kept because the product services use it too.
-     */
-    private static String productBaseUrl(String field, String callerValue, String defaultUrl) {
-        String base = callerValue == null ? defaultUrl : ExotelHostGuard.requireAllowedBaseUrl(field, callerValue).trim();
-        return base.replaceAll("/+$", "");
-    }
-
     private static String safeId(String field, String value) {
         return ExotelHostGuard.requireSafeId(field, value);
     }
 
     private Outcome callExotel(CredentialSet set, String url, Map<String, String> headers) {
         try {
-            int status = probe.get(url, headers);
-            if (status >= 200 && status < 300) return Outcome.VALID;
+            ProbeResponse response = probe.get(url, headers);
+            int status = response.status();
+            if (status >= 200 && status < 300) {
+                if (isJson(response.contentType())) return Outcome.VALID;
+                logger.warn("Exotel credential verification inconclusive for {}: HTTP {} with a non-JSON response",
+                        set.label(), status);
+                return Outcome.UNAVAILABLE;
+            }
             if (status == 401 || status == 403 || status == 404) return Outcome.REJECTED;
             logger.warn("Exotel credential verification inconclusive for {}: HTTP {}", set.label(), status);
             return Outcome.UNAVAILABLE;
@@ -365,6 +473,13 @@ public class ExotelCredentialVerifier {
             logger.warn("Exotel credential verification failed for {}: {}", set.label(), e.getClass().getSimpleName());
             return Outcome.UNAVAILABLE;
         }
+    }
+
+    /** True for application/json and any structured-syntax +json media type; parameters are ignored. */
+    private static boolean isJson(String contentType) {
+        if (contentType == null) return false;
+        String mediaType = contentType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+        return mediaType.equals("application/json") || mediaType.endsWith("+json");
     }
 
     private static String cacheKey(String... parts) {
@@ -388,7 +503,8 @@ public class ExotelCredentialVerifier {
                     .header("Accept", "application/json")
                     .GET();
             headers.forEach(request::header);
-            return client.send(request.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
+            HttpResponse<Void> response = client.send(request.build(), HttpResponse.BodyHandlers.discarding());
+            return new ProbeResponse(response.statusCode(), response.headers().firstValue("Content-Type").orElse(null));
         };
     }
 }
