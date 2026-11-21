@@ -65,7 +65,9 @@ public class WhatsAppService {
         };
         factory.setConnectTimeout(10_000);
         factory.setReadTimeout(30_000);
-        return new RestTemplate(factory);
+        RestTemplate template = new RestTemplate(factory);
+        template.getInterceptors().add(UpstreamRedirectGuard.springInterceptor());
+        return template;
     }
 
     @Tool(name = "exotel_whatsapp_send_message",

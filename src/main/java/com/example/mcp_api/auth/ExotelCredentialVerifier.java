@@ -91,14 +91,66 @@ public class ExotelCredentialVerifier {
     public Outcome verify(AuthCredentials creds) {
         Outcome result = Outcome.VALID;
         if (creds.hasCoreExotelCredentials()) {
-            result = worse(result, verify(verificationBaseUrl("api_domain", creds.getApiDomain(), defaultApiDomain),
+            result = worse(result, verifySet("api_domain", creds.getApiDomain(), defaultApiDomain,
                     creds.getAccountSid(), creds.getToken()));
         }
         if (creds.hasCallsCredentials()) {
-            result = worse(result, verify(verificationBaseUrl("calls_base_url", creds.getCallsBaseUrl(), defaultCallsBaseUrl),
+            result = worse(result, verifySet("calls_base_url", creds.getCallsBaseUrl(), defaultCallsBaseUrl,
                     creds.getCallsAccountId(), creds.callsBasicToken()));
         }
         return result;
+    }
+
+    /**
+     * Verifies one credential set. When the caller named the host, only that host is probed. When the
+     * caller did not, the default host is probed first and, if it rejects, the other allowed host too
+     * (an account may live in the other region): VALID if either accepts, REJECTED only if every probed
+     * host rejects, UNAVAILABLE if none accepted and at least one could not be reached.
+     */
+    private Outcome verifySet(String field, String callerValue, String defaultUrl, String accountSid, String basicToken) {
+        if (callerValue != null) {
+            return verify(verificationBaseUrl(field, callerValue, defaultUrl), accountSid, basicToken);
+        }
+        String key = cacheKey("any-host:" + defaultUrl, accountSid, basicToken);
+        Outcome cached = cacheGet(key);
+        if (cached != null) return cached;
+
+        Outcome result = verify(defaultUrl, accountSid, basicToken);
+        if (result == Outcome.REJECTED) {
+            String defaultHost = URI.create(defaultUrl).getHost();
+            for (String host : new java.util.TreeSet<>(VERIFICATION_HOSTS)) {
+                if (host.equalsIgnoreCase(defaultHost)) continue;
+                Outcome other = verify("https://" + host, accountSid, basicToken);
+                if (other == Outcome.VALID) {
+                    result = Outcome.VALID;
+                } else if (other == Outcome.UNAVAILABLE) {
+                    result = Outcome.UNAVAILABLE;
+                }
+            }
+        }
+        cachePut(key, result);
+        return result;
+    }
+
+    private Outcome cacheGet(String key) {
+        long now = clock.getAsLong();
+        synchronized (cache) {
+            CacheEntry hit = cache.get(key);
+            if (hit != null) {
+                if (hit.expiresAtMs() > now) return hit.outcome();
+                cache.remove(key);
+            }
+        }
+        return null;
+    }
+
+    private void cachePut(String key, Outcome outcome) {
+        if (outcome == Outcome.UNAVAILABLE) return;
+        long ttl = outcome == Outcome.VALID ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS;
+        long expires = clock.getAsLong() + ttl;
+        synchronized (cache) {
+            cache.put(key, new CacheEntry(outcome, expires));
+        }
     }
 
     /**
@@ -121,22 +173,10 @@ public class ExotelCredentialVerifier {
     /** Verifies one account. {@code baseUrl} must already be a fixed verification host or operator-set. */
     Outcome verify(String baseUrl, String accountSid, String basicToken) {
         String key = cacheKey(baseUrl, accountSid, basicToken);
-        long now = clock.getAsLong();
-        synchronized (cache) {
-            CacheEntry hit = cache.get(key);
-            if (hit != null) {
-                if (hit.expiresAtMs() > now) return hit.outcome();
-                cache.remove(key);
-            }
-        }
-
+        Outcome cached = cacheGet(key);
+        if (cached != null) return cached;
         Outcome outcome = callExotel(baseUrl, accountSid, basicToken);
-        if (outcome != Outcome.UNAVAILABLE) {
-            long ttl = outcome == Outcome.VALID ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS;
-            synchronized (cache) {
-                cache.put(key, new CacheEntry(outcome, now + ttl));
-            }
-        }
+        cachePut(key, outcome);
         return outcome;
     }
 

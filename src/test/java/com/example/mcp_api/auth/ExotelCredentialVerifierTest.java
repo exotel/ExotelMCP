@@ -53,7 +53,8 @@ class ExotelCredentialVerifierTest {
         for (int status : new int[] {401, 403, 404}) {
             calls.set(0);
             ExotelCredentialVerifier v = verifierReturning(status);
-            AuthCredentials creds = AuthCredentials.parse(CORE);
+            AuthCredentials creds = AuthCredentials.parse("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
+                    + "\"api_domain\":\"https://api.exotel.com\"}");
             assertEquals(Outcome.REJECTED, v.verify(creds), "status " + status);
             assertEquals(Outcome.REJECTED, v.verify(creds));
             assertEquals(1, calls.get());
@@ -156,5 +157,83 @@ class ExotelCredentialVerifierTest {
                 "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"api_domain\":\"https://api.in.exotel.com/some/path\"}"));
         assertEquals(2, calls.get());
         assertEquals("https://api.in.exotel.com/v1/Accounts/acme1/Calls.json?PageSize=1", urls.get(1));
+    }
+
+    private ExotelCredentialVerifier verifierByHost(java.util.function.Function<String, Object> byHost) {
+        return new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
+                (url, token) -> {
+                    calls.incrementAndGet();
+                    urls.add(url);
+                    Object r = byHost.apply(java.net.URI.create(url).getHost());
+                    if (r instanceof IOException io) throw io;
+                    return (Integer) r;
+                }, now::get);
+    }
+
+    @Test
+    void unspecifiedHostValidOnDefaultOnlyProbesOnce() {
+        ExotelCredentialVerifier v = verifierByHost(h -> 200);
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(CORE)));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void unspecifiedHostValidOnOtherRegionOnly() {
+        ExotelCredentialVerifier v = verifierByHost(h -> h.equals("api.in.exotel.com") ? 200 : 401);
+        AuthCredentials creds = AuthCredentials.parse(CORE);
+        assertEquals(Outcome.VALID, v.verify(creds));
+        assertEquals(2, calls.get());
+        assertTrue(urls.get(0).startsWith("https://api.exotel.com/"));
+        assertTrue(urls.get(1).startsWith("https://api.in.exotel.com/"));
+        assertEquals(Outcome.VALID, v.verify(creds));
+        assertEquals(2, calls.get(), "valid result is cached");
+    }
+
+    @Test
+    void unspecifiedCallsHostValidOnOtherRegionOnly() {
+        ExotelCredentialVerifier v = verifierByHost(h -> h.equals("api.exotel.com") ? 200 : 404);
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
+                "{\"calls_api_key\":\"k\",\"calls_api_token\":\"t\",\"calls_account_id\":\"acct9\"}")));
+        assertTrue(urls.get(0).startsWith("https://api.in.exotel.com/"));
+        assertTrue(urls.get(1).startsWith("https://api.exotel.com/"));
+    }
+
+    @Test
+    void unspecifiedHostRejectedOnBothIsRejectedAndCachedBriefly() {
+        ExotelCredentialVerifier v = verifierByHost(h -> 401);
+        AuthCredentials creds = AuthCredentials.parse(CORE);
+        assertEquals(Outcome.REJECTED, v.verify(creds));
+        assertEquals(2, calls.get());
+        assertEquals(Outcome.REJECTED, v.verify(creds));
+        assertEquals(2, calls.get());
+        now.addAndGet(ExotelCredentialVerifier.NEGATIVE_TTL_MS + 1);
+        v.verify(creds);
+        assertEquals(4, calls.get());
+    }
+
+    @Test
+    void unspecifiedHostDefaultRejectsOtherUnreachableIsUnavailableAndNotCached() {
+        ExotelCredentialVerifier v = verifierByHost(h -> h.equals("api.exotel.com") ? (Object) 401 : new IOException("down"));
+        AuthCredentials creds = AuthCredentials.parse(CORE);
+        assertEquals(Outcome.UNAVAILABLE, v.verify(creds));
+        int first = calls.get();
+        assertEquals(Outcome.UNAVAILABLE, v.verify(creds));
+        assertTrue(calls.get() > first, "unavailable must not be cached");
+    }
+
+    @Test
+    void callerSpecifiedHostRejectsWithoutProbingOther() {
+        ExotelCredentialVerifier v = verifierByHost(h -> h.equals("api.in.exotel.com") ? 200 : 401);
+        assertEquals(Outcome.REJECTED, v.verify(AuthCredentials.parse(
+                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"api_domain\":\"https://api.exotel.com\"}")));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void specifiedAndUnspecifiedHostResultsDoNotShareCache() {
+        ExotelCredentialVerifier v = verifierByHost(h -> h.equals("api.in.exotel.com") ? 200 : 401);
+        assertEquals(Outcome.REJECTED, v.verify(AuthCredentials.parse(
+                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"api_domain\":\"https://api.exotel.com\"}")));
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(CORE)));
     }
 }

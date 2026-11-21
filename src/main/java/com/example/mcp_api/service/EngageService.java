@@ -76,7 +76,7 @@ public class EngageService {
                         .build());
             }
             var connMgr = connMgrBuilder.build();
-            var httpClient = HttpClients.custom().setConnectionManager(connMgr).disableRedirectHandling().build();
+            var httpClient = HttpClients.custom().setConnectionManager(connMgr).disableRedirectHandling().addResponseInterceptorFirst(UpstreamRedirectGuard.apacheInterceptor()).build();
             var factory = new HttpComponentsClientHttpRequestFactory(httpClient);
             factory.setConnectTimeout(10_000);
             factory.setReadTimeout(30_000);

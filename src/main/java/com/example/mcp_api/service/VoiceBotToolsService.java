@@ -73,7 +73,7 @@ public class VoiceBotToolsService {
                 connMgrBuilder.setSSLSocketFactory(SSLConnectionSocketFactoryBuilder.create()
                         .setSslContext(sslCtx).setHostnameVerifier(NoopHostnameVerifier.INSTANCE).build());
             }
-            var httpClient = HttpClients.custom().setConnectionManager(connMgrBuilder.build()).disableRedirectHandling().build();
+            var httpClient = HttpClients.custom().setConnectionManager(connMgrBuilder.build()).disableRedirectHandling().addResponseInterceptorFirst(UpstreamRedirectGuard.apacheInterceptor()).build();
             var factory = new HttpComponentsClientHttpRequestFactory(httpClient);
             factory.setConnectTimeout(10_000);
             factory.setReadTimeout(30_000);

@@ -211,4 +211,29 @@ class AuthFilterTest {
         assertFalse(response.getContentAsString().contains("evil"));
         assertEquals(0, probeCalls.get());
     }
+
+    @Test
+    void wellKnownGetWithoutHeaderPassesThrough() throws Exception {
+        for (String method : new String[] {"GET", "HEAD"}) {
+            MockFilterChain chain = new MockFilterChain();
+            MockHttpServletResponse response = call(method, "/.well-known/oauth-authorization-server", null, chain);
+            assertEquals(200, response.getStatus());
+            assertTrue(passed(chain));
+        }
+        assertEquals(0, probeCalls.get());
+    }
+
+    @Test
+    void wellKnownTraversalIs400() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(400, call("GET", "/.well-known/../mcp", null, chain).getStatus());
+        assertFalse(passed(chain));
+    }
+
+    @Test
+    void wellKnownPostWithoutHeaderIs401() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(401, call("POST", "/.well-known/x", null, chain).getStatus());
+        assertFalse(passed(chain));
+    }
 }

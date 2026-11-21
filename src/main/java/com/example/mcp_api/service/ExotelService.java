@@ -76,7 +76,7 @@ public class ExotelService {
             .build();
         
         return HttpClients.custom()
-            .disableRedirectHandling()
+            .disableRedirectHandling().addResponseInterceptorFirst(UpstreamRedirectGuard.apacheInterceptor())
             .setConnectionManager(connectionManager)
             .setDefaultRequestConfig(requestConfig)
             .setKeepAliveStrategy((response, context) -> Timeout.ofSeconds(30)) // Keep-alive for 30 seconds

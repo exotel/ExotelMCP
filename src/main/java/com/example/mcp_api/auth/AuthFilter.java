@@ -59,7 +59,7 @@ public class AuthFilter implements Filter {
                 return;
             }
 
-            if (isPublic(httpRequest)) {
+            if (isPublic(httpRequest) || isWellKnownProbe(httpRequest)) {
                 chain.doFilter(request, response);
                 return;
             }
@@ -127,6 +127,15 @@ public class AuthFilter implements Filter {
         String lower = rawUri.toLowerCase(Locale.ROOT);
         return lower.contains("..") || lower.contains(";") || lower.contains("//") || lower.contains("\\")
                 || lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c");
+    }
+
+    /** Unauthenticated discovery probes (OAuth metadata etc.) fall through to a plain 404. */
+    private static boolean isWellKnownProbe(HttpServletRequest request) {
+        String method = request.getMethod();
+        if (!"GET".equalsIgnoreCase(method) && !"HEAD".equalsIgnoreCase(method)) return false;
+        String servletPath = request.getServletPath() == null ? "" : request.getServletPath();
+        String pathInfo = request.getPathInfo() == null ? "" : request.getPathInfo();
+        return (servletPath + pathInfo).startsWith("/.well-known/");
     }
 
     private static boolean isPublic(HttpServletRequest request) {
