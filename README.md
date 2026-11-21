@@ -8,7 +8,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - 📨 **Engage SMS Campaigns**: Create static SMS message campaigns via Engage API
 - ☎️ **Voice Calling**: Initiate voice calls, connect numbers, and integrate with call flows
 - 📊 **Status Tracking**: Real-time delivery status and callback management
-- 🎵 **Quick Audio Tools**: One-click audio playback, download, and web player access
+- 🎵 **Quick Audio Tools**: Audio playback links and web player access
 - 🔍 **Conversational Intelligence**: AI-powered quality analysis of 100% of conversations across voice and digital channels
 - 🤖 **VoiceBot**: Create, manage, and place AI-powered outbound calls with VoiceBots
 - 🎧 **AI Assist**: Configure real-time agent assist (smart reply, transcription, KB) via MCP
@@ -191,9 +191,7 @@ Once configured, you can use Claude to interact with Exotel services using natur
 - "Connect +919999999999 with +919888888888"
 
 **Audio Commands:**
-- "Play audio from https://example.com/song.mp3"
 - "Open the audio player interface"
-- "Download audio from https://example.com/podcast.mp3"
 
 **Conversational Intelligence -- Setup Commands:**
 - "Login to CQA as admin@exotel.com on tenant my_tenant"
@@ -359,15 +357,7 @@ Get information about phone number +919999999999
 ### Audio Services
 
 #### Quick Audio Tools
-Quick one-click audio playback and management tools.
-
-##### Quick Play Audio
-Get instant clickable links to play any audio URL in your browser.
-
-**Example**: 
-```
-Play audio from https://example.com/song.mp3
-```
+Web audio player access.
 
 ##### Open Audio Player
 Access the web-based audio player interface for full control.
@@ -375,14 +365,6 @@ Access the web-based audio player interface for full control.
 **Example**: 
 ```
 Open the audio player interface
-```
-
-##### Quick Download
-Get direct download links for any audio file.
-
-**Example**: 
-```
-Download audio from https://example.com/song.mp3
 ```
 
 ### Conversational Intelligence Services

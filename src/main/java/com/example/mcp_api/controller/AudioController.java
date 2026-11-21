@@ -5,7 +5,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -14,8 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.net.URL;
-import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -87,10 +84,14 @@ public class AudioController {
     @GetMapping("/stream/{filename}")
     public ResponseEntity<Resource> streamAudio(@PathVariable String filename) {
         try {
-            Path audioFile = Paths.get(audioDirectoryPath).resolve(filename);
+            Path fileName = Paths.get(filename).getFileName();
+            if (fileName == null) {
+                return ResponseEntity.badRequest().build();
+            }
+            Path audioFile = Paths.get(audioDirectoryPath).resolve(fileName);
             
             // Security check
-            if (!audioFile.toAbsolutePath().startsWith(Paths.get(audioDirectoryPath).toAbsolutePath())) {
+            if (!audioFile.toAbsolutePath().normalize().startsWith(Paths.get(audioDirectoryPath).toAbsolutePath().normalize())) {
                 return ResponseEntity.badRequest().build();
             }
             
@@ -108,53 +109,13 @@ public class AudioController {
             
             return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + fileName + "\"")
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .header("Accept-Ranges", "bytes")
                 .body(resource);
                 
         } catch (IOException e) {
             logger.error("Error streaming audio file: {}", filename, e);
-            return ResponseEntity.internalServerError().build();
-        }
-    }
-    
-    /**
-     * Download audio from URL for client-side saving
-     * Usage: GET /audio/download?url=https://example.com/audio.mp3
-     */
-    @GetMapping("/download")
-    public ResponseEntity<Resource> downloadAudio(@RequestParam String url) {
-        logger.info("Downloading audio from URL for client: {}", url);
-        
-        try {
-            URL audioUrl = new URL(url);
-            URLConnection connection = audioUrl.openConnection();
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(30000);
-            
-            // Get filename from URL
-            String filename = getFilenameFromUrl(url);
-            if (filename == null) {
-                filename = "downloaded_audio_" + System.currentTimeMillis() + ".mp3";
-            }
-            
-            // Determine content type
-            String contentType = connection.getContentType();
-            if (contentType == null || !contentType.startsWith("audio/")) {
-                contentType = "audio/mpeg"; // default
-            }
-            
-            InputStream inputStream = connection.getInputStream();
-            InputStreamResource resource = new InputStreamResource(inputStream);
-            
-            return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(contentType))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .body(resource);
-                
-        } catch (Exception e) {
-            logger.error("Error downloading audio from URL: {}", url, e);
             return ResponseEntity.internalServerError().build();
         }
     }
@@ -173,22 +134,6 @@ public class AudioController {
         return ResponseEntity.ok()
             .contentType(MediaType.TEXT_HTML)
             .body(html);
-    }
-    
-    private String getFilenameFromUrl(String urlString) {
-        try {
-            URL url = new URL(urlString);
-            String path = url.getPath();
-            if (path != null && !path.isEmpty()) {
-                int lastSlash = path.lastIndexOf('/');
-                if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-                    return path.substring(lastSlash + 1);
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not extract filename from URL: {}", urlString);
-        }
-        return null;
     }
     
     private String generateAudioPlayerHTML(String file, String url) {

@@ -19,7 +19,7 @@ public class McpApiApplication {
 	public FilterRegistrationBean<AuthFilter> authFilterRegistration(AuthFilter authFilter) {
 		FilterRegistrationBean<AuthFilter> registration = new FilterRegistrationBean<>();
 		registration.setFilter(authFilter);
-		registration.addUrlPatterns("/mcp", "/mcp/*");
+		registration.addUrlPatterns("/*");
 		registration.setOrder(1);
 		return registration;
 	}

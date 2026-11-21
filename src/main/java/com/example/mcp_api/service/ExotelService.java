@@ -1,5 +1,6 @@
 package com.example.mcp_api.service;
 
+import com.example.mcp_api.auth.ExotelHostGuard;
 import org.apache.hc.client5.http.classic.HttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -75,6 +76,7 @@ public class ExotelService {
             .build();
         
         return HttpClients.custom()
+            .disableRedirectHandling()
             .setConnectionManager(connectionManager)
             .setDefaultRequestConfig(requestConfig)
             .setKeepAliveStrategy((response, context) -> Timeout.ofSeconds(30)) // Keep-alive for 30 seconds
@@ -590,6 +592,11 @@ public class ExotelService {
             
             String authType = authMap.getOrDefault("auth_type", "Basic");
             
+            // Caller-supplied host and path values must be Exotel-only and URL-safe (SL-3868).
+            if (authMap.containsKey("api_domain")) ExotelHostGuard.requireAllowedBaseUrl("api_domain", authMap.get("api_domain"));
+            if (authMap.containsKey("exotel_portal_url")) ExotelHostGuard.requireAllowedBaseUrl("exotel_portal_url", authMap.get("exotel_portal_url"));
+            if (authMap.containsKey("account_sid")) ExotelHostGuard.requireSafeId("account_sid", authMap.get("account_sid"));
+
             AuthData authData = new AuthData(
                 token,
                 tokenMd5,
@@ -605,6 +612,8 @@ public class ExotelService {
                         authData.fromNumber(), authData.callerId(), authData.apiDomain(), authData.accountSid());
             
             return authData;
+        } catch (ExotelHostGuard.InvalidCredentialException e) {
+            throw e;
         } catch (Exception e) {
             logger.error("AUTH PARSING ERROR: Error parsing auth header: {}", e.getMessage(), e);
             logger.debug("Falling back to default auth data due to parsing error");

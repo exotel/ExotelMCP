@@ -31,9 +31,6 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.ArrayList;
@@ -288,7 +285,7 @@ public class AiAssistService {
                       + "OR any of them FAILS / ends PARTIAL_SUCCESS, OR the timeout elapses. "
                       + "Jobs move QUEUED \u2192 UPLOADING \u2192 PROCESSING \u2192 COMPLETED; the in-flight states keep this polling. "
                       + "Blocks the tool call while polling, so the LLM can call this immediately after "
-                      + "attach_attachment_from_file/_from_url and be sure the assistant is truly ready.\n\n"
+                      + "exotel_aiassist_attach_attachment_from_url and be sure the assistant is truly ready.\n\n"
                       + "Required: aiAssistantId. "
                       + "Optional: timeoutSeconds (default 120, max 600), pollIntervalSeconds (default 3, min 1, max 30).\n\n"
                       + "Returns JSON with:\n"
@@ -890,10 +887,10 @@ public class AiAssistService {
                       + "  Q3. INTERACTION CHANNELS (required, \u2265 1). Voice, chat, or both. AI Assist UI default: [voice].\n"
                       + "  Q4. ATTACH DOCUMENTS? YES / NO. MUST ASK EXPLICITLY even if the user didn't mention KB \u2014 the AI Assist UI has an 'Add documents' section on this step and it is easy to forget.\n"
                       + "        \u2022 If YES: collect a list of file paths AND a short (\u2264 500 chars) description per file.\n"
-                      + "        \u2022 If NO: continue \u2014 KB can also be attached later via exotel_aiassist_attach_attachment_from_file / _from_url.\n\n"
+                      + "        \u2022 If NO: continue \u2014 KB can also be attached later via exotel_aiassist_attach_attachment_from_url.\n\n"
                       + "Only call this tool once Q1\u2013Q4 (and STEP 0) are answered. Sent in this call: name, description, and optional templateId. Q3 (channels) is sent in STEP 2 and Q4 (attachments) is handled by the attach tools.\n\n"
                       + "After this tool returns successfully, IMMEDIATELY continue the same conversation with:\n"
-                      + "  1) exotel_aiassist_attach_attachment_from_file / _from_url \u2014 once per file collected in Q4 (skip if Q4=NO)\n"
+                      + "  1) exotel_aiassist_attach_attachment_from_url \u2014 once per file collected in Q4 (skip if Q4=NO)\n"
                       + "  2) exotel_aiassist_update_assistant \u2014 STEP 2 (Configuration). Its description lists the 3 AI Assist UI sub-sections you MUST walk (Platform / General / Advanced \u2014 including ASR language and LLM model, which are commonly skipped).\n"
                       + "  3) exotel_aiassist_publish_assistant \u2014 STEP 3 (Deploy & Publish). MUST ask the user \u201cpublish now (LIVE) or keep as DRAFT?\u201d before calling.\n"
                       + "  4) POST-PUBLISH ONLY \u2014 for source=exolite assistants that were published LIVE, exotel_aiassist_streaming_applet_template can generate a paste-ready CPaaS App (Stream \u2192 Connect(group) \u2192 Hangup). DO NOT ask about applets / dial destination / group during Q1\u2013Q4 or STEP 2 \u2014 that belongs after STEP 3 succeeds and is a separate ask.\n\n"
@@ -1547,7 +1544,7 @@ public class AiAssistService {
 
     @Tool(name = "exotel_aiassist_update_kb_file_descriptions",
           description = "Persist per-file 'what is this doc about' descriptions on an assistant's KB upload jobs. "
-                      + "Use this AFTER exotel_aiassist_attach_attachment_from_file / _from_url to save the "
+                      + "Use this AFTER exotel_aiassist_attach_attachment_from_url to save the "
                       + "one-line descriptions the user typed for each file during the create-assistant wizard.\n\n"
                       + "PATCH /ai-assist/api/v1/accounts/{sid}/ai-assistants/{aiAssistantId}/upload-jobs "
                       + "with a single multipart field 'description' whose value is a JSON string mapping filename -> description.\n\n"
@@ -1731,67 +1728,6 @@ public class AiAssistService {
         ByteArrayResource resource = namedByteResource(bytes, effectiveName);
         String uploadResult = addAttachmentsAsUploadJobs(creds, aiAssistantId, List.of(resource));
         return persistDescriptionAndMerge(creds, aiAssistantId, effectiveName, description.trim(), uploadResult);
-    }
-
-    @Tool(name = "exotel_aiassist_attach_attachment_from_file",
-          description = "STEP 2 of the create-assistant wizard (variant: file is on the MCP server's local disk). Attach ONE document to an assistant. "
-                      + "Call this ONCE PER FILE the user supplied. If the user has 3 docs, call this 3 times.\n\n"
-                      + "STRICT: description is REQUIRED (\u2265 10 chars, \u2264 500). The AI Assist UI blocks attachment API calls when any file lacks a description \u2014 do the same here. "
-                      + "If the user hasn't given a per-file description yet, ASK THEM FIRST. Do NOT invent one; the description is what the LLM uses to decide when to consult this doc at runtime.\n\n"
-                      + "Uploads go through the ASYNC upload-jobs API: the file is staged and a KB indexing job is created "
-                      + "(QUEUED \u2192 UPLOADING \u2192 PROCESSING \u2192 COMPLETED). POST reuses the assistant's existing corpus, or creates "
-                      + "one on the first upload \u2014 handled automatically. The tool then persists the description via /upload-jobs so "
-                      + "the two never drift. Call exotel_aiassist_wait_for_kb_ready afterwards to block until indexing finishes.\n"
-                      + "POST /ai-assistants/{id}/upload-jobs with files (multipart file field).\n"
-                      + "Required: aiAssistantId, filePath (absolute path), description (\u2265 10 chars), confirm=true.\n"
-                      + "IMPORTANT: only works when the file exists on the MCP server's disk. "
-                      + "For local MCP (localhost:8090) this includes chat-uploaded files in Cursor's local upload directory. "
-                      + "For hosted MCP (mcp.exotel.com) use exotel_aiassist_attach_attachment_from_url instead. "
-                      + "Max file size 25 MB.")
-    public String attachAttachmentFromFile(String aiAssistantId, String filePath, String description, Boolean confirm) {
-        String err = requireEffectiveAiAssist();
-        if (err != null) return err;
-        if (aiAssistantId == null || aiAssistantId.isBlank() || !AiAssistGuards.isValidId(aiAssistantId)) {
-            return AiAssistJson.errorJson("invalid_argument", "aiAssistantId invalid");
-        }
-        if (filePath == null || filePath.isBlank()) {
-            return AiAssistJson.errorJson("invalid_argument", "filePath is required");
-        }
-        String descCheck = validateAttachmentDescription(description);
-        if (descCheck != null) return descCheck;
-
-        Path path;
-        try {
-            path = Paths.get(filePath).toAbsolutePath().normalize();
-        } catch (Exception e) {
-            return AiAssistJson.errorJson("invalid_path", "filePath is not a valid path: " + e.getMessage());
-        }
-        if (!Files.exists(path)) {
-            return AiAssistJson.errorJson("file_not_found", "No file at " + path);
-        }
-        if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-            return AiAssistJson.errorJson("file_not_readable", "Not a readable regular file: " + path);
-        }
-
-        AuthCredentials creds = AuthContext.current();
-        String gate = requireWritePermission(creds, confirm, "attach_attachment_from_file");
-        if (gate != null) return gate;
-
-        byte[] bytes;
-        try {
-            long size = Files.size(path);
-            if (size > MAX_ATTACHMENT_BYTES) {
-                return AiAssistJson.errorJson("file_too_large", "File > 25MB (" + size + " bytes)");
-            }
-            bytes = Files.readAllBytes(path);
-        } catch (Exception e) {
-            return AiAssistJson.errorJson("file_read_error", e.getClass().getSimpleName() + ": " + e.getMessage());
-        }
-
-        String fileName = path.getFileName().toString();
-        ByteArrayResource resource = namedByteResource(bytes, fileName);
-        String uploadResult = addAttachmentsAsUploadJobs(creds, aiAssistantId, List.of(resource));
-        return persistDescriptionAndMerge(creds, aiAssistantId, fileName, description.trim(), uploadResult);
     }
 
     private String validateAttachmentDescription(String description) {

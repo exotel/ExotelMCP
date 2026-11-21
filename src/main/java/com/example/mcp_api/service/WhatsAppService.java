@@ -54,7 +54,15 @@ public class WhatsAppService {
     // Same 10s connect / 30s read budget as the SMS and Engage tools, so a hung
     // upstream call cannot pin an mcp.exotel.com thread indefinitely.
     private static RestTemplate buildRestTemplate() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
+            @Override
+            protected void prepareConnection(java.net.HttpURLConnection connection, String httpMethod)
+                    throws java.io.IOException {
+                super.prepareConnection(connection, httpMethod);
+                // Never follow 3xx: the Authorization header must not leave the allow-listed host.
+                connection.setInstanceFollowRedirects(false);
+            }
+        };
         factory.setConnectTimeout(10_000);
         factory.setReadTimeout(30_000);
         return new RestTemplate(factory);
@@ -78,7 +86,7 @@ public class WhatsAppService {
 
         AuthCredentials creds = AuthContext.current();
         String token = creds.getToken();
-        String apiDomain = creds.getApiDomain();
+        String apiDomain = creds.effectiveApiDomain(null);
         String accountSid = creds.getAccountSid();
         String whatsappFrom = creds.getWhatsappFrom(); // dedicated WhatsApp sender (NOT from_number)
 

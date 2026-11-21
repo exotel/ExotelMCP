@@ -67,6 +67,7 @@ public class CqaService {
             .build();
 
         return HttpClients.custom()
+            .disableRedirectHandling()
             .setConnectionManager(cm)
             .setDefaultRequestConfig(rc)
             .setKeepAliveStrategy((response, context) -> Timeout.ofSeconds(30))

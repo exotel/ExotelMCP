@@ -69,7 +69,7 @@ public class VoiceBotService {
                         .build());
             }
             var connMgr = connMgrBuilder.build();
-            var httpClient = HttpClients.custom().setConnectionManager(connMgr).build();
+            var httpClient = HttpClients.custom().setConnectionManager(connMgr).disableRedirectHandling().build();
             var factory = new HttpComponentsClientHttpRequestFactory(httpClient);
             factory.setConnectTimeout(10_000);
             factory.setReadTimeout(30_000);

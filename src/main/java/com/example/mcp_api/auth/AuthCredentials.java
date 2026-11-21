@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Base64;
+import java.util.regex.Pattern;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -21,6 +22,8 @@ public class AuthCredentials {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public static final String REQUEST_ATTRIBUTE = "exotel.auth.credentials";
+
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("^[A-Za-z0-9+/=_-]+$");
 
     // CPaaS
     private String token;
@@ -234,6 +237,61 @@ public class AuthCredentials {
 
     public boolean isParsed() { return parsed; }
 
+    /**
+     * Validates every caller-supplied host/base URL and every identifier that is interpolated
+     * into a URL path. Throws ExotelHostGuard.InvalidCredentialException on the first bad field.
+     */
+    public void validateFields() {
+        hostField("api_domain", apiDomain);
+        hostField("exotel_portal_url", exotelPortalUrl);
+        hostField("voicebot_base_url", voicebotBaseUrl);
+        hostField("calls_base_url", callsBaseUrl);
+        hostField("cqa_host", cqaHost);
+        hostField("tools_server_base_url", toolsServerBaseUrl);
+        hostField("ai_assist_base_url", aiAssistBaseUrl);
+        hostField("ai_assist_auth_token_url", aiAssistAuthTokenUrl);
+        if (aiAssistContextPath != null) ExotelHostGuard.requireSafePath("ai_assist_context_path", aiAssistContextPath);
+
+        idField("account_sid", accountSid);
+        idField("voicebot_account_id", voicebotAccountId);
+        idField("calls_account_id", callsAccountId);
+        idField("cqa_account_id", cqaAccountId);
+        idField("tools_server_tenant_id", toolsServerTenantId);
+        idField("ai_assist_account_sid", aiAssistAccountSid);
+
+        if (token != null && !TOKEN_PATTERN.matcher(token).matches()) {
+            throw new ExotelHostGuard.InvalidCredentialException("token contains invalid characters");
+        }
+    }
+
+    private static void hostField(String name, String value) {
+        if (value != null) ExotelHostGuard.requireAllowedBaseUrl(name, value);
+    }
+
+    private static void idField(String name, String value) {
+        if (value != null) ExotelHostGuard.requireSafeId(name, value);
+    }
+
+    /** Core Exotel API credentials: Base64(api_key:api_token) plus the account sid. */
+    public boolean hasCoreExotelCredentials() {
+        return token != null && accountSid != null;
+    }
+
+    /**
+     * True if the header carries at least one complete, well-formed credential set:
+     * core (token + account_sid), VoiceBot, Calls, CQA, Tools Server, AI Assist, or
+     * VoiceBot Admin (admin_username/password + voicebot_account_id).
+     */
+    public boolean hasCompleteCredentialSet() {
+        return hasCoreExotelCredentials()
+            || hasVoicebotCredentials()
+            || hasCallsCredentials()
+            || hasCqaCredentials()
+            || hasToolsServerCredentials()
+            || hasAiAssistCredentials()
+            || (hasAdminCredentials() && voicebotAccountId != null);
+    }
+
     // ======================== DERIVED VALUES ========================
 
     public String voicebotBasicToken() {
@@ -259,16 +317,24 @@ public class AuthCredentials {
             (toolsServerApiKey + ":" + tok).getBytes(StandardCharsets.UTF_8));
     }
 
+    // Caller-supplied hosts must pass ExotelHostGuard; operator-set defaults are returned as-is.
+    public String effectiveApiDomain(String defaultUrl) {
+        return apiDomain != null ? ExotelHostGuard.requireAllowedBaseUrl("api_domain", apiDomain) : defaultUrl;
+    }
+
     public String effectiveToolsServerBaseUrl(String defaultUrl) {
-        return toolsServerBaseUrl != null ? toolsServerBaseUrl : defaultUrl;
+        return toolsServerBaseUrl != null
+            ? ExotelHostGuard.requireAllowedBaseUrl("tools_server_base_url", toolsServerBaseUrl) : defaultUrl;
     }
 
     public String effectiveVoicebotBaseUrl(String defaultUrl) {
-        return voicebotBaseUrl != null ? voicebotBaseUrl : defaultUrl;
+        return voicebotBaseUrl != null
+            ? ExotelHostGuard.requireAllowedBaseUrl("voicebot_base_url", voicebotBaseUrl) : defaultUrl;
     }
 
     public String effectiveCallsBaseUrl(String defaultUrl) {
-        return callsBaseUrl != null ? callsBaseUrl : defaultUrl;
+        return callsBaseUrl != null
+            ? ExotelHostGuard.requireAllowedBaseUrl("calls_base_url", callsBaseUrl) : defaultUrl;
     }
 
     public String effectiveCallsAccountId() {
@@ -276,7 +342,7 @@ public class AuthCredentials {
     }
 
     public String effectiveCqaHost(String defaultHost) {
-        return cqaHost != null ? cqaHost : defaultHost;
+        return cqaHost != null ? ExotelHostGuard.requireAllowedBaseUrl("cqa_host", cqaHost) : defaultHost;
     }
 
     public String aiAssistBearerHeader() {
@@ -298,11 +364,13 @@ public class AuthCredentials {
     }
 
     public String effectiveAiAssistBaseUrl(String defaultUrl) {
-        return aiAssistBaseUrl != null ? aiAssistBaseUrl : defaultUrl;
+        return aiAssistBaseUrl != null
+            ? ExotelHostGuard.requireAllowedBaseUrl("ai_assist_base_url", aiAssistBaseUrl) : defaultUrl;
     }
 
     public String effectiveAiAssistContextPath(String defaultPath) {
-        return aiAssistContextPath != null ? aiAssistContextPath : defaultPath;
+        return aiAssistContextPath != null
+            ? ExotelHostGuard.requireSafePath("ai_assist_context_path", aiAssistContextPath) : defaultPath;
     }
 
     // ======================== GETTERS ========================
