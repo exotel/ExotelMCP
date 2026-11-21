@@ -18,7 +18,8 @@ class RemovedToolsTest {
             "exotel_aiassist_attach_attachment_from_file",
             "exotel_audio_download_from_url",
             "exotel_audio_play_from_url",
-            "audio_client_download_file");
+            "audio_client_download_file",
+            "exotel_aiassist_attach_attachment_from_url");
 
     @Test
     void removedToolsAreNotRegistered() {
@@ -27,6 +28,23 @@ class RemovedToolsTest {
                 .map(m -> m.getAnnotation(Tool.class))
                 .filter(t -> t != null)
                 .forEach(t -> assertFalse(REMOVED.contains(t.name()), "Removed tool is back: " + t.name()));
+    }
+
+    /** The attach-from-URL tool is disabled (not deleted) for SL-3868: no registered tool method may carry its name. */
+    @Test
+    void attachFromUrlToolIsNotExposedByAnyService() {
+        Stream.of(ExotelService.class, QuickAudioService.class, CqaService.class, VoiceBotService.class,
+                        VoiceBotAdminTools.class, com.example.mcp_api.service.setup.SetupTools.class,
+                        VoiceBotToolsService.class, EngageService.class, AiAssistService.class, WhatsAppService.class,
+                        ClientAudioService.class)
+                .flatMap(c -> Stream.of(c.getDeclaredMethods()))
+                .map(m -> m.getAnnotation(Tool.class))
+                .filter(t -> t != null)
+                .forEach(t -> assertFalse("exotel_aiassist_attach_attachment_from_url".equals(t.name()),
+                        "attach-from-URL tool is exposed again"));
+        assertFalse(java.util.Arrays.stream(AiAssistService.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals("attachAttachmentFromUrl"))
+                .anyMatch(m -> m.getAnnotation(Tool.class) != null), "attachAttachmentFromUrl has @Tool again");
     }
 
     @Test

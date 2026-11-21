@@ -338,13 +338,19 @@ class ExotelCredentialVerifierTest {
     }
 
     @Test
-    void callerPathIsDroppedAndHostIsPartOfCacheKey() {
+    void callerPathIsRefusedAndHostIsPartOfCacheKey() {
         ExotelCredentialVerifier v = verifierReturning(200);
         v.verify(AuthCredentials.parse(CORE));
         v.verify(AuthCredentials.parse(
-                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"api_domain\":\"https://api.in.exotel.com/some/path\"}"));
+                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"api_domain\":\"https://api.in.exotel.com\"}"));
         assertEquals(2, calls.get());
         assertEquals("https://api.in.exotel.com/v1/Accounts/acme1/Calls.json?PageSize=1", urls.get(1));
+
+        ExotelHostGuard.InvalidCredentialException e = assertThrows(ExotelHostGuard.InvalidCredentialException.class,
+                () -> v.verify(AuthCredentials.parse("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
+                        + "\"api_domain\":\"https://api.in.exotel.com/some/path\"}")));
+        assertTrue(e.getMessage().contains("api_domain"));
+        assertEquals(2, calls.get());
     }
 
     private ExotelCredentialVerifier verifierByHost(java.util.function.Function<String, Object> byHost) {

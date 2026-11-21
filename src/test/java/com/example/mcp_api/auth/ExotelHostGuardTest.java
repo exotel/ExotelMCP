@@ -133,4 +133,39 @@ class ExotelHostGuardTest {
         AuthCredentials badToken = AuthCredentials.parse("{\"token\":\"abc def\\r\\nX: y\"}");
         assertThrows(InvalidCredentialException.class, badToken::validateFields);
     }
+
+    @Test
+    void phoneNumbersAcceptNormalValuesAndRejectUrlInjection() {
+        for (String ok : new String[] {"+919999999999", "09999999999", " 9999999999 ", "12345"}) {
+            assertDoesNotThrow(() -> ExotelHostGuard.requirePhoneNumber("number", ok), ok);
+        }
+        assertEquals("+919999999999", ExotelHostGuard.requirePhoneNumber("number", " +919999999999 "));
+        for (String bad : new String[] {"../../../Calls/connect.json?x=", "9999999999?x=1", "9999999999#", "99999 99999",
+                "%2e%2e%2f", "9999999999%3Fx", "..", "", "   ", "1234", "123456789012345678901", "+", "++919999999999",
+                "9999999999/../x"}) {
+            InvalidCredentialException e = assertThrows(InvalidCredentialException.class,
+                    () -> ExotelHostGuard.requirePhoneNumber("number", bad), bad);
+            assertTrue(e.getMessage().startsWith("number "));
+        }
+        assertThrows(InvalidCredentialException.class, () -> ExotelHostGuard.requirePhoneNumber("number", null));
+    }
+
+    @Test
+    void tenantIdsUseTheSafeIdPattern() {
+        assertDoesNotThrow(() -> ExotelHostGuard.requireSafeId("tenantId", "acme_corp-1"));
+        for (String bad : new String[] {"../x", "a/b", "a?b=1", "a#b", "a b", "a%2fb", "x/spawn?y"}) {
+            assertThrows(InvalidCredentialException.class, () -> ExotelHostGuard.requireSafeId("tenantId", bad), bad);
+        }
+    }
+
+    @Test
+    void queryValuesRejectSeparatorsAndEncodings() {
+        for (String ok : new String[] {"stable", "v2", "true", "2024-01-01", "2024-01-01T10:00:00Z", "2024-01-01T10:00:00+05:30", "ready"}) {
+            assertTrue(ExotelHostGuard.isSafeQueryValue(ok), ok);
+        }
+        for (String bad : new String[] {"a&b=c", "a=b", "x#y", "a b", "a%26b", "", "../x", "a?b"}) {
+            assertFalse(ExotelHostGuard.isSafeQueryValue(bad), bad);
+        }
+        assertThrows(InvalidCredentialException.class, () -> ExotelHostGuard.requireSafeQueryValue("version", "a&b"));
+    }
 }

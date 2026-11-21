@@ -88,7 +88,7 @@ public class ExotelCredentialVerifier {
     private static final Logger logger = LoggerFactory.getLogger(ExotelCredentialVerifier.class);
 
     /** The only hosts credentials are ever sent to for verification when the caller names one. */
-    static final Set<String> VERIFICATION_HOSTS = Set.of("api.exotel.com", "api.in.exotel.com");
+    static final Set<String> VERIFICATION_HOSTS = ExotelHostGuard.API_HOSTS;
 
     static final String DEFAULT_VOICEBOT_BASE_URL = "https://voicebot.in.exotel.com/voicebot/api/v2";
     static final String DEFAULT_TOOLS_SERVER_BASE_URL = "https://tools-server-prod.mum1.exotel.com";
@@ -191,6 +191,62 @@ public class ExotelCredentialVerifier {
     }
 
     /**
+     * Pins every caller-supplied base URL that is present, whichever credential sets the header carries:
+     * api_domain and calls_base_url must be one of {@link #VERIFICATION_HOSTS}; voicebot_base_url,
+     * tools_server_base_url and ai_assist_base_url (+ ai_assist_context_path) must equal a known base of
+     * the operator. Runs on every request before any tool, so a field can never reach a request URL
+     * unchecked. Throws InvalidCredentialException naming the field (never the value).
+     */
+    void requireKnownBaseUrls(AuthCredentials c) {
+        if (c.getApiDomain() != null) ExotelHostGuard.requireApiHost("api_domain", c.getApiDomain());
+        if (c.getCallsBaseUrl() != null) ExotelHostGuard.requireApiHost("calls_base_url", c.getCallsBaseUrl());
+        if (c.getVoicebotBaseUrl() != null) {
+            String normalized = normalizeBase(ExotelHostGuard.requireAllowedBaseUrl("voicebot_base_url", c.getVoicebotBaseUrl()));
+            if (!voicebotBases.contains(normalized) && !adminBases.contains(normalized)) {
+                throw new ExotelHostGuard.InvalidCredentialException(
+                        "voicebot_base_url must be one of the Exotel VoiceBot API bases");
+            }
+        }
+        if (c.getToolsServerBaseUrl() != null) {
+            requireKnownBase("tools_server_base_url", "Tools Server", c.getToolsServerBaseUrl(), toolsServerBases,
+                    UnaryOperator.identity());
+        }
+        if (c.getAiAssistBaseUrl() != null) aiAssistCandidateBase(c);
+        else if (c.getAiAssistContextPath() != null) {
+            ExotelHostGuard.requireSafePath("ai_assist_context_path", c.getAiAssistContextPath());
+        }
+    }
+
+    /** Normalises a caller base and requires it to equal one of {@code known}; returns the normalised base. */
+    private String requireKnownBase(String field, String product, String callerBase, List<String> known,
+                                    UnaryOperator<String> canonical) {
+        String normalized = canonical.apply(normalizeBase(ExotelHostGuard.requireAllowedBaseUrl(field, callerBase)));
+        if (!known.contains(normalized)) {
+            throw new ExotelHostGuard.InvalidCredentialException(
+                    field + " must be one of the Exotel " + product + " API bases");
+        }
+        return normalized;
+    }
+
+    /** Caller AI Assist base + context path (default ai-assist/api) as a normalised known base, or InvalidCredentialException. */
+    private String aiAssistCandidateBase(AuthCredentials c) {
+        String callerBase = normalizeBase(ExotelHostGuard.requireAllowedBaseUrl("ai_assist_base_url", c.getAiAssistBaseUrl()));
+        String context = c.getAiAssistContextPath() != null
+                ? ExotelHostGuard.requireSafePath("ai_assist_context_path", c.getAiAssistContextPath())
+                : DEFAULT_AI_ASSIST_CONTEXT_PATH;
+        context = context.replaceAll("^/+|/+$", "");
+        String candidate = callerBase + (context.isEmpty() ? "" : "/" + context);
+        if (!aiAssistBases.contains(candidate)) {
+            boolean contextIsTheProblem = c.getAiAssistContextPath() != null
+                    && aiAssistBases.contains(callerBase + "/" + DEFAULT_AI_ASSIST_CONTEXT_PATH);
+            throw new ExotelHostGuard.InvalidCredentialException(contextIsTheProblem
+                    ? "ai_assist_context_path must be one of the Exotel AI Assist API paths"
+                    : "ai_assist_base_url must be one of the Exotel AI Assist API bases");
+        }
+        return candidate;
+    }
+
+    /**
      * Checks every credential set present in the header. REJECTED if a present set is incomplete, is
      * rejected by Exotel, or if no set could be verified (none present, or only unverifiable ones). A complete
      * CQA set counts as valid without a probe.
@@ -198,6 +254,7 @@ public class ExotelCredentialVerifier {
      * unverifiable and at least one set was verified. The message names the set(s), never a value.
      */
     public Result verify(AuthCredentials creds) {
+        requireKnownBaseUrls(creds);
         List<CredentialSet> present = creds.presentSets();
         if (present.isEmpty()) {
             return rejected("Authorization header must carry at least one complete credential set (token + account_sid, "
@@ -312,19 +369,7 @@ public class ExotelCredentialVerifier {
         if (c.getAiAssistBaseUrl() == null) {
             return Optional.of(probeFirstAccepted(CredentialSet.AI_ASSIST, aiAssistBases, url, headers));
         }
-        String callerBase = normalizeBase(ExotelHostGuard.requireAllowedBaseUrl("ai_assist_base_url", c.getAiAssistBaseUrl()));
-        String context = c.getAiAssistContextPath() != null
-                ? ExotelHostGuard.requireSafePath("ai_assist_context_path", c.getAiAssistContextPath())
-                : DEFAULT_AI_ASSIST_CONTEXT_PATH;
-        context = context.replaceAll("^/+|/+$", "");
-        String candidate = callerBase + (context.isEmpty() ? "" : "/" + context);
-        if (!aiAssistBases.contains(candidate)) {
-            boolean contextIsTheProblem = c.getAiAssistContextPath() != null
-                    && aiAssistBases.contains(callerBase + "/" + DEFAULT_AI_ASSIST_CONTEXT_PATH);
-            throw new ExotelHostGuard.InvalidCredentialException(contextIsTheProblem
-                    ? "ai_assist_context_path must be one of the Exotel AI Assist API paths"
-                    : "ai_assist_base_url must be one of the Exotel AI Assist API bases");
-        }
+        String candidate = aiAssistCandidateBase(c);
         return Optional.of(probeProduct(CredentialSet.AI_ASSIST, url.apply(candidate), headers));
     }
 
@@ -339,11 +384,7 @@ public class ExotelCredentialVerifier {
         if (callerBase == null) {
             return probeFirstAccepted(set, known, probeUrl, headers);
         }
-        String normalized = canonical.apply(normalizeBase(ExotelHostGuard.requireAllowedBaseUrl(field, callerBase)));
-        if (!known.contains(normalized)) {
-            throw new ExotelHostGuard.InvalidCredentialException(
-                    field + " must be one of the Exotel " + product + " API bases");
-        }
+        String normalized = requireKnownBase(field, product, callerBase, known, canonical);
         return probeProduct(set, probeUrl.apply(normalized), headers);
     }
 
@@ -427,18 +468,11 @@ public class ExotelCredentialVerifier {
     /**
      * Picks the host the credential check is sent to. The caller never chooses it freely: an absent
      * field uses the operator default; a present field must (after ExotelHostGuard) be exactly one of
-     * {@link #VERIFICATION_HOSTS}, otherwise InvalidCredentialException naming the field (not the value).
-     * The URL is rebuilt as https://host so a caller-supplied path is never used.
+     * {@link #VERIFICATION_HOSTS} with no path (ExotelHostGuard.requireApiHost), otherwise
+     * InvalidCredentialException naming the field (not the value).
      */
     private static String verificationBaseUrl(String field, String callerValue, String defaultUrl) {
-        if (callerValue == null) return defaultUrl;
-        ExotelHostGuard.requireAllowedBaseUrl(field, callerValue);
-        String host = URI.create(callerValue.trim()).getHost().toLowerCase(Locale.ROOT);
-        if (!VERIFICATION_HOSTS.contains(host)) {
-            throw new ExotelHostGuard.InvalidCredentialException(
-                    field + " must be one of the Exotel API hosts " + VERIFICATION_HOSTS);
-        }
-        return "https://" + host;
+        return callerValue == null ? defaultUrl : ExotelHostGuard.requireApiHost(field, callerValue);
     }
 
     /** Verifies one account. {@code baseUrl} must already be a fixed verification host or operator-set. */

@@ -319,6 +319,7 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
+            ExotelHostGuard.requireSafeId("appId", appId);
             String statusCallbackUrl = baseUrl + "/call-status/" + callbackId + "/" + authData.tokenMd5();
             logger.info("Sending call. Callback URL: {}", statusCallbackUrl);
             
@@ -528,6 +529,7 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
+            if (fromNumber != null) fromNumber = ExotelHostGuard.requirePhoneNumber("fromNumber", fromNumber);
             String bulkCallUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls";
             String url = bulkCallUrl + "?From=0" + (fromNumber != null ? fromNumber.replace("+91", "") : "");
             
@@ -550,10 +552,11 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
-            String numberMetaUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Numbers/" + number;
+            String phoneNumber = ExotelHostGuard.requirePhoneNumber("number", number);
+            String numberMetaUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Numbers/" + phoneNumber;
             
             // Use caching with 15-minute TTL for metadata
-            String cacheKey = "metadata:" + authData.accountSid() + ":" + number;
+            String cacheKey = metadataCacheKey(authData.apiDomain(), authData.accountSid(), phoneNumber);
             return getCachedMetadata(cacheKey, 
                 () -> makeGetRequest(numberMetaUrl, authData), 
                 15); // 15 minutes TTL
@@ -564,6 +567,11 @@ public class ExotelService {
         }
     }
     
+    /** Cache key for number metadata; includes the API host so a body fetched from one host is never served for another. */
+    static String metadataCacheKey(String apiDomain, String accountSid, String number) {
+        return "metadata:" + apiDomain + ":" + accountSid + ":" + number;
+    }
+
     // Helper method to parse authorization header
     private AuthData parseAuthHeader(String authHeader) throws Exception {
         logger.debug("=== AUTH HEADER PARSING DEBUG ===");
@@ -593,7 +601,10 @@ public class ExotelService {
             String authType = authMap.getOrDefault("auth_type", "Basic");
             
             // Caller-supplied host and path values must be Exotel-only and URL-safe (SL-3868).
-            if (authMap.containsKey("api_domain")) ExotelHostGuard.requireAllowedBaseUrl("api_domain", authMap.get("api_domain"));
+            // Same pin as the login check (ExotelHostGuard.requireApiHost); the pinned https://host is what gets used.
+            String apiDomain = authMap.containsKey("api_domain")
+                ? ExotelHostGuard.requireApiHost("api_domain", authMap.get("api_domain"))
+                : "https://api.exotel.com";
             if (authMap.containsKey("exotel_portal_url")) ExotelHostGuard.requireAllowedBaseUrl("exotel_portal_url", authMap.get("exotel_portal_url"));
             if (authMap.containsKey("account_sid")) ExotelHostGuard.requireSafeId("account_sid", authMap.get("account_sid"));
 
@@ -602,7 +613,7 @@ public class ExotelService {
                 tokenMd5,
                 authMap.getOrDefault("from_number", "default_from"),
                 authMap.getOrDefault("caller_id", "default_caller"),
-                authMap.getOrDefault("api_domain", "https://api.exotel.com"),
+                apiDomain,
                 authMap.getOrDefault("account_sid", "default_account"),
                 authMap.getOrDefault("exotel_portal_url", "https://my.exotel.com"),
                 authType

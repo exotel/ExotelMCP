@@ -1,5 +1,6 @@
 package com.example.mcp_api.service;
 
+import com.example.mcp_api.auth.ExotelHostGuard;
 import com.example.mcp_api.auth.AuthContext;
 import com.example.mcp_api.auth.AuthCredentials;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -284,8 +285,8 @@ public class AiAssistService {
           description = "Poll the KB upload/indexing jobs for an assistant until they all reach COMPLETED, "
                       + "OR any of them FAILS / ends PARTIAL_SUCCESS, OR the timeout elapses. "
                       + "Jobs move QUEUED \u2192 UPLOADING \u2192 PROCESSING \u2192 COMPLETED; the in-flight states keep this polling. "
-                      + "Blocks the tool call while polling, so the LLM can call this immediately after "
-                      + "exotel_aiassist_attach_attachment_from_url and be sure the assistant is truly ready.\n\n"
+                      + "Blocks the tool call while polling, so the LLM can call this to confirm indexing finished "
+                      + "after files were added in the AI Assist console, and be sure the assistant is truly ready.\n\n"
                       + "Required: aiAssistantId. "
                       + "Optional: timeoutSeconds (default 120, max 600), pollIntervalSeconds (default 3, min 1, max 30).\n\n"
                       + "Returns JSON with:\n"
@@ -820,8 +821,14 @@ public class AiAssistService {
         Map<String, String> qp = new LinkedHashMap<>();
         if (page != null) qp.put("page", String.valueOf(page));
         if (pageSize != null) qp.put("page_size", String.valueOf(pageSize));
-        if (from != null && !from.isBlank()) qp.put("from", from);
-        if (to != null && !to.isBlank()) qp.put("to", to);
+        if (from != null && !from.isBlank()) {
+            if (!ExotelHostGuard.isSafeQueryValue(from)) return AiAssistJson.errorJson("invalid_argument", "from invalid");
+            qp.put("from", from);
+        }
+        if (to != null && !to.isBlank()) {
+            if (!ExotelHostGuard.isSafeQueryValue(to)) return AiAssistJson.errorJson("invalid_argument", "to invalid");
+            qp.put("to", to);
+        }
         if (assistantId != null && !assistantId.isBlank()) {
             if (!AiAssistGuards.isValidId(assistantId)) return AiAssistJson.errorJson("invalid_argument", "assistantId invalid");
             qp.put("assistant_id", assistantId);
@@ -887,10 +894,10 @@ public class AiAssistService {
                       + "  Q3. INTERACTION CHANNELS (required, \u2265 1). Voice, chat, or both. AI Assist UI default: [voice].\n"
                       + "  Q4. ATTACH DOCUMENTS? YES / NO. MUST ASK EXPLICITLY even if the user didn't mention KB \u2014 the AI Assist UI has an 'Add documents' section on this step and it is easy to forget.\n"
                       + "        \u2022 If YES: collect a list of file paths AND a short (\u2264 500 chars) description per file.\n"
-                      + "        \u2022 If NO: continue \u2014 KB can also be attached later via exotel_aiassist_attach_attachment_from_url.\n\n"
-                      + "Only call this tool once Q1\u2013Q4 (and STEP 0) are answered. Sent in this call: name, description, and optional templateId. Q3 (channels) is sent in STEP 2 and Q4 (attachments) is handled by the attach tools.\n\n"
+                      + "        \u2022 If NO: continue \u2014 attaching files by URL is temporarily unavailable on the hosted MCP server; documents must be added in the AI Assist console.\n\n"
+                      + "Only call this tool once Q1\u2013Q4 (and STEP 0) are answered. Sent in this call: name, description, and optional templateId. Q3 (channels) is sent in STEP 2 and Q4 (attachments) is handled in the AI Assist console.\n\n"
                       + "After this tool returns successfully, IMMEDIATELY continue the same conversation with:\n"
-                      + "  1) exotel_aiassist_attach_attachment_from_url \u2014 once per file collected in Q4 (skip if Q4=NO)\n"
+                      + "  1) If Q4=YES, tell the user attaching files by URL is temporarily unavailable on the hosted MCP server and that documents must be added in the AI Assist console.\n"
                       + "  2) exotel_aiassist_update_assistant \u2014 STEP 2 (Configuration). Its description lists the 3 AI Assist UI sub-sections you MUST walk (Platform / General / Advanced \u2014 including ASR language and LLM model, which are commonly skipped).\n"
                       + "  3) exotel_aiassist_publish_assistant \u2014 STEP 3 (Deploy & Publish). MUST ask the user \u201cpublish now (LIVE) or keep as DRAFT?\u201d before calling.\n"
                       + "  4) POST-PUBLISH ONLY \u2014 for source=exolite assistants that were published LIVE, exotel_aiassist_streaming_applet_template can generate a paste-ready CPaaS App (Stream \u2192 Connect(group) \u2192 Hangup). DO NOT ask about applets / dial destination / group during Q1\u2013Q4 or STEP 2 \u2014 that belongs after STEP 3 succeeds and is a separate ask.\n\n"
@@ -1544,7 +1551,7 @@ public class AiAssistService {
 
     @Tool(name = "exotel_aiassist_update_kb_file_descriptions",
           description = "Persist per-file 'what is this doc about' descriptions on an assistant's KB upload jobs. "
-                      + "Use this AFTER exotel_aiassist_attach_attachment_from_url to save the "
+                      + "Use this AFTER files were added in the AI Assist console (attaching files by URL is temporarily unavailable on the hosted MCP server) to save the "
                       + "one-line descriptions the user typed for each file during the create-assistant wizard.\n\n"
                       + "PATCH /ai-assist/api/v1/accounts/{sid}/ai-assistants/{aiAssistantId}/upload-jobs "
                       + "with a single multipart field 'description' whose value is a JSON string mapping filename -> description.\n\n"
@@ -1552,7 +1559,7 @@ public class AiAssistService {
                       + "  - aiAssistantId\n"
                       + "  - descriptionsJson: JSON object as a string, e.g. "
                       + "'{\"debug_guide.md\":\"On-call debugging playbook\",\"runbook.pdf\":\"AWS runbook\"}'. "
-                      + "Filenames must match what the attach tools uploaded (case-sensitive).\n"
+                      + "Filenames must match the uploaded files (case-sensitive).\n"
                       + "  - confirm=true.\n\n"
                       + "Idempotent: calling again with the same JSON is a no-op. Filenames not present in the KB are ignored by the backend.")
     public String updateKbFileDescriptions(String aiAssistantId, String descriptionsJson, Boolean confirm) {
@@ -1653,19 +1660,7 @@ public class AiAssistService {
         }
     }
 
-    @Tool(name = "exotel_aiassist_attach_attachment_from_url",
-          description = "STEP 2 of the create-assistant wizard (variant: file lives at a public HTTPS URL). Attach ONE document to an assistant. "
-                      + "Call this ONCE PER FILE the user supplied. If the user has 3 docs, call this 3 times.\n\n"
-                      + "STRICT: description is REQUIRED (\u2265 10 chars, \u2264 500). The AI Assist UI blocks attachment API calls when any file lacks a description \u2014 do the same here. "
-                      + "If the user hasn't given a per-file description yet, ASK THEM FIRST. Do NOT invent one; the description is what the LLM uses to decide when to consult this doc at runtime.\n\n"
-                      + "Uploads go through the ASYNC upload-jobs API: the file is staged and a KB indexing job is created "
-                      + "(QUEUED \u2192 UPLOADING \u2192 PROCESSING \u2192 COMPLETED). POST reuses the assistant's existing corpus, or creates "
-                      + "one on the first upload \u2014 handled automatically. The tool then persists the description via /upload-jobs so "
-                      + "the two never drift. Call exotel_aiassist_wait_for_kb_ready afterwards to block until indexing finishes.\n"
-                      + "POST /ai-assistants/{id}/upload-jobs with files (multipart file field).\n"
-                      + "Required: aiAssistantId, fileUrl (https), description (\u2265 10 chars), confirm=true. Optional: filename (defaults to URL last segment). "
-                      + "Works on both local and hosted MCP. URL must be reachable from wherever MCP runs. "
-                      + "Max file size 25 MB. Rejects http (non-TLS), localhost, and private/link-local IPs to prevent SSRF.")
+    // Disabled for SL-3868 until the AI Assist team hardens the URL fetch; restore the @Tool annotation to re-enable.
     public String attachAttachmentFromUrl(String aiAssistantId, String fileUrl, String filename, String description, Boolean confirm) {
         String err = requireEffectiveAiAssist();
         if (err != null) return err;

@@ -1,5 +1,6 @@
 package com.example.mcp_api.service;
 
+import com.example.mcp_api.auth.ExotelHostGuard;
 import com.example.mcp_api.auth.AuthContext;
 import com.example.mcp_api.auth.AuthCredentials;
 import org.slf4j.Logger;
@@ -145,7 +146,7 @@ public class VoiceBotAdminTools {
         try {
             String err = requireAuth(); if (err != null) return err;
             validateId(assistantId, "assistantId");
-            String ver = (version != null && !version.isBlank()) ? version : "stable";
+            String ver = (version != null && !version.isBlank()) ? ExotelHostGuard.requireSafeQueryValue("version", version) : "stable";
             String url = getBaseUrl() + "/accounts/" + getAccountId() + "/assistants/" + assistantId + "?version=" + ver;
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
             return safeBody(response);

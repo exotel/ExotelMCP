@@ -419,7 +419,7 @@ public class AuthCredentials {
 
     // Caller-supplied hosts must pass ExotelHostGuard; operator-set defaults are returned as-is.
     public String effectiveApiDomain(String defaultUrl) {
-        return apiDomain != null ? ExotelHostGuard.requireAllowedBaseUrl("api_domain", apiDomain) : defaultUrl;
+        return apiDomain != null ? ExotelHostGuard.requireApiHost("api_domain", apiDomain) : defaultUrl;
     }
 
     public String effectiveToolsServerBaseUrl(String defaultUrl) {
@@ -434,7 +434,7 @@ public class AuthCredentials {
 
     public String effectiveCallsBaseUrl(String defaultUrl) {
         return callsBaseUrl != null
-            ? ExotelHostGuard.requireAllowedBaseUrl("calls_base_url", callsBaseUrl) : defaultUrl;
+            ? ExotelHostGuard.requireApiHost("calls_base_url", callsBaseUrl) : defaultUrl;
     }
 
     public String effectiveCallsAccountId() {
