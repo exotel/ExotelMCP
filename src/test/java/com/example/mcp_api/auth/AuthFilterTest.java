@@ -143,12 +143,11 @@ class AuthFilterTest {
     }
 
     @Test
-    void madeUpCqaOnlyHeaderIs401WithoutAnyOutboundCall() throws Exception {
+    void knownLimitationMadeUpCqaOnlyHeaderPassesWithoutAnyOutboundCall() throws Exception {
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = post("{\"cqa_api_key\":\"made-up\",\"cqa_account_id\":\"made-up\"}", chain);
-        assertEquals(401, response.getStatus());
-        assertFalse(passed(chain));
-        assertTrue(body(response).contains("CQA credentials"));
+        assertEquals(200, response.getStatus());
+        assertTrue(passed(chain));
         assertEquals(0, probeCalls.get());
     }
 
@@ -233,9 +232,42 @@ class AuthFilterTest {
     }
 
     @Test
-    void onlyUnverifiableSetsAre401() throws Exception {
+    void cqaWithPlaceholderOrEmptyFieldIs400() throws Exception {
+        for (String field : new String[] {"\"cqa_api_key\":\"YOUR_CQA_API_KEY\"", "\"cqa_api_key\":\"\""}) {
+            MockFilterChain chain = new MockFilterChain();
+            MockHttpServletResponse response = post("{" + field + ",\"cqa_account_id\":\"a1\"}", chain);
+            assertEquals(400, response.getStatus(), field);
+            assertFalse(passed(chain), field);
+        }
+        assertEquals(0, probeCalls.get());
+    }
+
+    @Test
+    void cqaWithRejectedCoreIs401NamingCore() throws Exception {
+        statusBySubstring.put("/Calls.json", 401);
         MockFilterChain chain = new MockFilterChain();
-        MockHttpServletResponse response = post("{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain);
+        MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
+                + "\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain);
+        assertEquals(401, response.getStatus());
+        assertTrue(body(response).contains("Core credentials"));
+        assertFalse(passed(chain));
+    }
+
+    @Test
+    void cqaWithHostOutsideExotelIs400() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\","
+                + "\"cqa_host\":\"https://evil.example.com\"}", chain);
+        assertEquals(400, response.getStatus());
+        assertTrue(body(response).contains("cqa_host"));
+        assertFalse(passed(chain));
+    }
+
+    @Test
+    void aiAssistClientCredentialsAloneAre401() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"a1\","
+                + "\"ai_assist_client_id\":\"k\",\"ai_assist_client_secret\":\"s\"}", chain);
         assertEquals(401, response.getStatus());
         assertTrue(body(response).contains("cannot be used alone"));
         assertFalse(passed(chain));
@@ -254,7 +286,7 @@ class AuthFilterTest {
     }
 
     @Test
-    void verifiedCoreWithUnverifiableCqaPasses() throws Exception {
+    void verifiedCoreWithCqaPasses() throws Exception {
         MockFilterChain chain = new MockFilterChain();
         assertEquals(200, post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
                 + "\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain).getStatus());

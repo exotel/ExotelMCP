@@ -125,17 +125,23 @@ class ExotelCredentialVerifierTest {
     private final List<java.util.Map<String, String>> headersSeen = new ArrayList<>();
 
     @Test
-    void madeUpCqaOnlyIsRejectedBecauseCqaCannotBeVerified() {
-        ExotelCredentialVerifier v = verifierReturning(200);
-        ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(CQA));
-        assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().contains("CQA credentials (cqa_api_key, cqa_account_id)"));
-        assertTrue(r.message().contains("cannot be used alone"));
-        assertEquals(0, calls.get(), "an unverifiable set is never sent anywhere");
+    void knownLimitationCqaOnlyIsAcceptedWithoutAnyProbe() {
+        ExotelCredentialVerifier v = verifierReturning(401);
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(CQA)).outcome());
+        assertEquals(0, calls.get(), "CQA is accepted on shape alone, nothing is sent anywhere");
     }
 
     @Test
-    void unverifiableSetDoesNotBlockAVerifiedSet() {
+    void cqaWithRejectedCoreIsRejectedNamingCore() {
+        ExotelCredentialVerifier v = verifierReturning(401);
+        ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(
+                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\"}"));
+        assertEquals(Outcome.REJECTED, r.outcome());
+        assertTrue(r.message().startsWith("Core credentials (token, account_sid) were rejected by Exotel"));
+    }
+
+    @Test
+    void cqaDoesNotBlockAVerifiedSet() {
         ExotelCredentialVerifier v = verifierReturning(200);
         assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
                 "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\"}")).outcome());

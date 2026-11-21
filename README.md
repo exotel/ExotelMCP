@@ -613,7 +613,8 @@ Every request is checked before any tool runs.
 
 - **Allowed hosts**: `api_domain`, `voicebot_base_url`, `calls_base_url`, `cqa_host`, `tools_server_base_url`, `ai_assist_base_url` and `exotel_portal_url` must be `https://` on `exotel.com` (or a subdomain), port 443 only, with no user info, IP addresses or query. `api_domain` and `calls_base_url` must be exactly `api.exotel.com` or `api.in.exotel.com`.
 - **Sets are verified**: each complete set is checked against Exotel with one read-only call (Core and Calls: list calls; VoiceBot: list bots; Admin: list personas; Tools Server: list tools; AI Assist: list assistants). Results are cached for 5 minutes (30 seconds if rejected).
-- **At least one verified set**: a header is accepted only if at least one set passed its check. CQA, and AI Assist with only `ai_assist_client_id` / `ai_assist_client_secret`, cannot be checked, so they work only next to a verified set.
+- **At least one verified set**: a header is accepted only if at least one set passed its check. AI Assist with only `ai_assist_client_id` / `ai_assist_client_secret` cannot be checked, so it works only next to a verified set.
+- **CQA is accepted without a live check (known, temporary gap)**: a complete CQA set (`cqa_api_key` + `cqa_account_id`) is currently accepted on its shape alone, so a CQA-only header works, because the CQA API has no read-only call that works with the API key. This will be tightened once such a call exists (SL-3868 follow-up). If you also include other sets, those are still checked and must pass.
 - **Every set you include must pass**: an incomplete set (for example `token` without `account_sid`) or a wrong set rejects the whole header. The error names the set, never a value.
 - **Placeholders and empty values**: a field that is empty or still holds a sample value (`YOUR_...`, `<...>`, `xxx`) is rejected. Placeholder or empty headers never reach any tool.
 
