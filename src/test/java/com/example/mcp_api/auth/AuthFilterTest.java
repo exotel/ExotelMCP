@@ -16,16 +16,21 @@ class AuthFilterTest {
 
     private final AtomicInteger probeCalls = new AtomicInteger();
     private int probeStatus;
+    private final java.util.Map<String, Integer> statusBySubstring = new java.util.LinkedHashMap<>();
     private AuthFilter filter;
 
     @BeforeEach
     void setUp() {
         probeCalls.set(0);
         probeStatus = 200;
+        statusBySubstring.clear();
         ExotelCredentialVerifier verifier = new ExotelCredentialVerifier(
                 "https://api.exotel.com", "https://api.in.exotel.com",
-                (url, token) -> {
+                (url, headers) -> {
                     probeCalls.incrementAndGet();
+                    for (var e : statusBySubstring.entrySet()) {
+                        if (url.contains(e.getKey())) return e.getValue();
+                    }
                     if (probeStatus < 0) throw new java.net.SocketTimeoutException("timeout");
                     return probeStatus;
                 },
@@ -130,13 +135,130 @@ class AuthFilterTest {
         assertEquals(1, probeCalls.get());
     }
 
-    /** KNOWN LIMITATION (open owner decision, SL-3868): sets Exotel cannot verify are only structurally checked. */
+    private static final String CALLS_WRONG = "\"calls_api_key\":\"k\",\"calls_api_token\":\"t\",\"calls_account_id\":\"acct9\"";
+
+    private String body(MockHttpServletResponse response) throws Exception {
+        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.getContentAsString())
+                .path("message").asText();
+    }
+
     @Test
-    void knownLimitationStructureOnlySetPassesWithoutBeingVerified() throws Exception {
+    void madeUpCqaOnlyHeaderIs401WithoutAnyOutboundCall() throws Exception {
         MockFilterChain chain = new MockFilterChain();
-        assertEquals(200, post("{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain).getStatus());
-        assertTrue(passed(chain));
+        MockHttpServletResponse response = post("{\"cqa_api_key\":\"made-up\",\"cqa_account_id\":\"made-up\"}", chain);
+        assertEquals(401, response.getStatus());
+        assertFalse(passed(chain));
+        assertTrue(body(response).contains("CQA credentials"));
         assertEquals(0, probeCalls.get());
+    }
+
+    @Test
+    void madeUpVoicebotOnlyHeaderIs401() throws Exception {
+        probeStatus = 401;
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post(
+                "{\"voicebot_api_key\":\"made-up\",\"voicebot_api_token\":\"x1\",\"voicebot_account_id\":\"acct1\"}", chain);
+        assertEquals(401, response.getStatus());
+        assertFalse(passed(chain));
+        assertTrue(body(response).contains("VoiceBot credentials"));
+        assertFalse(response.getContentAsString().contains("made-up"));
+    }
+
+    @Test
+    void validVoicebotOnlyHeaderPasses() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(200, post(
+                "{\"voicebot_api_key\":\"k\",\"voicebot_api_token\":\"t\",\"voicebot_account_id\":\"acct1\"}", chain).getStatus());
+        assertTrue(passed(chain));
+        assertEquals(1, probeCalls.get());
+    }
+
+    @Test
+    void realCorePlusWrongCallsIs401NamingCallsSet() throws Exception {
+        statusBySubstring.put("api.in.exotel.com", 401);
+        statusBySubstring.put("/Accounts/acct9/", 401);
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\"," + CALLS_WRONG + "}", chain);
+        assertEquals(401, response.getStatus());
+        assertFalse(passed(chain));
+        assertEquals("Calls credentials (calls_api_key, calls_api_token, calls_account_id) were rejected by Exotel. "
+                + "Remove these fields or correct them.", body(response));
+    }
+
+    @Test
+    void realCorePlusPlaceholderCallsIs400NamingTheField() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{'token':'a2V5OnRvaw==','account_sid':'acme1',"
+                + "'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID'}", chain);
+        assertEquals(400, response.getStatus());
+        assertFalse(passed(chain));
+        assertEquals("Calls credentials: calls_api_key still holds the sample placeholder. "
+                + "Remove this field or fill in your real value.", body(response));
+        assertFalse(response.getContentAsString().contains("YOUR_CALLS"));
+        assertEquals(0, probeCalls.get());
+    }
+
+    @Test
+    void everyShippedPlaceholderStyleAndEmptyValuesAre400() throws Exception {
+        for (String field : new String[] {"\"from_number\":\"YOUR_FROM_NUMBER\"", "\"api_domain\":\"https://YOUR_SUB_DOMAIN\"",
+                "\"caller_id\":\"your_caller_id\"", "\"dlt_temp\":\"<template>\"", "\"dlt_entity\":\"XXXXXXX\"",
+                "\"cqa_host\":\"\"", "\"whatsapp_from\":\"  \""}) {
+            MockFilterChain chain = new MockFilterChain();
+            MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\"," + field + "}", chain);
+            assertEquals(400, response.getStatus(), field);
+            assertFalse(passed(chain), field);
+            String name = field.substring(1, field.indexOf('"', 1));
+            assertTrue(body(response).contains(name), field);
+        }
+        assertEquals(0, probeCalls.get());
+    }
+
+    @Test
+    void realLookingValuesAreNotTreatedAsPlaceholders() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(200, post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"from_number\":\"+911234567890\","
+                + "\"api_domain\":\"https://api.exotel.com\",\"dlt_entity\":\"1101234567890\"}", chain).getStatus());
+        assertTrue(passed(chain));
+    }
+
+    @Test
+    void tokenWithoutAccountSidPlusValidOtherSetIs401NamingCoreSet() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"voicebot_api_key\":\"k\","
+                + "\"voicebot_api_token\":\"t\",\"voicebot_account_id\":\"acct1\"}", chain);
+        assertEquals(401, response.getStatus());
+        assertFalse(passed(chain));
+        assertTrue(body(response).contains("Core credentials (token, account_sid) are incomplete"));
+        assertEquals(0, probeCalls.get());
+    }
+
+    @Test
+    void onlyUnverifiableSetsAre401() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain);
+        assertEquals(401, response.getStatus());
+        assertTrue(body(response).contains("cannot be used alone"));
+        assertFalse(passed(chain));
+    }
+
+    @Test
+    void unavailableProbeForOneSetIs503() throws Exception {
+        statusBySubstring.put("/voicebots", 503);
+        MockFilterChain chain = new MockFilterChain();
+        MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
+                + "\"voicebot_api_key\":\"k\",\"voicebot_api_token\":\"t\",\"voicebot_account_id\":\"acct1\"}", chain);
+        assertEquals(503, response.getStatus());
+        assertEquals("5", response.getHeader("Retry-After"));
+        assertTrue(body(response).contains("VoiceBot credentials"));
+        assertFalse(passed(chain));
+    }
+
+    @Test
+    void verifiedCoreWithUnverifiableCqaPasses() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(200, post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
+                + "\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain).getStatus());
+        assertTrue(passed(chain));
     }
 
     @Test

@@ -19,7 +19,7 @@ Run the server from the repo:
     "exotel-local": {
       "url": "http://localhost:8080/mcp",
       "headers": {
-        "Authorization": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+        "Authorization": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -27,6 +27,31 @@ Run the server from the repo:
 ```
 
 Reload the Cursor window after saving.
+
+This is the minimal working header (core set only). Replace both `YOUR_...` values with real ones: a placeholder left in the header is rejected with a 400 naming the field.
+
+**Optional product sets**
+
+Add only the products you use; every set you include is checked at login. Each set must be complete, and a wrong or leftover sample value in any set rejects the whole header, so delete the sets you do not need.
+
+```text
+Core (above):  token, account_sid                      optional: from_number, whatsapp_from, caller_id, dlt_temp, dlt_entity, api_domain, exotel_portal_url
+VoiceBot:      voicebot_api_key, voicebot_api_token, voicebot_account_id          optional: voicebot_base_url
+Calls:         calls_api_key, calls_api_token, calls_account_id                   optional: calls_base_url
+Admin:         admin_username, admin_password, voicebot_account_id
+Tools Server:  tools_server_api_key, tools_server_tenant_id                       optional: tools_server_api_token, tools_server_base_url
+CQA:           cqa_api_key, cqa_account_id                                        optional: cqa_host
+AI Assist:     ai_assist_base_url, ai_assist_account_sid + one auth mode (see AI Assist Credentials)
+```
+
+For example, core plus VoiceBot:
+
+```text
+{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID'}
+```
+
+See the Login rules in README.md for what is checked.
+
 
 **Claude Desktop / CoWork** — CoWork uses `~/Library/Application Support/Claude/claude_desktop_config.json` (same file as Desktop). Fully quit Claude after editing:
 
@@ -44,7 +69,7 @@ Reload the Cursor window after saving.
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -61,7 +86,7 @@ Add to `~/.cursor/mcp.json`:
     "exotel": {
       "url": "https://mcp.exotel.com/mcp",
       "headers": {
-        "Authorization": "{'voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','voicebot_base_url':'https://voicebot.in.exotel.com/voicebot/api/v2','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
+        "Authorization": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -81,7 +106,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://mcp.exotel.com/mcp"],
       "env": {
-        "AUTH_HEADER": "{'voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','voicebot_base_url':'https://voicebot.in.exotel.com/voicebot/api/v2','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -94,6 +119,8 @@ Restart Claude Desktop after saving.
 
 ## Credentials Reference
 
+Every set you include in the header is checked at login, so send only the sets you use and keep each one complete.
+
 | Field | Where to get it | Used by |
 |-------|----------------|---------|
 | `voicebot_api_key` | VoiceBot platform admin | VoiceBot tools |
@@ -103,7 +130,7 @@ Restart Claude Desktop after saving.
 | `calls_api_key` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
 | `calls_api_token` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
 | `calls_account_id` | Exotel dashboard → Account SID | Outbound calls + Engage SMS campaigns |
-| `calls_base_url` | Default: `https://api.exotel.com` | Outbound calls |
+| `calls_base_url` | `https://api.exotel.com` or `https://api.in.exotel.com` | Outbound calls |
 | `token` / `account_sid` | Exotel dashboard → API Settings | CPaaS SMS/Voice; Engage fallback auth |
 | `cqa_api_key` | CQA console → API Keys | Conversational Intelligence |
 | `cqa_account_id` | CQA console → Account Settings | Conversational Intelligence |

@@ -22,6 +22,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - [Usage](#usage)
 - [API Services](#api-services)
 - [Authentication](#authentication)
+  - [Login rules](#login-rules)
 - [Support](#support)
 
 ## Prerequisites
@@ -65,16 +66,38 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','whatsapp_from':'YOUR_WHATSAPP_SENDER_E164','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
 }
 ```
 
+#### Optional product sets
+
+Add only the products you use; every set you include is checked at login. Each set must be complete, and a wrong or leftover sample value in any set rejects the whole header, so delete the sets you do not need.
+
+```text
+Core (above):  token, account_sid                      optional: from_number, whatsapp_from, caller_id, dlt_temp, dlt_entity, api_domain, exotel_portal_url
+VoiceBot:      voicebot_api_key, voicebot_api_token, voicebot_account_id          optional: voicebot_base_url
+Calls:         calls_api_key, calls_api_token, calls_account_id                   optional: calls_base_url
+Admin:         admin_username, admin_password, voicebot_account_id
+Tools Server:  tools_server_api_key, tools_server_tenant_id                       optional: tools_server_api_token, tools_server_base_url
+CQA:           cqa_api_key, cqa_account_id                                        optional: cqa_host
+AI Assist:     ai_assist_base_url, ai_assist_account_sid + one auth mode (see AI Assist Credentials)
+```
+
+For example, core plus VoiceBot:
+
+```text
+{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID'}
+```
+
+See [Login rules](#login-rules) for what is checked.
+
 ### Required Credentials
 
-Replace the placeholder values with your actual Exotel credentials:
+Replace every `YOUR_...` placeholder with your actual Exotel credentials. A placeholder left in the header is rejected with a 400 naming the field.
 
 #### **YOUR_EXOTEL_TOKEN**: Base64 Encoded API Credentials
 
@@ -110,7 +133,7 @@ echo -n "your_api_key:your_api_secret" | base64
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("your_api_key:your_api_secret"))
 ```
 
-#### **Other Required Values:**
+#### **Other Values (optional, add only the ones you use):**
 
 - **YOUR_FROM_NUMBER**: Your registered Exotel phone number (from Dashboard → Numbers)
 - **YOUR_DLT_TEMPLATE**: DLT template ID for SMS compliance (from Dashboard → DLT)
@@ -136,7 +159,7 @@ echo -n "your_api_key:your_api_secret" | base64
 - **YOUR_CALLS_API_KEY**: Exotel CPaaS API key for placing bot-powered calls
 - **YOUR_CALLS_API_TOKEN**: Exotel CPaaS API token for placing bot-powered calls
 - **YOUR_CALLS_ACCOUNT_ID**: Exotel CPaaS account SID for calls (can differ from VoiceBot account)
-- **calls_base_url**: Exotel Calls API base URL (default: `https://api.exotel.com`)
+- **calls_base_url**: Exotel Calls API base URL (`https://api.exotel.com` or `https://api.in.exotel.com`)
 
 > **Note**: VoiceBot credentials are only required if you plan to use the VoiceBot tools. The VoiceBot management API (list/create/delete bots) uses `voicebot_*` credentials, while placing actual calls uses `calls_*` credentials.
 
@@ -584,6 +607,22 @@ The Exotel MCP Server uses secure token-based authentication. All your Exotel cr
 - **User Isolation**: Each user's data is kept separate and secure
 - **DLT Compliance**: Built-in support for DLT (Distributed Ledger Technology) requirements for SMS in India
 
+### Login rules
+
+Every request is checked before any tool runs.
+
+- **Allowed hosts**: `api_domain`, `voicebot_base_url`, `calls_base_url`, `cqa_host`, `tools_server_base_url`, `ai_assist_base_url` and `exotel_portal_url` must be `https://` on `exotel.com` (or a subdomain), port 443 only, with no user info, IP addresses or query. `api_domain` and `calls_base_url` must be exactly `api.exotel.com` or `api.in.exotel.com`.
+- **Sets are verified**: each complete set is checked against Exotel with one read-only call (Core and Calls: list calls; VoiceBot: list bots; Admin: list personas; Tools Server: list tools; AI Assist: list assistants). Results are cached for 5 minutes (30 seconds if rejected).
+- **At least one verified set**: a header is accepted only if at least one set passed its check. CQA, and AI Assist with only `ai_assist_client_id` / `ai_assist_client_secret`, cannot be checked, so they work only next to a verified set.
+- **Every set you include must pass**: an incomplete set (for example `token` without `account_sid`) or a wrong set rejects the whole header. The error names the set, never a value.
+- **Placeholders and empty values**: a field that is empty or still holds a sample value (`YOUR_...`, `<...>`, `xxx`) is rejected. Placeholder or empty headers never reach any tool.
+
+| Status | Meaning |
+|--------|---------|
+| 400 | A field is empty, still a placeholder, or has an unsafe host or id. The message names the field. |
+| 401 | Header missing or unreadable, a set is incomplete, Exotel rejected a set, or only unverifiable sets were sent. |
+| 503 | Exotel could not be reached to verify a set. Retry shortly (`Retry-After: 5`). Nothing is accepted unchecked. |
+
 ### Getting Your Exotel Credentials
 
 1. **Log into your [Exotel Dashboard](https://my.exotel.com/)**
@@ -678,7 +717,7 @@ LOGGING_LEVEL_COM_EXAMPLE_MCP_API=INFO
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','from_number':'YOUR_FROM_NUMBER','whatsapp_from':'YOUR_WHATSAPP_SENDER_E164','dlt_temp':'YOUR_DLT_TEMPLATE','dlt_entity':'YOUR_DLT_ENTITY','caller_id':'YOUR_CALLER_ID','api_domain':'https://YOUR_SUB_DOMAIN','account_sid':'YOUR_ACCOUNT_SID','exotel_portal_url':'YOUR_EXOTEL_DASHBOARD_BASE_URL','cqa_api_key':'YOUR_CQA_API_KEY','cqa_account_id':'YOUR_CQA_ACCOUNT_ID','cqa_host':'https://cqa-console.in.exotel.com','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID','calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_CALLS_ACCOUNT_ID','calls_base_url':'https://api.exotel.com'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -712,7 +751,7 @@ docker compose up --build
     "exotel-local": {
       "url": "http://localhost:8080/mcp",
       "headers": {
-        "Authorization": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+        "Authorization": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -735,7 +774,7 @@ docker compose up --build
         "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "{'calls_api_key':'YOUR_CALLS_API_KEY','calls_api_token':'YOUR_CALLS_API_TOKEN','calls_account_id':'YOUR_ACCOUNT_SID','token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
+        "AUTH_HEADER": "{'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID'}"
       }
     }
   }
@@ -814,6 +853,7 @@ curl https://your-domain.com/mcp
 - Double-check your API Key and API Secret from Exotel Dashboard → Settings → API Settings
 - Ensure the colon (`:`) separator is included between API Key and Secret before encoding
 - Check that your account SID matches your Exotel account
+- The error message names the credential set that failed; remove that set or correct it (see [Login rules](#login-rules))
 - Ensure your phone numbers are properly registered with Exotel
 
 #### SMS Not Delivered

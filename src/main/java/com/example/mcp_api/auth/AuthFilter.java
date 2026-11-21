@@ -20,9 +20,11 @@ import java.util.regex.Pattern;
  *
  * Rejected at the edge, with no credential fallback:
  *  - missing / unparseable header (401)
- *  - values that fail ExotelHostGuard (hosts not on exotel.com, unsafe ids) (400)
- *  - headers without at least one complete credential set (401)
- *  - core / Calls credentials that Exotel rejects (401); if Exotel cannot be reached (503)
+ *  - empty or sample-placeholder values, and values that fail ExotelHostGuard (hosts not on
+ *    exotel.com, unsafe ids) (400)
+ *  - incomplete credential sets, sets that Exotel rejects, and headers where no set could be verified
+ *    by a real probe (401); the message names the set, never a value
+ *  - if Exotel cannot be reached to verify a set (503)
  *
  * Requests whose raw path contains traversal or ambiguity markers (.., ;, //, \\, %2e, %2f, %5c) are
  * rejected with 400 before anything else. Public paths (Exotel posts status callbacks without our
@@ -87,30 +89,23 @@ public class AuthFilter implements Filter {
                 return;
             }
 
-            if (!credentials.hasCompleteCredentialSet()) {
-                reject(httpRequest, httpResponse, HttpServletResponse.SC_UNAUTHORIZED,
-                        "unauthorized", "Authorization header must carry at least one complete credential set "
-                        + "(token + account_sid, voicebot_*, calls_*, cqa_*, tools_server_*, ai_assist_*)");
-                return;
-            }
-
-            ExotelCredentialVerifier.Outcome outcome;
+            ExotelCredentialVerifier.Result result;
             try {
-                outcome = verifier.verify(credentials);
+                result = verifier.verify(credentials);
             } catch (ExotelHostGuard.InvalidCredentialException e) {
                 reject(httpRequest, httpResponse, HttpServletResponse.SC_BAD_REQUEST,
                         "invalid_credentials", e.getMessage());
                 return;
             }
-            if (outcome == ExotelCredentialVerifier.Outcome.REJECTED) {
+            if (result.outcome() == ExotelCredentialVerifier.Outcome.REJECTED) {
                 reject(httpRequest, httpResponse, HttpServletResponse.SC_UNAUTHORIZED,
-                        "unauthorized", "Credentials were rejected by Exotel");
+                        "unauthorized", result.message());
                 return;
             }
-            if (outcome == ExotelCredentialVerifier.Outcome.UNAVAILABLE) {
+            if (result.outcome() == ExotelCredentialVerifier.Outcome.UNAVAILABLE) {
                 httpResponse.setHeader("Retry-After", "5");
                 reject(httpRequest, httpResponse, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
-                        "verification_unavailable", "Credentials could not be verified right now; retry shortly");
+                        "verification_unavailable", result.message());
                 return;
             }
 
