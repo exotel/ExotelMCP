@@ -146,60 +146,6 @@ public class ExotelController {
         }
     }
     
-    @PostMapping("/call-status/{callbackId}/{tokenMd5}")
-    public ResponseEntity<?> callStatusCallback(
-            @PathVariable String callbackId,
-            @PathVariable String tokenMd5,
-            @RequestParam(required = false) MultiValueMap<String, String> formData,
-            @RequestBody(required = false) Map<String, Object> jsonData,
-            HttpServletRequest request) {
-        
-        logger.info("Received Voice callback for ID: {}, Token: {}", callbackId, tokenMd5);
-        logger.info("Content-Type: {}", request.getContentType());
-        
-        try {
-            Map<String, String> callbackData = new HashMap<>();
-            
-            // Handle JSON data (new format)
-            if (jsonData != null && !jsonData.isEmpty()) {
-                logger.info("Processing JSON callback data");
-                jsonData.forEach((key, value) -> {
-                    if (value != null) {
-                        callbackData.put(key, String.valueOf(value));
-                        logger.info("{}: {}", key, value);
-                    }
-                });
-            }
-            // Handle form data (legacy format)
-            else if (formData != null && !formData.isEmpty()) {
-                logger.info("Processing form callback data");
-                formData.forEach((key, values) -> {
-                    if (!values.isEmpty()) {
-                        callbackData.put(key, values.get(0));
-                        logger.info("{}: {}", key, values.get(0));
-                    }
-                });
-            }
-            else {
-                logger.warn("No callback data received");
-                return ResponseEntity.badRequest().body(Map.of("message", "No callback data provided"));
-            }
-            
-            // Save voice callback to database using callbackId as userId
-            exotelService.saveVoiceCallback(callbackData, tokenMd5);
-            
-            return ResponseEntity.ok(Map.of(
-                "message", "Voice callback received and processed successfully",
-                "callback_id", tokenMd5,
-                "call_sid", callbackData.get("CallSid"),
-                "status", callbackData.get("Status")
-            ));
-        } catch (Exception e) {
-            logger.error("Error processing voice callback for ID: {}", tokenMd5, e);
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
-        }
-    }
-    
     @GetMapping("/get-sms-callbacks")
     public ResponseEntity<?> getSmsCallbacks(
             @RequestParam String toNumber,
