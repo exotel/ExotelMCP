@@ -13,7 +13,6 @@ import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -30,7 +29,6 @@ import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
-import java.util.UUID;
 import java.util.Optional;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,11 +41,7 @@ public class ExotelService {
     @Autowired
     private SmsCallbackRepository smsCallbackRepository;
     
-    @Value("${exotel.base.url:http://localhost:8085}")
-    private String baseUrl;
-    
     private final HttpClient httpClient;
-    private final String callbackId = UUID.randomUUID().toString();
     private final ObjectMapper objectMapper = new ObjectMapper();
     
     // In-memory cache for metadata (simple optimization without Redis)
@@ -109,15 +103,11 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
-            String statusCallbackUrl = baseUrl + "/sms-status-callback/" + callbackId + "/" + authData.tokenMd5();
-            logger.info("Sending SMS. Callback URL: {}", statusCallbackUrl);
             
             Map<String, String> data = new HashMap<>();
             data.put("From", authData.fromNumber());
             data.put("To", toNumber);
             data.put("Body", message);
-            data.put("StatusCallback", statusCallbackUrl);
-            data.put("StatusCallbackContentType", "application/json");
             data.put("SmsType", "promotional");
             data.put("DltTemplateId", dltTemplateId);
             data.put("DltEntityId", dltEntityId);
@@ -211,8 +201,6 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
-            String statusCallbackUrl = baseUrl + "/sms-status-callback/" + callbackId + "/" + authData.tokenMd5();
-            logger.info("Sending bulk SMS. Callback URL: {}", statusCallbackUrl);
             
             Map<String, Object> data = new HashMap<>();
             data.put("From", authData.fromNumber());
@@ -220,8 +208,6 @@ public class ExotelService {
                 data.put("To[" + i + "]", toNumbers.get(i));
             }
             data.put("Body", message);
-            data.put("StatusCallback", statusCallbackUrl);
-            data.put("StatusCallbackContentType", "application/json");
             String smsUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Sms/send.json";
             String response = makeHttpRequest(smsUrl, data, authData);
             logger.info("Bulk SMS response: {}", response);
@@ -253,13 +239,9 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
-            String statusCallbackUrl = baseUrl + "/sms-status-callback/" + callbackId + "/" + authData.tokenMd5();
-            logger.info("Sending dynamic bulk SMS. Callback URL: {}", statusCallbackUrl);
             
             Map<String, Object> data = new HashMap<>();
             data.put("From", authData.fromNumber());
-            data.put("StatusCallback", statusCallbackUrl);
-            data.put("StatusCallbackContentType", "application/json");
             
             // Add dynamic message data in Message[idx][key] format
             for (int idx = 0; idx < messages.size(); idx++) {
@@ -313,34 +295,42 @@ public class ExotelService {
     }
     
     @Tool(name = "exotel_sms_get_delivery_status", 
-          description = "Fetch all SMS callback with status records from the database for the given user and phone number. Searches in to_number field with user_id security. Requires phone number. Authentication is handled automatically from the session.")
+          description = "Fetch the delivery status of SMS messages sent through this MCP to the given phone number, read live from Exotel's SMS API for your account (newest 20). Requires phone number. Authentication is handled automatically from the session.")
     public Map<String, Object> getSmsCallbacks(String phoneNumber) {
-        logger.info("Fetching SMS callbacks for phone number: {}", phoneNumber);
         try {
-            String authHeader = getCurrentAuthHeader();
-            AuthData authData = parseAuthHeader(authHeader);
-            String formattedNumber = formatPhoneNumberForQuery(phoneNumber);
-            String userId = authData.tokenMd5();
-            
-            logger.info("SMS search: formatted phone number='{}', user_id='{}'", formattedNumber, userId);
-            
-            // Use enhanced search that includes user_id for security
-            List<SmsCallback> callbacks = smsCallbackRepository.findByPhoneNumberAndUserId(formattedNumber, userId);
-            
-            logger.info("Found {} SMS callbacks for phone number: {}", callbacks.size(), formattedNumber);
+            AuthData authData = parseAuthHeader(getCurrentAuthHeader());
+            String formattedNumber = formatSearchNumber(phoneNumber);
+            // Exotel's SMS API cannot search by number, so the SmsSids come from this caller's own sends (MSG-2804)
+            List<SmsCallback> sent = smsCallbackRepository.findTop20ByUserIdAndToNumberOrderByIdDesc(authData.tokenMd5(), formattedNumber);
+            String messagesUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/SMS/Messages/";
+            List<Map<String, Object>> messages = new ArrayList<>();
+            int notFound = 0;
+            for (SmsCallback row : sent) {
+                String sid = row.getSmsSid();
+                if (!isSafeSid(sid)) {
+                    notFound++;
+                    continue;
+                }
+                JsonNode message = readJsonOrMissing(makeGetRequest(messagesUrl + sid + ".json", authData)).path("SMSMessage");
+                if (!message.isObject()) {
+                    notFound++; // Exotel answers "No matching results" with HTTP 200
+                    continue;
+                }
+                messages.add(objectMapper.convertValue(message, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+            }
             
             Map<String, Object> result = new HashMap<>();
-            result.put("status_data", callbacks);
+            result.put("status_data", messages);
             result.put("search_info", Map.of(
                 "phone_number", phoneNumber,
                 "formatted_number", formattedNumber,
-                "records_found", callbacks.size(),
-                "search_type", "SMS to_number with user_id security"
+                "records_found", messages.size(),
+                "not_found", notFound,
+                "search_type", "Live: Exotel SMS API, messages sent through this MCP from your account"
             ));
-            
             return result;
         } catch (Exception e) {
-            logger.error("Database error in getSmsCallbacks: {}", e.getMessage());
+            logger.error("Error in getSmsCallbacks: {}", e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("status_data", "Not found because " + e.getMessage());
             error.put("error_details", e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -348,6 +338,25 @@ public class ExotelService {
         }
     }
     
+    // A stored SmsSid goes into a URL path, so only a safe id is looked up.
+    private static boolean isSafeSid(String sid) {
+        try {
+            ExotelHostGuard.requireSafeId("SmsSid", sid);
+            return true;
+        } catch (ExotelHostGuard.InvalidCredentialException e) {
+            return false;
+        }
+    }
+
+    // Parses an Exotel answer that may be plain text (e.g. "No matching results"); plain text reads as a missing node.
+    private JsonNode readJsonOrMissing(String body) {
+        try {
+            return objectMapper.readTree(body);
+        } catch (Exception e) {
+            return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+        }
+    }
+
     // HTTP endpoint method (uses session-based auth) - calls the Tool method
     public Map<String, Object> getVoiceCallCallbacksEndpoint(String toNumber) {
         return getVoiceCallCallbacks(toNumber);
@@ -1117,64 +1126,6 @@ public class ExotelService {
         lastKnownAuthHeader = authHeader;
     }
     
-    // Method to update SMS callback from webhook (new signature)
-    public void saveSmsCallback(Map<String, String> callbackData, String userId) {
-        String smsSid = callbackData.get("SmsSid");
-        
-        logger.info("Processing SMS callback for SmsSid: {}", smsSid);
-        logger.info("SMS callback data: {}", callbackData);
-        
-        if (smsSid != null && !smsSid.isEmpty()) {
-            // Try to find existing callback by SmsSid
-            Optional<SmsCallback> existingCallback = smsCallbackRepository.findBySmsSid(smsSid);
-            
-            if (existingCallback.isPresent()) {
-                // Update existing callback
-                SmsCallback callback = existingCallback.get();
-                logger.info("Existing SMS callback found: true");
-                
-                // Update fields from callback data
-                callback.setStatus(cleanValue(callbackData.get("Status")));
-                callback.setDetailedStatus(cleanValue(callbackData.get("DetailedStatus")));
-                callback.setDetailedStatusCode(cleanValue(callbackData.get("DetailedStatusCode")));
-                callback.setSmsUnits(cleanValue(callbackData.get("SmsUnits")));
-                callback.setDateSent(cleanValue(callbackData.get("DateSent")));
-                
-                smsCallbackRepository.save(callback);
-                logger.info("Updated existing SMS callback with SmsSid: {}", smsSid);
-            } else {
-                // No existing record found - create initial record from callback data
-                logger.warn("No existing SMS callback found for SmsSid: {}, creating initial record from callback", smsSid);
-                createInitialSmsRecordFromCallback(callbackData, userId);
-            }
-        } else {
-            logger.error("SmsSid is null or empty in callback data");
-        }
-    }
-    
-    // Method to create initial SMS record from callback data (when no initial record exists)
-    private void createInitialSmsRecordFromCallback(Map<String, String> callbackData, String userId) {
-        String smsSid = callbackData.get("SmsSid");
-        logger.info("Creating initial SMS record from callback data for SmsSid: {}", smsSid);
-        
-        String toNumber = callbackData.get("To");
-        String formattedToNumber = formatPhoneNumberForQuery(toNumber);
-        logger.debug("SMS callback: original to_number='{}' -> formatted='{}'", toNumber, formattedToNumber);
-        
-        SmsCallback callback = new SmsCallback();
-        callback.setUserId(userId);
-        callback.setSmsSid(cleanValue(callbackData.get("SmsSid")));
-        callback.setToNumber(formattedToNumber);
-        callback.setStatus(cleanValue(callbackData.get("Status")));
-        callback.setDetailedStatus(cleanValue(callbackData.get("DetailedStatus")));
-        callback.setDetailedStatusCode(cleanValue(callbackData.get("DetailedStatusCode")));
-        callback.setSmsUnits(cleanValue(callbackData.get("SmsUnits")));
-        callback.setDateSent(cleanValue(callbackData.get("DateSent")));
-        
-        smsCallbackRepository.save(callback);
-        logger.info("Created initial SMS record from callback for SmsSid: {} with to_number: {}", smsSid, formattedToNumber);
-    }
-    
     // Method to save initial SMS callback from SMS response
     public void saveInitialSmsCallback(String smsResponse, String userId) {
         try {
@@ -1244,24 +1195,6 @@ public class ExotelService {
         } catch (Exception e) {
             logger.error("Error saving bulk SMS callbacks", e);
         }
-    }
-    
-    // Legacy method to save SMS callback (keep for backward compatibility)
-    public void saveSmsCallback(String smsSid, String toNumber, String status, String detailedStatus,
-                               String detailedStatusCode, String smsUnits, String dateSent, String userId) {
-        String formattedToNumber = formatPhoneNumberForQuery(toNumber);
-        logger.debug("Legacy SMS callback: original to_number='{}' -> formatted='{}'", toNumber, formattedToNumber);
-        
-        SmsCallback callback = new SmsCallback(userId, smsSid, formattedToNumber, status, 
-                                             detailedStatus, detailedStatusCode, smsUnits, dateSent);
-        smsCallbackRepository.save(callback);
-        logger.info("Saved legacy SMS callback with SmsSid: {} and to_number: {}", smsSid, formattedToNumber);
-    }
-    
-    // Helper method to clean values (remove array brackets)
-    private String cleanValue(String value) {
-        if (value == null) return "";
-        return value.replaceAll("^\\['|'\\]$", "");
     }
     
     @Tool(name = "exotel_voice_search_callbacks_by_number", description = "Search your account's voice calls by phone number in BOTH To OR From, read live from Exotel (limited results)")
