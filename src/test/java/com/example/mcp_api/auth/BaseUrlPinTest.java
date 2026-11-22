@@ -100,16 +100,17 @@ class BaseUrlPinTest {
 
     @Test
     void allowedHostsAndKnownBasesStillPassWithAndWithoutTheMatchingSet() throws Exception {
-        assertAccepted(CQA + ",\"api_domain\":\"https://api.exotel.com\"");
-        assertAccepted(CQA + ",\"api_domain\":\"https://API.in.exotel.com/\"");
-        assertAccepted(CQA + ",\"calls_base_url\":\"https://api.in.exotel.com\"");
+        // A verified set of another product carries the login (CQA alone no longer does, MSG-2805).
+        assertAccepted(VOICEBOT + ",\"api_domain\":\"https://api.exotel.com\"");
+        assertAccepted(VOICEBOT + ",\"api_domain\":\"https://API.in.exotel.com/\"");
+        assertAccepted(VOICEBOT + ",\"calls_base_url\":\"https://api.in.exotel.com\"");
         assertAccepted(CORE + ",\"api_domain\":\"https://api.in.exotel.com\"");
         assertAccepted(CALLS + ",\"calls_base_url\":\"https://api.exotel.com\"");
-        assertAccepted(CQA + ",\"voicebot_base_url\":\"https://voicebot.in.exotel.com/voicebot/api/v2/\"");
+        assertAccepted(CALLS + ",\"voicebot_base_url\":\"https://voicebot.in.exotel.com/voicebot/api/v2/\"");
         assertAccepted(VOICEBOT + ",\"voicebot_base_url\":\"https://voicebot.in.exotel.com/voicebot/api/v2\"");
-        assertAccepted(CQA + ",\"tools_server_base_url\":\"https://tools-server-prod.mum1.exotel.com\"");
-        assertAccepted(CQA + "," + AI_CLIENT + ",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\"");
-        assertAccepted(CQA + "," + AI_CLIENT + ",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_context_path\":\"ai-assist/api\"");
+        assertAccepted(VOICEBOT + ",\"tools_server_base_url\":\"https://tools-server-prod.mum1.exotel.com\"");
+        assertAccepted(CQA + "," + CORE + "," + AI_CLIENT + ",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\"");
+        assertAccepted(CQA + "," + CORE + "," + AI_CLIENT + ",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_context_path\":\"ai-assist/api\"");
     }
 
     @Test

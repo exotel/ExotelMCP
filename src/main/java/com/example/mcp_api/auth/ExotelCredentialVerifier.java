@@ -56,11 +56,10 @@ import java.util.function.UnaryOperator;
  * caller-supplied path ever reaches it. A 404 means the account or tenant is unknown and is REJECTED for
  * every product.
  *
- * Unverifiable sets (no safe probe): AI Assist with only Auth0 client credentials (the bearer is minted
- * from an external token endpoint). It does not count towards login and does not block a request that has
- * another verified set.
- *
- * Known, temporary exception: a complete CQA set is accepted on shape alone (see {@link #verify}).
+ * Unverifiable sets (no safe probe): CQA (the CQA API has no read-only call that works with the API key,
+ * CEC-1442) and AI Assist with only Auth0 client credentials (the bearer is minted from an external token
+ * endpoint). They never count towards login and do not block a request that has another verified set
+ * (MSG-2805).
  */
 @Component
 public class ExotelCredentialVerifier {
@@ -248,8 +247,7 @@ public class ExotelCredentialVerifier {
 
     /**
      * Checks every credential set present in the header. REJECTED if a present set is incomplete, is
-     * rejected by Exotel, or if no set could be verified (none present, or only unverifiable ones). A complete
-     * CQA set counts as valid without a probe.
+     * rejected by Exotel, or if no set could be verified (none present, or only unverifiable ones such as CQA).
      * UNAVAILABLE if a probe could not be completed. VALID only if every present set passed or is
      * unverifiable and at least one set was verified. The message names the set(s), never a value.
      */
@@ -272,12 +270,6 @@ public class ExotelCredentialVerifier {
         boolean anyVerified = false;
         List<String> unverifiable = new ArrayList<>();
         for (CredentialSet set : present) {
-            if (set == CredentialSet.CQA) {
-                // KNOWN GAP (temporary): CQA is accepted without verification until the CQA API offers a
-                // read-only call that works with the API key (SL-3868 follow-up).
-                anyVerified = true;
-                continue;
-            }
             Optional<Outcome> outcome = probeSet(set, creds);
             if (outcome.isEmpty()) {
                 unverifiable.add(set.describe());

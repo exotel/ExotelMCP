@@ -126,10 +126,36 @@ class ExotelCredentialVerifierTest {
     private final List<java.util.Map<String, String>> headersSeen = new ArrayList<>();
 
     @Test
-    void knownLimitationCqaOnlyIsAcceptedWithoutAnyProbe() {
-        ExotelCredentialVerifier v = verifierReturning(401);
-        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(CQA)).outcome());
-        assertEquals(0, calls.get(), "CQA is accepted on shape alone, nothing is sent anywhere");
+    void cqaOnlyIsRejectedAsUnverifiable() {
+        // MSG-2805: a made-up CQA set must never log anyone in on its own.
+        for (int status : new int[] {200, 401}) {
+            calls.set(0);
+            ExotelCredentialVerifier v = verifierReturning(status);
+            ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(CQA));
+            assertEquals(Outcome.REJECTED, r.outcome(), "probe status " + status);
+            assertTrue(r.message().startsWith("CQA credentials (cqa_api_key, cqa_account_id) cannot be used alone"));
+            assertEquals(0, calls.get(), "CQA has no probe; nothing is sent anywhere");
+        }
+    }
+
+    @Test
+    void cqaWithUnavailableCoreIsUnavailableNotValid() {
+        ExotelCredentialVerifier v = verifierReturning(503);
+        assertEquals(Outcome.UNAVAILABLE, v.verify(AuthCredentials.parse(
+                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\"}")).outcome());
+    }
+
+    @Test
+    void cqaWithAiAssistClientCredentialsOnlyIsRejected() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(
+                "{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"sid1\","
+                        + "\"ai_assist_client_id\":\"cid\",\"ai_assist_client_secret\":\"cs\"}"));
+        assertEquals(Outcome.REJECTED, r.outcome());
+        assertTrue(r.message().contains("CQA credentials"));
+        assertTrue(r.message().contains("AI Assist credentials"));
+        assertTrue(r.message().contains("cannot be used alone"), r.message());
+        assertEquals(0, calls.get());
     }
 
     @Test
@@ -278,6 +304,16 @@ class ExotelCredentialVerifierTest {
         assertTrue(r.message().contains("AI Assist credentials"));
         assertTrue(r.message().contains("cannot be used alone"));
         assertEquals(0, calls.get());
+    }
+
+    @Test
+    void aiAssistClientCredentialsWithVerifiedCorePasses() {
+        ExotelCredentialVerifier v = verifierReturning(200);
+        assertEquals(Outcome.VALID, v.verify(AuthCredentials.parse(
+                "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"sid1\","
+                        + "\"ai_assist_client_id\":\"cid\",\"ai_assist_client_secret\":\"cs\"}")).outcome());
+        assertEquals(1, calls.get(), "only Core is probed");
+        assertTrue(urls.get(0).contains("/Calls.json"));
     }
 
     @Test
