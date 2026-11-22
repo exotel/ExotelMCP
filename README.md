@@ -11,7 +11,7 @@ A Model Context Protocol (MCP) server that provides seamless integration between
 - 🎵 **Quick Audio Tools**: Audio playback links and web player access
 - 🔍 **Conversational Intelligence**: AI-powered quality analysis of 100% of conversations across voice and digital channels
 - 🤖 **VoiceBot**: Create, manage, and place AI-powered outbound calls with VoiceBots
-- 🎧 **AI Assist**: Configure real-time agent assist (smart reply, transcription, KB) via MCP
+- 🎧 **AI Assist**: Configure real-time agent assist (smart reply, transcription, KB) via MCP (temporarily switched off, see [AI Assist Services](#ai-assist-services))
 - 🔐 **Secure Authentication**: Per-user token-based authentication via Authorization header
 - 🤖 **Claude AI Integration**: Direct integration with Claude through MCP protocol
 
@@ -553,6 +553,8 @@ Show me the last 5 bot calls
 ```
 
 ### AI Assist Services
+
+> **Temporarily unavailable:** the AI Assist tools are switched off in this server until a security fix (AIA-629) ships. They are not listed and cannot be called; the other products are unaffected.
 
 Real-time agent assist: transcription, sentiment, smart replies, disposition hints, and knowledge-base grounding for contact-center agents. Tools are prefixed `exotel_aiassist_*`.
 
