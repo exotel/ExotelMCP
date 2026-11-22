@@ -12,7 +12,6 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Servlet filter that authenticates every request carrying caller credentials, parses the
@@ -27,19 +26,14 @@ import java.util.regex.Pattern;
  *  - if Exotel cannot be reached to verify a set (503)
  *
  * Requests whose raw path contains traversal or ambiguity markers (.., ;, //, \\, %2e, %2f, %5c) are
- * rejected with 400 before anything else. Public paths (Exotel posts status callbacks without our
- * header) are decided from the container-resolved path (servlet path + path info), and only for the
- * exact POST shapes of the callback controllers; CORS preflights are skipped.
+ * rejected with 400 before anything else. There are no public callback paths (MSG-2804, VO-6235:
+ * call and SMS status are read live from Exotel); only CORS preflights are skipped.
  */
 @Component
 @Order(1)
 public class AuthFilter implements Filter {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthFilter.class);
-
-    /** Exact shapes Exotel POSTs status callbacks to without an Authorization header (see ExotelController). */
-    static final Pattern PUBLIC_CALLBACK_PATH =
-            Pattern.compile("^/sms-status-callback/[^/]+/[^/]+$");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -133,12 +127,9 @@ public class AuthFilter implements Filter {
         return (servletPath + pathInfo).startsWith("/.well-known/");
     }
 
+    // MSG-2804 removed the last public callback (SMS status is read live from Exotel); only CORS preflights skip auth.
     private static boolean isPublic(HttpServletRequest request) {
-        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) return true;
-        if (!"POST".equalsIgnoreCase(request.getMethod())) return false;
-        String servletPath = request.getServletPath() == null ? "" : request.getServletPath();
-        String pathInfo = request.getPathInfo() == null ? "" : request.getPathInfo();
-        return PUBLIC_CALLBACK_PATH.matcher(servletPath + pathInfo).matches();
+        return "OPTIONS".equalsIgnoreCase(request.getMethod());
     }
 
     private static void reject(HttpServletRequest request, HttpServletResponse response,

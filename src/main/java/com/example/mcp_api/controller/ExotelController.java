@@ -3,7 +3,6 @@ package com.example.mcp_api.controller;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.util.MultiValueMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.mcp_api.service.ExotelService;
@@ -11,7 +10,6 @@ import com.example.mcp_api.dto.BulkSMSRequest;
 import com.example.mcp_api.dto.BulkDynamicSMS;
 
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -88,60 +86,6 @@ public class ExotelController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             logger.error("Error connecting call", e);
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
-        }
-    }
-    
-    @PostMapping("/sms-status-callback/{callbackId}/{tokenMd5}")
-    public ResponseEntity<?> smsStatusCallback(
-            @PathVariable String callbackId,
-            @PathVariable String tokenMd5,
-            @RequestParam(required = false) MultiValueMap<String, String> formData,
-            @RequestBody(required = false) Map<String, Object> jsonData,
-            HttpServletRequest request) {
-        
-        logger.info("Received SMS callback for ID: {}, Token: {}", callbackId, tokenMd5);
-        logger.info("Content-Type: {}", request.getContentType());
-        
-        try {
-            Map<String, String> callbackData = new HashMap<>();
-            
-            // Handle JSON data (new format)
-            if (jsonData != null && !jsonData.isEmpty()) {
-                logger.info("Processing JSON SMS callback data");
-                jsonData.forEach((key, value) -> {
-                    if (value != null) {
-                        callbackData.put(key, String.valueOf(value));
-                        logger.info("{}: {}", key, value);
-                    }
-                });
-            }
-            // Handle form data (legacy format)
-            else if (formData != null && !formData.isEmpty()) {
-                logger.info("Processing form SMS callback data");
-                formData.forEach((key, values) -> {
-                    if (!values.isEmpty()) {
-                        callbackData.put(key, values.get(0));
-                        logger.info("{}: {}", key, values.get(0));
-                    }
-                });
-            }
-            else {
-                logger.warn("No SMS callback data received");
-                return ResponseEntity.badRequest().body(Map.of("message", "No callback data provided"));
-            }
-            
-            // Save SMS callback to database using improved method
-            exotelService.saveSmsCallback(callbackData, tokenMd5);
-            
-            return ResponseEntity.ok(Map.of(
-                "message", "SMS callback received and processed successfully",
-                "callback_id", callbackId,
-                "sms_sid", callbackData.get("SmsSid"),
-                "status", callbackData.get("Status")
-            ));
-        } catch (Exception e) {
-            logger.error("Error processing SMS callback for ID: {}", callbackId, e);
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
