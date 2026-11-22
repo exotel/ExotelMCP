@@ -54,6 +54,7 @@ public class StreamableHttpConfig {
     @Autowired
     private com.example.mcp_api.service.EngageService engageService;
 
+    /** Not in {@link #toolServices()} while AIA-629 is open (MSG-2809). */
     @Autowired
     private com.example.mcp_api.service.AiAssistService aiAssistService;
 
@@ -198,15 +199,24 @@ public class StreamableHttpConfig {
     }
 
     /**
+     * The services whose @Tool methods are listed by tools/list and run by tools/call. Both read this one list.
+     *
+     * AI Assist (aiAssistService) is switched off until AIA-629 is fixed: its bearer-token cache ignores the
+     * client secret, so one caller could reuse another tenant's token (MSG-2809, SL-3868). The AIA-629 fix
+     * adds aiAssistService back here, in the same PR.
+     */
+    private Object[] toolServices() {
+        return new Object[] {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools,
+                setupTools, voiceBotToolsService, engageService, whatsAppService};
+    }
+
+    /**
      * Create tools list response using reflection to extract @Tool annotations from both ShoppingCart and ExotelService
      */
     private Map<String, Object> createToolsListResponse(Object id) {
         List<Map<String, Object>> tools = new ArrayList<>();
         
-        // Scan services for @Tool annotated methods
-        Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
-        
-        for (Object service : services) {
+        for (Object service : toolServices()) {
             Method[] methods = service.getClass().getDeclaredMethods();
             for (Method method : methods) {
                 Tool toolAnnotation = method.getAnnotation(Tool.class);
@@ -293,10 +303,7 @@ public class StreamableHttpConfig {
             Object toolResult = null;
             boolean isError = false;
             
-            // Search for the tool method in active services
-            Object[] services = {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools, setupTools, voiceBotToolsService, engageService, aiAssistService, whatsAppService};
-            
-            for (Object service : services) {
+            for (Object service : toolServices()) {
                 Method[] methods = service.getClass().getDeclaredMethods();
                 for (Method method : methods) {
                     Tool toolAnnotation = method.getAnnotation(Tool.class);

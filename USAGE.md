@@ -44,6 +44,8 @@ CQA:           cqa_api_key, cqa_account_id                                      
 AI Assist:     ai_assist_base_url, ai_assist_account_sid + one auth mode (see AI Assist Credentials)
 ```
 
+> **Temporarily unavailable:** the AI Assist tools are switched off in this server until a security fix (AIA-629) ships. They are not listed and cannot be called; the other products are unaffected.
+
 For example, core plus VoiceBot:
 
 ```text
