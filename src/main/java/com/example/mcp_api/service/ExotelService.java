@@ -30,7 +30,6 @@ import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 import java.util.UUID;
 import java.util.Optional;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -391,6 +390,9 @@ public class ExotelService {
         Map<String, Map<String, Object>> bySid = new LinkedHashMap<>();
         for (String filter : filters) {
             JsonNode calls = objectMapper.readTree(makeGetRequest(callsUrl + "?" + filter + "=" + formattedNumber, authData)).path("Calls");
+            if (!calls.isArray()) {
+                throw new IllegalStateException("Exotel Calls API returned no Calls list");
+            }
             for (JsonNode call : calls) {
                 Map<String, Object> fields = objectMapper.convertValue(call, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
                 bySid.putIfAbsent(call.path("Sid").asText(String.valueOf(bySid.size())), fields);
@@ -685,8 +687,9 @@ public class ExotelService {
             
             // Check for HTTP errors
             if (statusCode >= 400) {
+                // The query string can carry a searched phone number; keep it out of errors and logs (VO-6235)
                 String errorMessage = String.format("HTTP %d %s for %s %s", 
-                                                   statusCode, reasonPhrase, method, url);
+                                                   statusCode, reasonPhrase, method, url.split("\\?", 2)[0]);
                 if (statusCode >= 500) {
                     throw new RuntimeException("Server error: " + errorMessage);
                 } else {
@@ -1328,8 +1331,12 @@ public class ExotelService {
             try {
                 response = makeGetRequest(url, authData);
             } catch (IllegalArgumentException e) {
-                // Exotel answers 4xx for a CallSid that is not in the caller's account
-                return "No record found for CallSid: " + callSid;
+                // Exotel answers 404 (or 400) for a CallSid that is not in the caller's account; other 4xx are real errors
+                String message = String.valueOf(e.getMessage());
+                if (message.contains("HTTP 404") || message.contains("HTTP 400")) {
+                    return "No record found for CallSid: " + callSid;
+                }
+                return "Error: " + message;
             }
             call = objectMapper.readTree(response).path("Call");
         } catch (Exception e) {
