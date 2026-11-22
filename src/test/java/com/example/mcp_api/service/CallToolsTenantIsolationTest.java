@@ -122,6 +122,19 @@ class CallToolsTenantIsolationTest {
     }
 
     @Test
+    void searchLabelsDirectionWhateverNumberFormatExotelReturns() {
+        service.answers.put(CALLS + ".json?To=09999999999", "{\"Calls\":["
+                + call("CA1", "+918888888888", "+919999999999", "completed") + ","
+                + call("CA2", "08888888888", "09999999999", "completed") + "]}");
+        service.answers.put(CALLS + ".json?From=09999999999", "{\"Calls\":["
+                + call("CA3", "+919999999999", "+917777777777", "completed") + "]}");
+        String out = service.searchVoiceCallbacksByNumber("+919999999999");
+        assertTrue(out.contains("=== Record 1 (OUTGOING Call) ==="), out);
+        assertTrue(out.contains("=== Record 2 (OUTGOING Call) ==="), out);
+        assertTrue(out.contains("=== Record 3 (INCOMING Call) ==="), out);
+    }
+
+    @Test
     void numberSearchesRefuseUnsafeNumbersWithoutARequest() {
         for (String bad : new String[] {"9999999999&To=1", "../x", "99999 99999", "%26"}) {
             Map<String, Object> out = service.getVoiceCallCallbacks(bad);

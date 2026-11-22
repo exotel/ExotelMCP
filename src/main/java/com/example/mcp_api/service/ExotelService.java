@@ -1223,7 +1223,8 @@ public class ExotelService {
             int limit = Math.min(5, calls.size());
             for (int i = 0; i < limit; i++) {
                 Map<String, Object> call = calls.get(i);
-                String direction = formattedNumber.equals(call.get("To")) ? "OUTGOING" : "INCOMING";
+                // Exotel may return 0XXXXXXXXXX or +91XXXXXXXXXX; compare in the same normalised form
+                String direction = formattedNumber.equals(formatPhoneNumberForQuery(String.valueOf(call.get("To")))) ? "OUTGOING" : "INCOMING";
                 Object recording = call.get("RecordingUrl");
                 
                 result.append(String.format("=== Record %d (%s Call) ===\n", i+1, direction));
