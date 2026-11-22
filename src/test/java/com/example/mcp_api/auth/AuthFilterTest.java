@@ -319,13 +319,18 @@ class AuthFilterTest {
     }
 
     @Test
-    void exotelCallbacksAndPreflightSkipAuth() throws Exception {
+    void preflightSkipsAuth() throws Exception {
         MockFilterChain chain = new MockFilterChain();
-        assertEquals(200, call("POST", "/sms-status-callback/id1/abc", null, chain).getStatus());
-        assertTrue(passed(chain));
-        chain = new MockFilterChain();
         assertEquals(200, call("OPTIONS", "/mcp", null, chain).getStatus());
         assertTrue(passed(chain));
+    }
+
+    @Test
+    void smsStatusCallbackIsNoLongerPublic() throws Exception {
+        // MSG-2804: SMS status is read live from Exotel; nothing may post SMS records without credentials
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(401, call("POST", "/sms-status-callback/id1/abc", null, chain).getStatus());
+        assertFalse(passed(chain));
     }
 
     @Test
