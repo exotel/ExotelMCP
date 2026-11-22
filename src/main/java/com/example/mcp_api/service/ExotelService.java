@@ -20,18 +20,16 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.mcp_api.repository.SmsCallbackRepository;
-import com.example.mcp_api.repository.VoiceCallbackRepository;
 import com.example.mcp_api.entity.SmsCallback;
-import com.example.mcp_api.entity.VoiceCallback;
 import com.example.mcp_api.dto.AuthData;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 import java.util.UUID;
 import java.util.Optional;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,9 +42,6 @@ public class ExotelService {
     
     @Autowired
     private SmsCallbackRepository smsCallbackRepository;
-    
-    @Autowired
-    private VoiceCallbackRepository voiceCallbackRepository;
     
     @Value("${exotel.base.url:http://localhost:8085}")
     private String baseUrl;
@@ -159,27 +154,15 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
-            String statusCallbackUrl = baseUrl + "/call-status/" + callbackId + "/" + authData.tokenMd5();
-            logger.info("Sending call. Callback URL: {}", statusCallbackUrl);
-            
             Map<String, String> data = new HashMap<>();
             data.put("From", toNumber);
             data.put("To", authData.fromNumber());
             data.put("CallerId", authData.callerId());
-            data.put("StatusCallback", statusCallbackUrl);
-            data.put("StatusCallbackContentType", "application/json");
             data.put("Record", "true");
             
             String voiceUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls/connect.json";
             String response = makeHttpRequest(voiceUrl, data, authData);
             logger.info("Voice call response: {}", response);
-            
-            // Save initial call data to database
-            try {
-                saveInitialVoiceCallback(response, authData.tokenMd5());
-            } catch (Exception e) {
-                logger.error("Error saving initial voice callback", e);
-            }
             
             return response;
         } catch (Exception e) {
@@ -200,26 +183,14 @@ public class ExotelService {
         try {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
-            String statusCallbackUrl = baseUrl + "/call-status/" + callbackId + "/" + authData.tokenMd5();
-            logger.info("Sending call. Callback URL: {}", statusCallbackUrl);
-            
             Map<String, String> data = new HashMap<>();
             data.put("From", fromNumber);
             data.put("To", toNumber);
             data.put("CallerId", authData.callerId());
-            data.put("StatusCallback", statusCallbackUrl);
-            data.put("StatusCallbackContentType", "application/json");
             data.put("Record", "true");
             String voiceUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls/connect.json";
             String response = makeHttpRequest(voiceUrl, data, authData);
             logger.info("Voice call response: {}", response);
-            
-            // Save initial call data to database
-            try {
-                saveInitialVoiceCallback(response, authData.tokenMd5());
-            } catch (Exception e) {
-                logger.error("Error saving initial voice callback", e);
-            }
             
             return response;
         } catch (Exception e) {
@@ -320,26 +291,14 @@ public class ExotelService {
             String authHeader = getCurrentAuthHeader();
             AuthData authData = parseAuthHeader(authHeader);
             ExotelHostGuard.requireSafeId("appId", appId);
-            String statusCallbackUrl = baseUrl + "/call-status/" + callbackId + "/" + authData.tokenMd5();
-            logger.info("Sending call. Callback URL: {}", statusCallbackUrl);
-            
             Map<String, String> data = new HashMap<>();
             data.put("From", fromNumber);
             data.put("CallerId", authData.callerId());
-            data.put("StatusCallback", statusCallbackUrl);
             data.put("Url", authData.exotelPortalUrl() + "/" + authData.accountSid() + "/exoml/start_voice/" + appId);
-            data.put("StatusCallbackContentType", "application/json");
             data.put("Record", "true");
             String voiceUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls/connect.json";
             String response = makeHttpRequest(voiceUrl, data, authData);
             logger.info("Call flow response: {}", response);
-            
-            // Save initial call data to database
-            try {
-                saveInitialVoiceCallback(response, authData.tokenMd5());
-            } catch (Exception e) {
-                logger.error("Error saving initial voice callback", e);
-            }
             
             return response;
         } catch (Exception e) {
@@ -395,121 +354,24 @@ public class ExotelService {
     }
     
     @Tool(name = "exotel_voice_get_call_status_callbacks", 
-          description = "Fetch all voice call callback with status records from the database for the given phone number. Searches in BOTH to_number OR from_number with user_id security. Requires phone number. Authentication is handled automatically from the session.")
+          description = "Fetch the status of voice calls to or from the given phone number, read live from Exotel's Calls API for your account. Searches in BOTH To OR From. Requires phone number. Authentication is handled automatically from the session.")
     public Map<String, Object> getVoiceCallCallbacks(String phoneNumber) {
-        logger.info("=== ENHANCED VOICE CALLBACKS SEARCH ===");
-        logger.info("Input phoneNumber: '{}'", phoneNumber);
-        
         try {
-            String authHeader = getCurrentAuthHeader();
-            AuthData authData = parseAuthHeader(authHeader);
-            String formattedNumber = formatPhoneNumberForQuery(phoneNumber);
-            String userId = authData.tokenMd5();
-            
-            // Enhanced debugging logs
-            logger.info("Original phoneNumber: '{}'", phoneNumber);
-            logger.info("Formatted phoneNumber: '{}'", formattedNumber);
-            logger.info("UserID (tokenMd5): '{}'", userId);
-            logger.info("Executing enhanced query: SELECT * FROM voice_callbacks WHERE (to_number = '{}' OR from_number = '{}') AND user_id = '{}'", formattedNumber, formattedNumber, userId);
-            
-            // Execute the enhanced query that searches BOTH to_number OR from_number
-            logger.info("Executing enhanced search with parameters: phoneNumber='{}', userId='{}'", formattedNumber, userId);
-            List<VoiceCallback> callbacks = voiceCallbackRepository.findByPhoneNumberInToOrFromAndUserId(formattedNumber, userId);
-            logger.info("Enhanced search returned {} records", callbacks.size());
-            
-            // If no results, try debugging queries
-            if (callbacks.isEmpty()) {
-                logger.warn("No records found with exact match. Running diagnostic queries...");
-                
-                // Check total records in table
-                List<VoiceCallback> allRecords = voiceCallbackRepository.findAll();
-                logger.info("Total voice_callbacks records in database: {}", allRecords.size());
-                
-                // Show sample records for debugging
-                if (!allRecords.isEmpty()) {
-                    logger.info("Sample records from voice_callbacks table:");
-                    int sampleSize = Math.min(3, allRecords.size());
-                    for (int i = 0; i < sampleSize; i++) {
-                        VoiceCallback sample = allRecords.get(i);
-                        logger.info("  Record {}: to_number='{}', user_id='{}', call_sid='{}', status='{}'", 
-                                   i+1, sample.getToNumber(), sample.getUserId(), sample.getCallSid(), sample.getStatus());
-                    }
-                }
-                
-                // Try finding by to_number only using repository method
-                logger.info("Testing query with to_number only: '{}'", formattedNumber);
-                List<VoiceCallback> byToNumberOnly = voiceCallbackRepository.findByToNumberOnly(formattedNumber);
-                logger.info("Records with matching to_number '{}' (any user_id): {}", formattedNumber, byToNumberOnly.size());
-                
-                if (!byToNumberOnly.isEmpty()) {
-                    logger.info("Found records with matching to_number but different user_id:");
-                    for (VoiceCallback callback : byToNumberOnly) {
-                        logger.info("  - to_number='{}', user_id='{}', call_sid='{}'", 
-                                   callback.getToNumber(), callback.getUserId(), callback.getCallSid());
-                    }
-                }
-                
-                // Try finding by user_id only using repository method
-                logger.info("Testing query with user_id only: '{}'", userId);
-                List<VoiceCallback> byUserIdOnly = voiceCallbackRepository.findByUserIdOnly(userId);
-                logger.info("Records with matching user_id '{}' (any to_number): {}", userId, byUserIdOnly.size());
-                
-                if (!byUserIdOnly.isEmpty()) {
-                    logger.info("Found records with matching user_id but different to_number:");
-                    for (VoiceCallback callback : byUserIdOnly) {
-                        logger.info("  - to_number='{}', user_id='{}', call_sid='{}'", 
-                                   callback.getToNumber(), callback.getUserId(), callback.getCallSid());
-                    }
-                }
-                
-                // Show unique values for comparison
-                Set<String> uniqueToNumbers = allRecords.stream()
-                    .map(VoiceCallback::getToNumber)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet());
-                logger.info("All unique to_numbers in database: {}", uniqueToNumbers);
-                
-                Set<String> uniqueUserIds = allRecords.stream()
-                    .map(VoiceCallback::getUserId)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet());
-                logger.info("All unique user_ids in database: {}", uniqueUserIds);
-                
-                // Check for exact matches manually
-                boolean toNumberExists = uniqueToNumbers.contains(formattedNumber);
-                boolean userIdExists = uniqueUserIds.contains(userId);
-                logger.info("Manual verification: to_number '{}' exists={}, user_id '{}' exists={}", 
-                           formattedNumber, toNumberExists, userId, userIdExists);
-            } else {
-                logger.info("Successfully found {} voice callback records using enhanced search", callbacks.size());
-                // Log details of found records
-                if (!callbacks.isEmpty()) {
-                    logger.info("Found records breakdown:");
-                    for (VoiceCallback callback : callbacks) {
-                        String direction = formattedNumber.equals(callback.getToNumber()) ? "OUTGOING" : "INCOMING";
-                        logger.info("  - {} call: to_number='{}', from_number='{}', call_sid='{}', status='{}'", 
-                                   direction, callback.getToNumber(), callback.getFromNumber(), 
-                                   callback.getCallSid(), callback.getStatus());
-                    }
-                }
-            }
+            AuthData authData = parseAuthHeader(getCurrentAuthHeader());
+            String formattedNumber = formatSearchNumber(phoneNumber);
+            List<Map<String, Object>> calls = fetchCalls(authData, formattedNumber, "To", "From");
             
             Map<String, Object> result = new HashMap<>();
-            result.put("status_data", callbacks);
+            result.put("status_data", calls);
             result.put("search_info", Map.of(
                 "phone_number", phoneNumber,
                 "formatted_number", formattedNumber,
-                "user_id", userId,
-                "records_found", callbacks.size(),
-                "search_type", "Enhanced: to_number OR from_number with user_id security",
-                "sql_query", "WHERE (to_number = '" + formattedNumber + "' OR from_number = '" + formattedNumber + "') AND user_id = '" + userId + "'"
+                "records_found", calls.size(),
+                "search_type", "Live: Exotel Calls API, To OR From, your account"
             ));
-            
-            logger.info("Enhanced voice call search result: {} records", callbacks.size());
             return result;
-            
         } catch (Exception e) {
-            logger.error("Database error in getVoiceCallCallbacks: {}", e.getMessage(), e);
+            logger.error("Error in getVoiceCallCallbacks: {}", e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("status_data", "Not found because " + e.getMessage());
             error.put("error_details", e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -517,6 +379,28 @@ public class ExotelService {
         }
     }
     
+    // Validates a caller-supplied number and formats it the way the store and the bulk tool did (digits only).
+    private String formatSearchNumber(String phoneNumber) {
+        return formatPhoneNumberForQuery(ExotelHostGuard.requirePhoneNumber("phoneNumber", phoneNumber));
+    }
+
+    // Lists the caller's own calls from Exotel's Calls API, one request per filter (To, From), merged by Sid.
+    private List<Map<String, Object>> fetchCalls(AuthData authData, String formattedNumber, String... filters) throws Exception {
+        String callsUrl = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls.json";
+        Map<String, Map<String, Object>> bySid = new LinkedHashMap<>();
+        for (String filter : filters) {
+            JsonNode calls = objectMapper.readTree(makeGetRequest(callsUrl + "?" + filter + "=" + formattedNumber, authData)).path("Calls");
+            if (!calls.isArray()) {
+                throw new IllegalStateException("Exotel Calls API returned no Calls list");
+            }
+            for (JsonNode call : calls) {
+                Map<String, Object> fields = objectMapper.convertValue(call, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                bySid.putIfAbsent(call.path("Sid").asText(String.valueOf(bySid.size())), fields);
+            }
+        }
+        return new ArrayList<>(bySid.values());
+    }
+
     // HTTP endpoint method (uses session-based auth) - calls the Tool method
     public String getBulkCallDetailsEndpoint(String fromNumber) {
         return getBulkCallDetails(fromNumber);
@@ -662,12 +546,12 @@ public class ExotelService {
     }
     
     // Enhanced HTTP POST with retry mechanism and circuit breaker
-    private String makeHttpRequest(String url, Map<String, ?> data, AuthData authData) throws Exception {
+    String makeHttpRequest(String url, Map<String, ?> data, AuthData authData) throws Exception {
         return executeWithRetry(() -> performHttpRequest(url, data, authData, "POST"), 3);
     }
     
     // Enhanced HTTP GET with retry mechanism
-    private String makeGetRequest(String url, AuthData authData) throws Exception {
+    String makeGetRequest(String url, AuthData authData) throws Exception {
         return executeWithRetry(() -> performHttpRequest(url, null, authData, "GET"), 3);
     }
     
@@ -803,8 +687,9 @@ public class ExotelService {
             
             // Check for HTTP errors
             if (statusCode >= 400) {
+                // The query string can carry a searched phone number; keep it out of errors and logs (VO-6235)
                 String errorMessage = String.format("HTTP %d %s for %s %s", 
-                                                   statusCode, reasonPhrase, method, url);
+                                                   statusCode, reasonPhrase, method, url.split("\\?", 2)[0]);
                 if (statusCode >= 500) {
                     throw new RuntimeException("Server error: " + errorMessage);
                 } else {
@@ -945,14 +830,15 @@ public class ExotelService {
         return queryFormat;
     }
     
-    // Helper method to build form data
-    private String buildFormData(Map<String, ?> data) {
+    // Helper method to build form data; every key and value is URL-encoded so a value cannot add parameters (VO-6235)
+    static String buildFormData(Map<String, ?> data) {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, ?> entry : data.entrySet()) {
             if (sb.length() > 0) {
                 sb.append("&");
             }
-            sb.append(entry.getKey()).append("=").append(entry.getValue());
+            sb.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8)).append("=")
+              .append(URLEncoder.encode(String.valueOf(entry.getValue()), StandardCharsets.UTF_8));
         }
         return sb.toString();
     }
@@ -1372,319 +1258,55 @@ public class ExotelService {
         logger.info("Saved legacy SMS callback with SmsSid: {} and to_number: {}", smsSid, formattedToNumber);
     }
     
-    // Method to save initial voice callback from call response
-    public void saveInitialVoiceCallback(String callResponse, String userId) {
-        try {
-            JsonNode jsonNode = objectMapper.readTree(callResponse);
-            JsonNode callNode = jsonNode.get("Call");
-            
-            if (callNode != null) {
-                String toNumber = callNode.has("To") ? callNode.get("To").asText() : "";
-                String formattedToNumber = formatPhoneNumberForQuery(toNumber);
-                String fromNumber = callNode.has("From") ? callNode.get("From").asText() : "";
-                String formattedFromNumber = formatPhoneNumberForQuery(fromNumber);
-                logger.debug("Initial voice callback: to_number '{}'->'{}', from_number '{}'->'{}' ", 
-                           toNumber, formattedToNumber, fromNumber, formattedFromNumber);
-                
-                VoiceCallback callback = new VoiceCallback(
-                    userId,
-                    callNode.has("Sid") ? callNode.get("Sid").asText() : "",
-                    callNode.has("ParentCallSid") ? callNode.get("ParentCallSid").asText() : "",
-                    callNode.has("DateCreated") ? callNode.get("DateCreated").asText() : "",
-                    callNode.has("DateUpdated") ? callNode.get("DateUpdated").asText() : "",
-                    callNode.has("AccountSid") ? callNode.get("AccountSid").asText() : "",
-                    formattedToNumber,
-                    formattedFromNumber,
-                    callNode.has("PhoneNumberSid") ? callNode.get("PhoneNumberSid").asText() : "",
-                    callNode.has("StartTime") ? callNode.get("StartTime").asText() : "",
-                    callNode.has("EndTime") ? callNode.get("EndTime").asText() : "",
-                    callNode.has("Duration") ? callNode.get("Duration").asText() : "",
-                    callNode.has("Price") ? callNode.get("Price").asText() : "",
-                    callNode.has("Direction") ? callNode.get("Direction").asText() : "",
-                    callNode.has("AnsweredBy") ? callNode.get("AnsweredBy").asText() : "",
-                    callNode.has("ForwardedFrom") ? callNode.get("ForwardedFrom").asText() : "",
-                    callNode.has("CallerName") ? callNode.get("CallerName").asText() : "",
-                    callNode.has("Uri") ? callNode.get("Uri").asText() : "",
-                    callNode.has("RecordingUrl") ? callNode.get("RecordingUrl").asText() : "",
-                    callNode.has("Sid") ? callNode.get("Sid").asText() : "", // Using Sid as CallSid
-                    callNode.has("Status") ? callNode.get("Status").asText() : ""
-                );
-                
-                voiceCallbackRepository.save(callback);
-                logger.info("Saved initial voice callback with CallSid: {}, to_number: {}, from_number: {}", 
-                           callback.getCallSid(), formattedToNumber, formattedFromNumber);
-            }
-        } catch (Exception e) {
-            logger.error("Error parsing and saving initial voice callback: {}", e.getMessage());
-        }
-    }
-    
-    // Method to update voice callback from webhook
-    public void saveVoiceCallback(Map<String, String> callbackData, String userId) {
-        String callSid = callbackData.get("CallSid");
-        
-        logger.info("Processing callback for CallSid: {}", callSid);
-        logger.info("Callback data: {}", callbackData);
-        
-        if (callSid != null && !callSid.isEmpty()) {
-            // Try to find existing callback by CallSid
-            Optional<VoiceCallback> existingCallback = voiceCallbackRepository.findByCallSid(callSid);
-            
-            logger.info("Existing callback found: {}", existingCallback.isPresent());
-            
-            if (existingCallback.isPresent()) {
-                // Update existing callback
-                VoiceCallback callback = existingCallback.get();
-                
-                // Update fields that might have changed
-                if (callbackData.containsKey("Status")) {
-                    callback.setStatus(cleanValue(callbackData.get("Status")));
-                }
-                if (callbackData.containsKey("RecordingUrl")) {
-                    callback.setRecordingUrl(cleanValue(callbackData.get("RecordingUrl")));
-                }
-                if (callbackData.containsKey("DateUpdated")) {
-                    callback.setDateUpdated(cleanValue(callbackData.get("DateUpdated")));
-                }
-                if (callbackData.containsKey("EndTime")) {
-                    callback.setEndTime(cleanValue(callbackData.get("EndTime")));
-                }
-                if (callbackData.containsKey("Duration")) {
-                    callback.setDuration(cleanValue(callbackData.get("Duration")));
-                }
-                if (callbackData.containsKey("Price")) {
-                    callback.setPrice(cleanValue(callbackData.get("Price")));
-                }
-                if (callbackData.containsKey("AnsweredBy")) {
-                    callback.setAnsweredBy(cleanValue(callbackData.get("AnsweredBy")));
-                }
-                
-                voiceCallbackRepository.save(callback);
-                logger.info("Updated existing voice callback with CallSid: {}", callSid);
-            } else {
-                // No existing record found - create initial record from callback data
-                logger.warn("No existing callback found for CallSid: {}, creating initial record from callback", callSid);
-                createInitialRecordFromCallback(callbackData, userId);
-            }
-        } else {
-            // Create new callback if no CallSid provided (fallback)
-            logger.warn("No CallSid provided in callback data, creating new record");
-            createNewVoiceCallback(callbackData, userId);
-        }
-    }
-    
-    // Method to create initial call record when call is first initiated
-    public void createInitialCallRecord(String callSid, String fromNumber, String toNumber, String userId) {
-        logger.info("Creating initial call record for CallSid: {}", callSid);
-        
-        // Check if record already exists
-        Optional<VoiceCallback> existingCallback = voiceCallbackRepository.findByCallSid(callSid);
-        if (existingCallback.isPresent()) {
-            logger.info("Initial record already exists for CallSid: {}", callSid);
-            return;
-        }
-        
-        // Create initial record with basic information
-        VoiceCallback initialCallback = new VoiceCallback();
-        initialCallback.setCallSid(callSid);
-        initialCallback.setFromNumber(fromNumber);
-        initialCallback.setToNumber(toNumber != null ? toNumber.replaceAll("\\D", "") : "");
-        initialCallback.setUserId(userId);
-        initialCallback.setStatus("initiated"); // Initial status
-        initialCallback.setDateCreated(java.time.Instant.now().toString());
-        initialCallback.setDateUpdated(java.time.Instant.now().toString());
-        
-        voiceCallbackRepository.save(initialCallback);
-        logger.info("Created initial call record for CallSid: {}", callSid);
-    }
-    
-    // Method to create initial record from callback data (when no initial record exists)
-    private void createInitialRecordFromCallback(Map<String, String> callbackData, String userId) {
-        String callSid = callbackData.get("CallSid");
-        logger.info("Creating initial record from callback data for CallSid: {}", callSid);
-        
-        String toNumber = callbackData.get("To");
-        String cleanToNumber = (toNumber != null) ? toNumber.replaceAll("\\D", "") : "";
-        
-        VoiceCallback callback = new VoiceCallback();
-        callback.setUserId(userId);
-        callback.setSid(cleanValue(callbackData.get("Sid")));
-        callback.setParentCallSid(cleanValue(callbackData.get("ParentCallSid")));
-        callback.setDateCreated(cleanValue(callbackData.get("DateCreated")));
-        callback.setDateUpdated(cleanValue(callbackData.get("DateUpdated")));
-        callback.setAccountSid(cleanValue(callbackData.get("AccountSid")));
-        callback.setToNumber(cleanToNumber);
-        callback.setFromNumber(cleanValue(callbackData.get("From")));
-        callback.setPhoneNumberSid(cleanValue(callbackData.get("PhoneNumberSid")));
-        callback.setStartTime(cleanValue(callbackData.get("StartTime")));
-        callback.setEndTime(cleanValue(callbackData.get("EndTime")));
-        callback.setDuration(cleanValue(callbackData.get("Duration")));
-        callback.setPrice(cleanValue(callbackData.get("Price")));
-        callback.setDirection(cleanValue(callbackData.get("Direction")));
-        callback.setAnsweredBy(cleanValue(callbackData.get("AnsweredBy")));
-        callback.setForwardedFrom(cleanValue(callbackData.get("ForwardedFrom")));
-        callback.setCallerName(cleanValue(callbackData.get("CallerName")));
-        callback.setUri(cleanValue(callbackData.get("Uri")));
-        callback.setRecordingUrl(cleanValue(callbackData.get("RecordingUrl")));
-        callback.setCallSid(callSid); // Use the original CallSid
-        callback.setStatus(cleanValue(callbackData.get("Status")));
-        
-        voiceCallbackRepository.save(callback);
-        logger.info("Created initial record from callback for CallSid: {}", callSid);
-    }
-    
-    // Helper method to create new voice callback
-    private void createNewVoiceCallback(Map<String, String> callbackData, String userId) {
-        String toNumber = callbackData.get("To");
-        String cleanToNumber = (toNumber != null) ? toNumber.replaceAll("\\D", "") : "";
-        
-        VoiceCallback callback = new VoiceCallback(
-            userId,
-            cleanValue(callbackData.get("Sid")),
-            cleanValue(callbackData.get("ParentCallSid")),
-            cleanValue(callbackData.get("DateCreated")),
-            cleanValue(callbackData.get("DateUpdated")),
-            cleanValue(callbackData.get("AccountSid")),
-            cleanToNumber,
-            cleanValue(callbackData.get("From")),
-            cleanValue(callbackData.get("PhoneNumberSid")),
-            cleanValue(callbackData.get("StartTime")),
-            cleanValue(callbackData.get("EndTime")),
-            cleanValue(callbackData.get("Duration")),
-            cleanValue(callbackData.get("Price")),
-            cleanValue(callbackData.get("Direction")),
-            cleanValue(callbackData.get("AnsweredBy")),
-            cleanValue(callbackData.get("ForwardedFrom")),
-            cleanValue(callbackData.get("CallerName")),
-            cleanValue(callbackData.get("Uri")),
-            cleanValue(callbackData.get("RecordingUrl")),
-            cleanValue(callbackData.get("CallSid")),
-            cleanValue(callbackData.get("Status"))
-        );
-        
-        voiceCallbackRepository.save(callback);
-    }
-    
     // Helper method to clean values (remove array brackets)
     private String cleanValue(String value) {
         if (value == null) return "";
         return value.replaceAll("^\\['|'\\]$", "");
     }
     
-    // @Tool(name = "checkCallRecord", description = "Check if a call record exists by CallSid and optionally create initial record")
-    // public String checkCallRecord(String callSid, String userId, boolean createIfMissing) {
-    //     logger.info("Checking call record for CallSid: {}", callSid);
-        
-    //     Optional<VoiceCallback> existingCallback = voiceCallbackRepository.findByCallSid(callSid);
-        
-    //     if (existingCallback.isPresent()) {
-    //         VoiceCallback callback = existingCallback.get();
-    //         return String.format("Record found for CallSid: %s, Status: %s, Created: %s, Updated: %s", 
-    //             callSid, callback.getStatus(), callback.getDateCreated(), callback.getDateUpdated());
-    //     } else {
-    //         if (createIfMissing) {
-    //             createInitialCallRecord(callSid, "", "", userId);
-    //             return String.format("No record found for CallSid: %s. Created initial record.", callSid);
-    //         } else {
-    //             return String.format("No record found for CallSid: %s", callSid);
-    //         }
-    //     }
-    // }
-    
-    // @Tool(name = "getRecentVoiceCallbacks", description = "Get recent voice callbacks for debugging (limited to 10 records)")
-    // public String getRecentVoiceCallbacks() {
-    //     List<VoiceCallback> allCallbacks = voiceCallbackRepository.findAll();
-    //     StringBuilder result = new StringBuilder();
-    //     result.append("Total records: ").append(allCallbacks.size()).append("\n");
-    //     result.append("Showing last 10 records:\n\n");
-        
-    //     // Limit to last 10 records to prevent buffer overflow
-    //     int startIndex = Math.max(0, allCallbacks.size() - 10);
-    //     List<VoiceCallback> recentCallbacks = allCallbacks.subList(startIndex, allCallbacks.size());
-        
-    //     for (VoiceCallback callback : recentCallbacks) {
-    //         result.append(String.format("CallSid: %s, Status: %s, From: %s, To: %s, Updated: %s\n",
-    //             callback.getCallSid(), callback.getStatus(), callback.getFromNumber(), 
-    //             callback.getToNumber(), callback.getDateUpdated()));
-    //     }
-        
-    //     return result.toString();
-    // }
-    
-    // @Tool(name = "getVoiceCallbackStats", description = "Count voice callbacks by status")
-    // public String getVoiceCallbackStats() {
-    //     List<VoiceCallback> allCallbacks = voiceCallbackRepository.findAll();
-    //     Map<String, Integer> statusCounts = new HashMap<>();
-        
-    //     for (VoiceCallback callback : allCallbacks) {
-    //         String status = callback.getStatus() != null ? callback.getStatus() : "unknown";
-    //         statusCounts.put(status, statusCounts.getOrDefault(status, 0) + 1);
-    //     }
-        
-    //     StringBuilder result = new StringBuilder();
-    //     result.append("Voice Callback Statistics:\n");
-    //     result.append("Total records: ").append(allCallbacks.size()).append("\n\n");
-    //     result.append("Status breakdown:\n");
-        
-    //     for (Map.Entry<String, Integer> entry : statusCounts.entrySet()) {
-    //         result.append(String.format("- %s: %d\n", entry.getKey(), entry.getValue()));
-    //     }
-        
-    //     return result.toString();
-    // }
-    
-    @Tool(name = "exotel_voice_search_callbacks_by_number", description = "Search voice callbacks by phone number in BOTH to_number OR from_number with user_id security (limited results)")
+    @Tool(name = "exotel_voice_search_callbacks_by_number", description = "Search your account's voice calls by phone number in BOTH To OR From, read live from Exotel (limited results)")
     public String searchVoiceCallbacksByNumber(String phoneNumber) {
         if (phoneNumber == null || phoneNumber.trim().isEmpty()) {
             return "Error: Phone number is required";
         }
         
         try {
-            String authHeader = getCurrentAuthHeader();
-            AuthData authData = parseAuthHeader(authHeader);
-            String formattedNumber = formatPhoneNumberForQuery(phoneNumber);
-            String userId = authData.tokenMd5();
-            
-            logger.info("Enhanced voice search: original='{}' -> formatted='{}', user_id='{}'", phoneNumber, formattedNumber, userId);
-            
-            // Use enhanced search that looks in BOTH to_number OR from_number with user_id security
-            List<VoiceCallback> callbacks = voiceCallbackRepository.findByPhoneNumberInToOrFromAndUserId(formattedNumber, userId);
+            AuthData authData = parseAuthHeader(getCurrentAuthHeader());
+            String formattedNumber = formatSearchNumber(phoneNumber);
+            List<Map<String, Object>> calls = fetchCalls(authData, formattedNumber, "To", "From");
         
             StringBuilder result = new StringBuilder();
-            result.append("Enhanced Search Results for Phone Number: ").append(phoneNumber).append("\n");
+            result.append("Search Results for Phone Number: ").append(phoneNumber).append("\n");
             result.append("Formatted Number: ").append(formattedNumber).append("\n");
-            result.append("Search Type: to_number OR from_number with user_id security\n");
-            result.append("Found ").append(callbacks.size()).append(" records\n\n");
-            
-            if (callbacks.isEmpty()) {
-                result.append("No voice callbacks found for this phone number.\n");
-                result.append("This could mean:\n");
-                result.append("- No calls made to/from this number with your auth token\n");
-                result.append("- Phone number format mismatch\n");
-                result.append("- Use debugVoiceCallbackQuery('").append(phoneNumber).append("') for detailed analysis\n");
+            result.append("Search Type: To OR From, live from Exotel for your account\n");
+            result.append("Found ").append(calls.size()).append(" records\n\n");
+
+            if (calls.isEmpty()) {
+                result.append("No voice calls found for this phone number.\n");
                 return result.toString();
             }
             
             // Limit to 5 records to prevent buffer overflow
-            int limit = Math.min(5, callbacks.size());
+            int limit = Math.min(5, calls.size());
             for (int i = 0; i < limit; i++) {
-                VoiceCallback callback = callbacks.get(i);
-                String direction = formattedNumber.equals(callback.getToNumber()) ? "OUTGOING" : "INCOMING";
+                Map<String, Object> call = calls.get(i);
+                String direction = formattedNumber.equals(call.get("To")) ? "OUTGOING" : "INCOMING";
+                Object recording = call.get("RecordingUrl");
                 
                 result.append(String.format("=== Record %d (%s Call) ===\n", i+1, direction));
-                result.append(String.format("CallSid: %s\n", callback.getCallSid()));
-                result.append(String.format("Status: %s\n", callback.getStatus()));
-                result.append(String.format("From: %s\n", callback.getFromNumber()));
-                result.append(String.format("To: %s\n", callback.getToNumber()));
-                result.append(String.format("Date: %s\n", callback.getDateUpdated()));
+                result.append(String.format("CallSid: %s\n", call.get("Sid")));
+                result.append(String.format("Status: %s\n", call.get("Status")));
+                result.append(String.format("From: %s\n", call.get("From")));
+                result.append(String.format("To: %s\n", call.get("To")));
+                result.append(String.format("Date: %s\n", call.get("DateUpdated")));
                 result.append(String.format("Recording: %s\n", 
-                    callback.getRecordingUrl() != null ? "Available" : "Not available"));
+                    recording != null && !String.valueOf(recording).isEmpty() ? "Available" : "Not available"));
                 result.append("\n");
             }
             
-            if (callbacks.size() > 5) {
-                result.append("... and ").append(callbacks.size() - 5).append(" more records\n");
-                result.append("Use getVoiceCallCallbacks('").append(phoneNumber).append("') for complete list\n");
+            if (calls.size() > 5) {
+                result.append("... and ").append(calls.size() - 5).append(" more records\n");
+                result.append("Use exotel_voice_get_call_status_callbacks('").append(phoneNumber).append("') for complete list\n");
             }
             
             return result.toString();
@@ -1694,65 +1316,74 @@ public class ExotelService {
         }
     }
     
-    @Tool(name = "exotel_voice_get_single_call_details", description = "Get detailed information for a specific CallSid")
+    @Tool(name = "exotel_voice_get_single_call_details", description = "Get detailed information for a specific CallSid in your account, read live from Exotel")
     public String getCallDetails(String callSid) {
         if (callSid == null || callSid.trim().isEmpty()) {
             return "Error: CallSid is required";
         }
         
-        Optional<VoiceCallback> callbackOpt = voiceCallbackRepository.findByCallSid(callSid);
-        if (!callbackOpt.isPresent()) {
+        JsonNode call;
+        try {
+            ExotelHostGuard.requireSafeId("callSid", callSid);
+            AuthData authData = parseAuthHeader(getCurrentAuthHeader());
+            String url = authData.apiDomain() + "/v1/Accounts/" + authData.accountSid() + "/Calls/" + callSid + ".json";
+            String response;
+            try {
+                response = makeGetRequest(url, authData);
+            } catch (IllegalArgumentException e) {
+                // Exotel answers 404 (or 400) for a CallSid that is not in the caller's account; other 4xx are real errors
+                String message = String.valueOf(e.getMessage());
+                if (message.contains("HTTP 404") || message.contains("HTTP 400")) {
+                    return "No record found for CallSid: " + callSid;
+                }
+                return "Error: " + message;
+            }
+            call = objectMapper.readTree(response).path("Call");
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+        if (call.isMissingNode() || call.isNull()) {
             return "No record found for CallSid: " + callSid;
         }
         
-        VoiceCallback callback = callbackOpt.get();
         StringBuilder result = new StringBuilder();
         result.append("Call Details for CallSid: ").append(callSid).append("\n");
         result.append("=====================================\n");
-        result.append("Status: ").append(callback.getStatus()).append("\n");
-        result.append("From Number: ").append(callback.getFromNumber()).append("\n");
-        result.append("To Number: ").append(callback.getToNumber()).append("\n");
-        result.append("Start Time: ").append(callback.getStartTime()).append("\n");
-        result.append("End Time: ").append(callback.getEndTime()).append("\n");
-        result.append("Duration: ").append(callback.getDuration()).append("\n");
-        result.append("Direction: ").append(callback.getDirection()).append("\n");
-        result.append("Answered By: ").append(callback.getAnsweredBy()).append("\n");
-        result.append("Date Created: ").append(callback.getDateCreated()).append("\n");
-        result.append("Date Updated: ").append(callback.getDateUpdated()).append("\n");
-        result.append("Recording URL: ").append(callback.getRecordingUrl() != null ? callback.getRecordingUrl() : "Not available").append("\n");
-        result.append("Price: ").append(callback.getPrice()).append("\n");
+        result.append("Status: ").append(call.path("Status").asText()).append("\n");
+        result.append("From Number: ").append(call.path("From").asText()).append("\n");
+        result.append("To Number: ").append(call.path("To").asText()).append("\n");
+        result.append("Start Time: ").append(call.path("StartTime").asText()).append("\n");
+        result.append("End Time: ").append(call.path("EndTime").asText()).append("\n");
+        result.append("Duration: ").append(call.path("Duration").asText()).append("\n");
+        result.append("Direction: ").append(call.path("Direction").asText()).append("\n");
+        result.append("Answered By: ").append(call.path("AnsweredBy").asText()).append("\n");
+        result.append("Date Created: ").append(call.path("DateCreated").asText()).append("\n");
+        result.append("Date Updated: ").append(call.path("DateUpdated").asText()).append("\n");
+        String recording = call.path("RecordingUrl").asText();
+        result.append("Recording URL: ").append(recording.isEmpty() || "null".equals(recording) ? "Not available" : recording).append("\n");
+        result.append("Price: ").append(call.path("Price").asText()).append("\n");
         
         return result.toString();
     }
     
-    // Public method to get voice callbacks by from number with user_id security (for controller)
+    // Public method to get the caller's calls from a number, read live from Exotel (for controller)
     public Map<String, Object> getCallFlowCallbacks(String fromNumber) {
-        logger.info("Fetching call flow callbacks for from_number: {}", fromNumber);
         try {
-            String authHeader = getCurrentAuthHeader();
-            AuthData authData = parseAuthHeader(authHeader);
-            String formattedNumber = formatPhoneNumberForQuery(fromNumber);
-            String userId = authData.tokenMd5();
-            
-            logger.info("Call flow search: formatted from_number='{}', user_id='{}'", formattedNumber, userId);
-            
-            // Use enhanced search with user_id security for from_number
-            var callbacks = voiceCallbackRepository.findByFromNumberAndUserId(formattedNumber, userId);
+            AuthData authData = parseAuthHeader(getCurrentAuthHeader());
+            String formattedNumber = formatSearchNumber(fromNumber);
+            List<Map<String, Object>> calls = fetchCalls(authData, formattedNumber, "From");
             
             Map<String, Object> result = new HashMap<>();
-            result.put("status_data", callbacks);
+            result.put("status_data", calls);
             result.put("search_info", Map.of(
                 "from_number", fromNumber,
                 "formatted_number", formattedNumber,
-                "user_id", userId,
-                "records_found", callbacks.size(),
-                "search_type", "Call flow: from_number with user_id security"
+                "records_found", calls.size(),
+                "search_type", "Live: Exotel Calls API, From, your account"
             ));
-            
-            logger.info("Call flow data: {} records found", callbacks.size());
             return result;
         } catch (Exception e) {
-            logger.error("Database error in getCallFlowCallbacks: {}", e.getMessage());
+            logger.error("Error in getCallFlowCallbacks: {}", e.getMessage());
             Map<String, Object> error = new HashMap<>();
             error.put("status_data", "Not found because " + e.getMessage());
             error.put("error_details", e.getClass().getSimpleName() + ": " + e.getMessage());

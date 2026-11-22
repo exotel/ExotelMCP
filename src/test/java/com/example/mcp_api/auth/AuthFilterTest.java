@@ -320,14 +320,20 @@ class AuthFilterTest {
 
     @Test
     void exotelCallbacksAndPreflightSkipAuth() throws Exception {
-        for (String uri : new String[] {"/sms-status-callback/id1/abc", "/call-status/id1/abc"}) {
-            MockFilterChain chain = new MockFilterChain();
-            assertEquals(200, call("POST", uri, null, chain).getStatus(), uri);
-            assertTrue(passed(chain), uri);
-        }
         MockFilterChain chain = new MockFilterChain();
+        assertEquals(200, call("POST", "/sms-status-callback/id1/abc", null, chain).getStatus());
+        assertTrue(passed(chain));
+        chain = new MockFilterChain();
         assertEquals(200, call("OPTIONS", "/mcp", null, chain).getStatus());
         assertTrue(passed(chain));
+    }
+
+    @Test
+    void callStatusCallbackIsNoLongerPublic() throws Exception {
+        // VO-6235: call status is read live from Exotel; nothing may post call records without credentials
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(401, call("POST", "/call-status/id1/abc", null, chain).getStatus());
+        assertFalse(passed(chain));
     }
 
     @Test
@@ -343,9 +349,8 @@ class AuthFilterTest {
 
     @Test
     void callbackShapeAndMethodAreExact() throws Exception {
-        for (String[] c : new String[][] {{"GET", "/call-status/id1/abc"}, {"POST", "/call-status/id1"},
-                {"POST", "/call-status/id1/abc/extra"}, {"POST", "/call-status/"}, {"POST", "/mcp"},
-                {"GET", "/sms-status-callback/id1/abc"}}) {
+        for (String[] c : new String[][] {{"GET", "/sms-status-callback/id1/abc"}, {"POST", "/sms-status-callback/id1"},
+                {"POST", "/sms-status-callback/id1/abc/extra"}, {"POST", "/sms-status-callback/"}, {"POST", "/mcp"}}) {
             MockFilterChain chain = new MockFilterChain();
             assertEquals(401, call(c[0], c[1], null, chain).getStatus(), c[0] + " " + c[1]);
             assertFalse(passed(chain), c[0] + " " + c[1]);
@@ -354,7 +359,7 @@ class AuthFilterTest {
 
     @Test
     void publicDecisionUsesContainerResolvedPath() throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/call-status/id1/abc");
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/sms-status-callback/id1/abc");
         request.setServletPath("/mcp");
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = new MockHttpServletResponse();

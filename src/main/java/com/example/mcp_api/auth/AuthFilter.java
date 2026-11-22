@@ -39,7 +39,7 @@ public class AuthFilter implements Filter {
 
     /** Exact shapes Exotel POSTs status callbacks to without an Authorization header (see ExotelController). */
     static final Pattern PUBLIC_CALLBACK_PATH =
-            Pattern.compile("^/(?:sms-status-callback|call-status)/[^/]+/[^/]+$");
+            Pattern.compile("^/sms-status-callback/[^/]+/[^/]+$");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
