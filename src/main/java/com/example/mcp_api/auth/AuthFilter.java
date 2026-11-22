@@ -10,6 +10,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.util.Locale;
 import java.util.Map;
 
@@ -21,9 +22,12 @@ import java.util.Map;
  *  - missing / unparseable header (401)
  *  - empty or sample-placeholder values, and values that fail ExotelHostGuard (hosts not on
  *    exotel.com, unsafe ids) (400)
- *  - incomplete credential sets, sets that Exotel rejects, and headers where no set could be verified
- *    by a real probe (401); the message names the set, never a value
- *  - if Exotel cannot be reached to verify a set (503)
+ *  - incomplete credential sets and headers where no set could be verified by a real probe (401; the
+ *    message names the set, never a value), and sets that Exotel rejects (401 with a generic message, so
+ *    the server is no oracle for which set is valid; the set is logged)
+ *  - if Exotel cannot be reached to verify a set (503, generic message)
+ *  - too many live credential checks from one client or in total, or in one request (429 with
+ *    Retry-After); see ExotelCredentialVerifier and {@link #clientKey} (MSG-2807)
  *
  * Requests whose raw path contains traversal or ambiguity markers (.., ;, //, \\, %2e, %2f, %5c) are
  * rejected with 400 before anything else. There are no public callback paths (MSG-2804, VO-6235:
@@ -85,7 +89,7 @@ public class AuthFilter implements Filter {
 
             ExotelCredentialVerifier.Result result;
             try {
-                result = verifier.verify(credentials);
+                result = verifier.verify(credentials, clientKey(httpRequest));
             } catch (ExotelHostGuard.InvalidCredentialException e) {
                 reject(httpRequest, httpResponse, HttpServletResponse.SC_BAD_REQUEST,
                         "invalid_credentials", e.getMessage());
@@ -94,6 +98,11 @@ public class AuthFilter implements Filter {
             if (result.outcome() == ExotelCredentialVerifier.Outcome.REJECTED) {
                 reject(httpRequest, httpResponse, HttpServletResponse.SC_UNAUTHORIZED,
                         "unauthorized", result.message());
+                return;
+            }
+            if (result.outcome() == ExotelCredentialVerifier.Outcome.THROTTLED) {
+                httpResponse.setHeader("Retry-After", Long.toString(Math.max(1, result.retryAfterSeconds())));
+                reject(httpRequest, httpResponse, 429, "too_many_requests", result.message());
                 return;
             }
             if (result.outcome() == ExotelCredentialVerifier.Outcome.UNAVAILABLE) {
@@ -108,6 +117,47 @@ public class AuthFilter implements Filter {
         }
 
         chain.doFilter(request, response);
+    }
+
+    /**
+     * The key for the per-client verification bucket (MSG-2807). The server sits behind mcp-alb, which appends
+     * the address it saw to X-Forwarded-For, so only the LAST entry is trusted, and only when the TCP peer is
+     * a private or loopback address (the ALB inside the VPC). Earlier entries are whatever the caller sent.
+     * A request from a public peer (no ALB in front) is keyed on the peer itself and its X-Forwarded-For is
+     * ignored. Several X-Forwarded-For header lines are read as one list, so a caller cannot hide its own
+     * line in front of the ALB's. Spring's forward-headers-strategy is not used, because it would also
+     * rewrite scheme and host for every controller.
+     */
+    static String clientKey(HttpServletRequest request) {
+        String peer = request.getRemoteAddr();
+        if (!isPrivatePeer(peer)) return peer;
+        String last = "";
+        java.util.Enumeration<String> lines = request.getHeaders("X-Forwarded-For");
+        while (lines != null && lines.hasMoreElements()) {
+            String line = lines.nextElement();
+            if (line == null) continue;
+            for (String hop : line.split(",")) {
+                if (!hop.isBlank()) last = hop.trim();
+            }
+        }
+        return last.isEmpty() ? peer : last;
+    }
+
+    /**
+     * Private IP literal: RFC 1918 (site-local), loopback, shared address space 100.64.0.0/10 and IPv6
+     * unique-local fc00::/7. Never resolves a name: only IP literals are accepted.
+     */
+    private static boolean isPrivatePeer(String peer) {
+        if (peer == null || peer.isBlank() || !peer.matches("[0-9a-fA-F:.]+")) return false;
+        try {
+            InetAddress address = InetAddress.getByName(peer);
+            byte[] b = address.getAddress();
+            boolean sharedSpace = b.length == 4 && (b[0] & 0xff) == 100 && (b[1] & 0xc0) == 64;
+            boolean uniqueLocal = b.length == 16 && (b[0] & 0xfe) == 0xfc;
+            return address.isSiteLocalAddress() || address.isLoopbackAddress() || sharedSpace || uniqueLocal;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** True if the raw request path could be resolved differently by us and by the dispatcher. */

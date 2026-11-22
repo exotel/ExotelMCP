@@ -1,5 +1,6 @@
 package com.example.mcp_api.service;
 
+import com.example.mcp_api.auth.AuthContext;
 import com.example.mcp_api.auth.ExotelHostGuard;
 import org.apache.hc.client5.http.classic.HttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
@@ -14,15 +15,12 @@ import org.apache.hc.core5.http.io.support.ClassicRequestBuilder;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.example.mcp_api.repository.SmsCallbackRepository;
 import com.example.mcp_api.entity.SmsCallback;
 import com.example.mcp_api.dto.AuthData;
 
-import jakarta.servlet.http.HttpServletRequest;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -468,7 +466,6 @@ public class ExotelService {
     // Helper method to parse authorization header
     private AuthData parseAuthHeader(String authHeader) throws Exception {
         logger.debug("=== AUTH HEADER PARSING DEBUG ===");
-        logger.debug("Raw Auth Header: {}", (authHeader));
         
         if (authHeader == null || authHeader.trim().isEmpty()) {
             logger.error("AUTH PARSING ERROR: Authorization header is null or empty");
@@ -906,7 +903,7 @@ public class ExotelService {
                 String key = fieldNames.next();
                 String value = jsonNode.get(key).asText();
                     result.put(key, value);
-                    logger.debug("Parsed key-value: {} = {}", key, "token".equals(key) ? maskTokenForLogging(value) : value);
+                    logger.debug("Parsed key: {}", key); // MSG-2807: never log credential values
             }
             
             // Store the detected auth type
@@ -914,14 +911,6 @@ public class ExotelService {
             logger.debug("Auth type detected: {}", authType);
             
             logger.debug("Successfully parsed {} fields using JSON parser", result.size());
-            
-            // Log all parsed parameters for verification
-            if (!result.isEmpty()) {
-                logger.debug("Parsed parameters:");
-                result.forEach((key, value) -> {
-                    logger.debug("  {} = {}", key, "token".equals(key) ? maskTokenForLogging(value) : value);
-                });
-            }
             
             // If parsing failed, try basic authorization header
             if (result.isEmpty() && authHeader.startsWith("Basic ")) {
@@ -952,7 +941,9 @@ public class ExotelService {
             logger.debug("Final parsed result contains {} keys: {}", result.size(), result.keySet());
             
         } catch (Exception e) {
-            logger.warn("AUTH PARSING ERROR: Failed to parse auth header: {}, using fallback defaults", e.getMessage());
+            // MSG-2807: the parser's message can quote part of the header, so only its type is logged.
+            logger.warn("AUTH PARSING ERROR: Failed to parse auth header ({}), using fallback defaults",
+                    e.getClass().getSimpleName());
             // Fallback: use the header as token
             result.put("token", authHeader != null ? authHeader : "default_token");
             result.put("from_number", "default_from");
@@ -966,96 +957,14 @@ public class ExotelService {
         return result;
     }
     
-    // Session-based auth storage for MCP context
-    private final Map<String, String> sessionAuthHeaders = new HashMap<>();
-    private volatile String lastKnownAuthHeader = null;
-    
-    // Helper method to get current authorization header from request
+    /**
+     * The caller's Authorization header, taken only from the credentials AuthFilter verified for this
+     * request (MSG-2807). Null when there is no request context or the request was not verified, so
+     * parseAuthHeader fails with "Authorization header is required". Nothing is stored between requests,
+     * and no servlet session is created.
+     */
     private String getCurrentAuthHeader() {
-        String sessionId = getCurrentSessionId();
-        logger.debug("=== AUTH HEADER RETRIEVAL DEBUG ===");
-        logger.debug("Getting auth header for session: {}", sessionId);
-        logger.debug("Current session auth headers stored: {}", sessionAuthHeaders.keySet());
-        logger.debug("Last known auth header exists: {}", lastKnownAuthHeader != null ? "YES" : "NO");
-        
-        try {
-            // Try to get from HTTP request context first
-            ServletRequestAttributes requestAttributes = (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
-            HttpServletRequest request = requestAttributes.getRequest();
-            String authHeader = request.getHeader("Authorization");
-            
-            logger.debug("HTTP Request context available - checking Authorization header");
-            logger.debug("Authorization header present: {}", authHeader != null ? "YES" : "NO");
-            
-            if (authHeader != null && !authHeader.trim().isEmpty()) {
-                logger.debug("Found Authorization header in HTTP request: {} (Session: {})", 
-                           maskAuthHeader(authHeader), sessionId);
-                // Store for this session
-                sessionAuthHeaders.put(sessionId, authHeader);
-                lastKnownAuthHeader = authHeader;
-                logger.debug("Stored auth header for session and updated lastKnownAuthHeader");
-                return authHeader;
-            } else {
-                logger.warn("AUTH RETRIEVAL WARNING: No Authorization header found in HTTP request (Session: {})", sessionId);
-            }
-        } catch (Exception e) {
-            logger.debug("No HTTP request context available (likely MCP call), checking session storage (Session: {}). Exception: {}", sessionId, e.getMessage());
-        }
-        
-        // Try to get from session storage
-        String storedAuthHeader = sessionAuthHeaders.get(sessionId);
-        logger.debug("Checking session storage for sessionId: {} -> Found: {}", sessionId, storedAuthHeader != null ? "YES" : "NO");
-        
-        if (storedAuthHeader != null) {
-            logger.debug("Using stored Authorization header for session: {} -> {}", 
-                       sessionId, maskAuthHeader(storedAuthHeader));
-            return storedAuthHeader;
-        }
-        
-        // Try alternative MCP session patterns
-        if (sessionId.startsWith("MCP-")) {
-            // Try global MCP key first
-            String globalMcpAuth = sessionAuthHeaders.get("MCP-GLOBAL");
-            if (globalMcpAuth != null) {
-                logger.info("Using global MCP auth for session: {}", sessionId);
-                return globalMcpAuth;
-            }
-            
-            // Try different thread-based patterns
-            for (String key : sessionAuthHeaders.keySet()) {
-                if (key.startsWith("MCP-")) {
-                    logger.info("Found alternative MCP session auth: {} for requested session: {}", 
-                               key, sessionId);
-                    return sessionAuthHeaders.get(key);
-                }
-            }
-        }
-        
-        // Try last known auth header
-        if (lastKnownAuthHeader != null) {
-            logger.info("Using last known Authorization header for session: {} -> {}", 
-                       sessionId, maskAuthHeader(lastKnownAuthHeader));
-            return lastKnownAuthHeader;
-        }
-        
-        logger.warn("No Authorization header available for session: {}, using default", sessionId);
-        return "default_auth_header";
-    }
-    
-    // Helper method to get current session ID
-    private String getCurrentSessionId() {
-        try {
-            ServletRequestAttributes requestAttributes = (ServletRequestAttributes) RequestContextHolder.currentRequestAttributes();
-            HttpServletRequest request = requestAttributes.getRequest();
-            String sessionId = request.getSession().getId();
-            logger.debug("HTTP Session ID: {}", sessionId);
-            return sessionId;
-        } catch (Exception e) {
-            // In MCP context, use thread name as session identifier
-            String threadSession = "MCP-" + Thread.currentThread().getId();
-            logger.debug("MCP Thread Session: {}", threadSession);
-            return threadSession;
-        }
+        return AuthContext.current().getRawHeader();
     }
     
     // Helper method to mask auth header for logging
@@ -1078,52 +987,6 @@ public class ExotelService {
             return "***";
         }
         return token.substring(0, 6) + "***" + token.substring(token.length() - 4);
-    }
-    
-    // Helper method to get auth header for MCP calls
-    private String getAuthHeaderForMCP(String authToken) {
-        String sessionId = getCurrentSessionId();
-        logger.info("Getting auth header for MCP call (Session: {})", sessionId);
-        
-        if (authToken != null && !authToken.trim().isEmpty() && !authToken.equals("null")) {
-            logger.info("Using provided auth token for MCP call: {} (Session: {})", 
-                       maskAuthHeader(authToken), sessionId);
-            // Store this token for future use
-            sessionAuthHeaders.put(sessionId, authToken);
-            lastKnownAuthHeader = authToken;
-            return authToken;
-        }
-        
-        // Try fallback to existing logic
-        return getCurrentAuthHeader();
-    }
-    
-    // Public method to set auth header for session (for controller use)
-    public void setAuthHeaderForSession(String authHeader) {
-        String sessionId = getCurrentSessionId();
-        logger.debug("=== SETTING AUTH HEADER FOR SESSION DEBUG ===");
-        logger.debug("Setting Authorization header for session: {} -> {}", 
-                   sessionId, maskAuthHeader(authHeader));
-        logger.debug("Auth header length: {}", authHeader != null ? authHeader.length() : 0);
-        logger.debug("Session storage before: {}", sessionAuthHeaders.keySet());
-        
-        sessionAuthHeaders.put(sessionId, authHeader);
-        lastKnownAuthHeader = authHeader;
-        logger.debug("Updated lastKnownAuthHeader");
-        
-        // Also store with persistent MCP session key for thread-based sessions
-        String mcpSessionKey = "MCP-" + Thread.currentThread().getId();
-        sessionAuthHeaders.put(mcpSessionKey, authHeader);
-        logger.debug("Also storing auth header for MCP session key: {}", mcpSessionKey);
-        logger.debug("Session storage after: {}", sessionAuthHeaders.keySet());
-    }
-    
-    // Public method to set auth header for specific session key
-    public void setAuthHeaderForSessionKey(String sessionKey, String authHeader) {
-        logger.info("Setting Authorization header for session key: {} -> {}", 
-                   sessionKey, maskAuthHeader(authHeader));
-        sessionAuthHeaders.put(sessionKey, authHeader);
-        lastKnownAuthHeader = authHeader;
     }
     
     // Method to save initial SMS callback from SMS response

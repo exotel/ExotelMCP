@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.UnaryOperator;
@@ -60,15 +62,71 @@ import java.util.function.UnaryOperator;
  * CEC-1442) and AI Assist with only Auth0 client credentials (the bearer is minted from an external token
  * endpoint). They never count towards login and do not block a request that has another verified set
  * (MSG-2805).
+ *
+ * Throttling (MSG-2807): every live probe (a cache miss) costs one token from the caller's bucket and one
+ * from a global bucket, and one request may make at most {@code maxProbesPerRequest} probes. Over either
+ * limit the result is THROTTLED with a Retry-After and no probe is made; a retry continues from the cache.
+ * Cached results cost nothing, so a caller whose credentials are cached is never throttled. Concurrent
+ * checks of the same cache key share one probe (single-flight). The REJECTED and UNAVAILABLE messages
+ * returned to the caller are generic, so the server cannot be used to learn which of several credential
+ * sets Exotel accepts; the set is logged and kept in {@link Result#detail()}.
  */
 @Component
 public class ExotelCredentialVerifier {
 
-    public enum Outcome { VALID, REJECTED, UNAVAILABLE }
+    public enum Outcome { VALID, REJECTED, UNAVAILABLE, THROTTLED }
 
-    /** Result of checking a whole header: the outcome and, unless VALID, a message naming the set(s) at fault. */
-    public record Result(Outcome outcome, String message) {
-        static final Result VALID = new Result(Outcome.VALID, null);
+    /** Shown to the caller when Exotel rejected a set; deliberately does not say which set (MSG-2807). */
+    static final String REJECTED_MESSAGE = "The credentials in the Authorization header were not accepted. "
+            + "Check each credential set you supplied.";
+    static final String UNAVAILABLE_MESSAGE = "The credentials could not be verified right now; retry shortly";
+    static final String THROTTLED_MESSAGE = "Too many credential checks; retry after the number of seconds in Retry-After";
+
+    /**
+     * Result of checking a whole header. {@code message} is safe to return to the caller; {@code detail}
+     * names the set at fault and is for logs and tests only. {@code retryAfterSeconds} is set for THROTTLED.
+     */
+    public record Result(Outcome outcome, String message, String detail, long retryAfterSeconds) {
+        static final Result VALID = new Result(Outcome.VALID, null, null, 0);
+    }
+
+    /** Verification limits (MSG-2807). Refill rates are tokens per minute. */
+    public record Limits(int clientCapacity, int clientRefillPerMinute, int globalCapacity, int globalRefillPerMinute,
+                         int maxProbesPerRequest) {
+        public static final Limits DEFAULTS = new Limits(20, 10, 100, 300, 6);
+
+        public Limits {
+            if (maxProbesPerRequest < 1) throw new IllegalArgumentException("maxProbesPerRequest must be at least 1");
+        }
+    }
+
+    /** Thrown inside one verification when it must stop: probe cap reached or a bucket is empty. */
+    private static final class Throttled extends RuntimeException {
+        final long retryAfterSeconds;
+
+        Throttled(long retryAfterSeconds, String reason) {
+            super(reason, null, false, false);
+            this.retryAfterSeconds = retryAfterSeconds;
+        }
+    }
+
+    /** One header's verification: who is asking and how many live probes it has made. */
+    private final class Attempt {
+        final String client;
+        int probes;
+
+        Attempt(String client) {
+            this.client = client;
+        }
+
+        /** Charges one live probe against the per-request cap and the buckets, or throws Throttled. */
+        void charge() {
+            if (++probes > limits.maxProbesPerRequest()) {
+                throw new Throttled(1, "more than " + limits.maxProbesPerRequest() + " probes in one request");
+            }
+            long waitMs = buckets.tryAcquire(client);
+            if (waitMs > 0) throw new Throttled(Math.max(1, (waitMs + 999) / 1000), "rate limit");
+        }
     }
 
     /** Status code and Content-Type (null if absent) of a probe response. */
@@ -111,6 +169,9 @@ public class ExotelCredentialVerifier {
     private final List<String> aiAssistBases;
     private final StatusProbe probe;
     private final LongSupplier clock;
+    private final Limits limits;
+    private final TokenBuckets buckets;
+    private final Map<String, CompletableFuture<Outcome>> inFlight = new ConcurrentHashMap<>();
     private final Map<String, CacheEntry> cache = new LinkedHashMap<>(256, 0.75f, false) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, CacheEntry> eldest) {
@@ -131,20 +192,38 @@ public class ExotelCredentialVerifier {
             @Value("${exotel.auth.verify.admin.api.bases:}") String adminBases,
             @Value("${exotel.auth.verify.tools.server.api.bases:${exotel.tools.server.base.url:" + DEFAULT_TOOLS_SERVER_BASE_URL + "}}")
             String toolsServerBases,
-            @Value("${exotel.auth.verify.ai.assist.api.bases:" + DEFAULT_AI_ASSIST_BASE_URL + "}") String aiAssistBases) {
+            @Value("${exotel.auth.verify.ai.assist.api.bases:" + DEFAULT_AI_ASSIST_BASE_URL + "}") String aiAssistBases,
+            @Value("${exotel.auth.ratelimit.client.capacity:20}") int clientCapacity,
+            @Value("${exotel.auth.ratelimit.client.refill-per-minute:10}") int clientRefillPerMinute,
+            @Value("${exotel.auth.ratelimit.global.capacity:100}") int globalCapacity,
+            @Value("${exotel.auth.ratelimit.global.refill-per-minute:300}") int globalRefillPerMinute,
+            @Value("${exotel.auth.verify.max-probes-per-request:6}") int maxProbesPerRequest) {
         this(defaultApiDomain, defaultCallsBaseUrl, voicebotBases, adminBases, toolsServerBases, aiAssistBases,
-                httpProbe(), System::currentTimeMillis);
+                httpProbe(), System::currentTimeMillis,
+                new Limits(clientCapacity, clientRefillPerMinute, globalCapacity, globalRefillPerMinute, maxProbesPerRequest));
     }
 
     ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl,
                              StatusProbe probe, LongSupplier clock) {
+        this(defaultApiDomain, defaultCallsBaseUrl, probe, clock, Limits.DEFAULTS);
+    }
+
+    ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl,
+                             StatusProbe probe, LongSupplier clock, Limits limits) {
         this(defaultApiDomain, defaultCallsBaseUrl, DEFAULT_VOICEBOT_BASE_URL, "", DEFAULT_TOOLS_SERVER_BASE_URL,
-                DEFAULT_AI_ASSIST_BASE_URL, probe, clock);
+                DEFAULT_AI_ASSIST_BASE_URL, probe, clock, limits);
     }
 
     ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl, String voicebotBases,
                              String adminBases, String toolsServerBases, String aiAssistBases,
                              StatusProbe probe, LongSupplier clock) {
+        this(defaultApiDomain, defaultCallsBaseUrl, voicebotBases, adminBases, toolsServerBases, aiAssistBases,
+                probe, clock, Limits.DEFAULTS);
+    }
+
+    ExotelCredentialVerifier(String defaultApiDomain, String defaultCallsBaseUrl, String voicebotBases,
+                             String adminBases, String toolsServerBases, String aiAssistBases,
+                             StatusProbe probe, LongSupplier clock, Limits limits) {
         this.defaultApiDomain = defaultApiDomain;
         this.defaultCallsBaseUrl = defaultCallsBaseUrl;
         this.voicebotBases = parseBases(voicebotBases, DEFAULT_VOICEBOT_BASE_URL);
@@ -156,6 +235,9 @@ public class ExotelCredentialVerifier {
         this.aiAssistBases = parseBases(aiAssistBases, DEFAULT_AI_ASSIST_BASE_URL);
         this.probe = probe;
         this.clock = clock;
+        this.limits = limits;
+        this.buckets = new TokenBuckets(limits.clientCapacity(), limits.clientRefillPerMinute(),
+                limits.globalCapacity(), limits.globalRefillPerMinute(), clock);
     }
 
     /** Splits a comma-separated list of operator-configured bases into normalised https bases. */
@@ -249,9 +331,13 @@ public class ExotelCredentialVerifier {
      * Checks every credential set present in the header. REJECTED if a present set is incomplete, is
      * rejected by Exotel, or if no set could be verified (none present, or only unverifiable ones such as CQA).
      * UNAVAILABLE if a probe could not be completed. VALID only if every present set passed or is
-     * unverifiable and at least one set was verified. The message names the set(s), never a value.
+     * unverifiable and at least one set was verified. THROTTLED if the probe cap or a bucket ran out (MSG-2807).
+     * Shape errors (no set, incomplete set, unverifiable-only) name the set, never a value; the REJECTED and
+     * UNAVAILABLE messages from live probes are generic and the set is in {@link Result#detail()}.
+     *
+     * @param client the caller's key for the per-client bucket (the client IP, see AuthFilter.clientKey)
      */
-    public Result verify(AuthCredentials creds) {
+    public Result verify(AuthCredentials creds, String client) {
         requireKnownBaseUrls(creds);
         List<CredentialSet> present = creds.presentSets();
         if (present.isEmpty()) {
@@ -266,29 +352,42 @@ public class ExotelCredentialVerifier {
         }
         if (!incomplete.isEmpty()) return rejected(String.join(" ", incomplete));
 
+        Attempt attempt = new Attempt(client);
         Result unavailable = null;
         boolean anyVerified = false;
         List<String> unverifiable = new ArrayList<>();
-        for (CredentialSet set : present) {
-            Optional<Outcome> outcome = probeSet(set, creds);
-            if (outcome.isEmpty()) {
-                unverifiable.add(set.describe());
-                continue;
-            }
-            switch (outcome.get()) {
-                case REJECTED -> {
-                    return rejected(set.describe() + " were rejected by Exotel. Remove these fields or correct them.");
+        try {
+            for (CredentialSet set : present) {
+                Optional<Outcome> outcome = probeSet(set, creds, attempt);
+                if (outcome.isEmpty()) {
+                    unverifiable.add(set.describe());
+                    continue;
                 }
-                case UNAVAILABLE -> {
-                    if (unavailable == null) {
-                        unavailable = new Result(Outcome.UNAVAILABLE,
-                                set.describe() + " could not be verified right now; retry shortly");
+                switch (outcome.get()) {
+                    case REJECTED -> {
+                        logger.info("Credential check from {}: {} rejected by Exotel", client, set.label());
+                        return new Result(Outcome.REJECTED, REJECTED_MESSAGE,
+                                set.describe() + " were rejected by Exotel", 0);
                     }
+                    case UNAVAILABLE -> {
+                        if (unavailable == null) {
+                            unavailable = new Result(Outcome.UNAVAILABLE, UNAVAILABLE_MESSAGE,
+                                    set.describe() + " could not be verified", 0);
+                        }
+                    }
+                    case VALID -> anyVerified = true;
+                    case THROTTLED -> throw new IllegalStateException("a probe never returns THROTTLED");
                 }
-                case VALID -> anyVerified = true;
             }
+        } catch (Throttled t) {
+            // DEBUG, not WARN: a flood of throttled requests must not control the log volume.
+            logger.debug("Credential check from {} throttled: {}", client, t.getMessage());
+            return new Result(Outcome.THROTTLED, THROTTLED_MESSAGE, t.getMessage(), t.retryAfterSeconds);
         }
-        if (unavailable != null) return unavailable;
+        if (unavailable != null) {
+            logger.warn("Credential check from {}: {}", client, unavailable.detail());
+            return unavailable;
+        }
         if (!anyVerified) {
             return rejected(String.join("; ", unverifiable) + " cannot be used alone because Exotel offers no safe way to "
                     + "verify them. Add a verifiable set such as token + account_sid.");
@@ -296,37 +395,43 @@ public class ExotelCredentialVerifier {
         return Result.VALID;
     }
 
+    /** Test entry point with a fixed client key; production calls {@link #verify(AuthCredentials, String)}. */
+    Result verify(AuthCredentials creds) {
+        return verify(creds, "test");
+    }
+
+    /** Shape errors: the message names the set (never a value) and needs no probe, so it reveals nothing. */
     private static Result rejected(String message) {
-        return new Result(Outcome.REJECTED, message);
+        return new Result(Outcome.REJECTED, message, message, 0);
     }
 
     /** Probes one set. Empty means the set is unverifiable. May throw InvalidCredentialException naming a field. */
-    private Optional<Outcome> probeSet(CredentialSet set, AuthCredentials c) {
+    private Optional<Outcome> probeSet(CredentialSet set, AuthCredentials c, Attempt attempt) {
         return switch (set) {
             case CORE -> Optional.of(verifyAccount(set, "api_domain", c.getApiDomain(), defaultApiDomain,
-                    c.getAccountSid(), c.getToken()));
+                    c.getAccountSid(), c.getToken(), attempt));
             case CALLS -> Optional.of(verifyAccount(set, "calls_base_url", c.getCallsBaseUrl(), defaultCallsBaseUrl,
-                    c.getCallsAccountId(), c.callsBasicToken()));
+                    c.getCallsAccountId(), c.callsBasicToken(), attempt));
             case VOICEBOT -> {
                 String id = safeId("voicebot_account_id", c.getVoicebotAccountId());
                 yield Optional.of(probeKnownBases(set, "voicebot_base_url", "VoiceBot", c.getVoicebotBaseUrl(),
                         voicebotBases, UnaryOperator.identity(),
-                        base -> base + "/accounts/" + id + "/voicebots?limit=1", basic(c.voicebotBasicToken())));
+                        base -> base + "/accounts/" + id + "/voicebots?limit=1", basic(c.voicebotBasicToken()), attempt));
             }
             case ADMIN -> {
                 String id = safeId("voicebot_account_id", c.getVoicebotAccountId());
                 yield Optional.of(probeKnownBases(set, "voicebot_base_url", "VoiceBot Admin", c.getVoicebotBaseUrl(),
                         adminBases, ExotelCredentialVerifier::toAdminBase,
-                        base -> base + "/accounts/" + id + "/personas?limit=1", basic(c.adminBasicToken())));
+                        base -> base + "/accounts/" + id + "/personas?limit=1", basic(c.adminBasicToken()), attempt));
             }
             case TOOLS_SERVER -> {
                 String tenant = safeId("tools_server_tenant_id", c.getToolsServerTenantId());
                 yield Optional.of(probeKnownBases(set, "tools_server_base_url", "Tools Server",
                         c.getToolsServerBaseUrl(), toolsServerBases, UnaryOperator.identity(),
                         base -> base + "/tools/api/v1/tenants/" + tenant + "/tools?limit=1",
-                        basic(toolsServerBasicToken(c))));
+                        basic(toolsServerBasicToken(c)), attempt));
             }
-            case AI_ASSIST -> probeAiAssist(c);
+            case AI_ASSIST -> probeAiAssist(c, attempt);
             case CQA -> Optional.empty();
         };
     }
@@ -344,7 +449,7 @@ public class ExotelCredentialVerifier {
     }
 
     /** Uses the same auth precedence as AiAssistService: Basic, then bearer, (client credentials), plus any cookie. */
-    private Optional<Outcome> probeAiAssist(AuthCredentials c) {
+    private Optional<Outcome> probeAiAssist(AuthCredentials c, Attempt attempt) {
         Map<String, String> headers = new LinkedHashMap<>();
         if (c.aiAssistBasicHeader() != null) {
             headers.put("Authorization", c.aiAssistBasicHeader());
@@ -359,10 +464,10 @@ public class ExotelCredentialVerifier {
         String sid = safeId("ai_assist_account_sid", c.getAiAssistAccountSid());
         Function<String, String> url = base -> base + "/v1/accounts/" + sid + "/ai-assistants?limit=1";
         if (c.getAiAssistBaseUrl() == null) {
-            return Optional.of(probeFirstAccepted(CredentialSet.AI_ASSIST, aiAssistBases, url, headers));
+            return Optional.of(probeFirstAccepted(CredentialSet.AI_ASSIST, aiAssistBases, url, headers, attempt));
         }
         String candidate = aiAssistCandidateBase(c);
-        return Optional.of(probeProduct(CredentialSet.AI_ASSIST, url.apply(candidate), headers));
+        return Optional.of(probeProduct(CredentialSet.AI_ASSIST, url.apply(candidate), headers, attempt));
     }
 
     /**
@@ -372,12 +477,12 @@ public class ExotelCredentialVerifier {
      */
     private Outcome probeKnownBases(CredentialSet set, String field, String product, String callerBase,
                                     List<String> known, UnaryOperator<String> canonical,
-                                    Function<String, String> probeUrl, Map<String, String> headers) {
+                                    Function<String, String> probeUrl, Map<String, String> headers, Attempt attempt) {
         if (callerBase == null) {
-            return probeFirstAccepted(set, known, probeUrl, headers);
+            return probeFirstAccepted(set, known, probeUrl, headers, attempt);
         }
         String normalized = requireKnownBase(field, product, callerBase, known, canonical);
-        return probeProduct(set, probeUrl.apply(normalized), headers);
+        return probeProduct(set, probeUrl.apply(normalized), headers, attempt);
     }
 
     /**
@@ -385,23 +490,44 @@ public class ExotelCredentialVerifier {
      * UNAVAILABLE if none accepted and at least one could not be verified.
      */
     private Outcome probeFirstAccepted(CredentialSet set, List<String> known,
-                                       Function<String, String> probeUrl, Map<String, String> headers) {
+                                       Function<String, String> probeUrl, Map<String, String> headers,
+                                       Attempt attempt) {
         Outcome result = Outcome.REJECTED;
         for (String base : known) {
-            Outcome outcome = probeProduct(set, probeUrl.apply(base), headers);
+            Outcome outcome = probeProduct(set, probeUrl.apply(base), headers, attempt);
             if (outcome == Outcome.VALID) return Outcome.VALID;
             if (outcome == Outcome.UNAVAILABLE) result = Outcome.UNAVAILABLE;
         }
         return result;
     }
 
-    private Outcome probeProduct(CredentialSet set, String url, Map<String, String> headers) {
+    /**
+     * One probe, through the cache. A cache miss is charged to the attempt (probe cap and buckets, which may
+     * throw Throttled) and then joins any in-flight probe of the same key, so concurrent identical checks make
+     * one call to Exotel (single-flight). The leader caches the result before leaving the in-flight map.
+     */
+    private Outcome probeProduct(CredentialSet set, String url, Map<String, String> headers, Attempt attempt) {
         String key = cacheKey(set.name(), url, new TreeMap<>(headers).toString());
         Outcome cached = cacheGet(key);
         if (cached != null) return cached;
-        Outcome outcome = callExotel(set, url, headers);
-        cachePut(key, outcome);
-        return outcome;
+        attempt.charge();
+        CompletableFuture<Outcome> mine = new CompletableFuture<>();
+        CompletableFuture<Outcome> running = inFlight.putIfAbsent(key, mine);
+        if (running != null) return running.join();
+        Outcome outcome = Outcome.UNAVAILABLE;
+        try {
+            Outcome finished = cacheGet(key); // a leader may have finished between our cache check and putIfAbsent
+            if (finished != null) {
+                outcome = finished;
+            } else {
+                outcome = callExotel(set, url, headers);
+                cachePut(key, outcome);
+            }
+            return outcome;
+        } finally {
+            mine.complete(outcome);
+            inFlight.remove(key, mine);
+        }
     }
 
     /**
@@ -411,20 +537,20 @@ public class ExotelCredentialVerifier {
      * host rejects, UNAVAILABLE if none accepted and at least one could not be reached.
      */
     private Outcome verifyAccount(CredentialSet set, String field, String callerValue, String defaultUrl,
-                                  String accountSid, String basicToken) {
+                                  String accountSid, String basicToken, Attempt attempt) {
         if (callerValue != null) {
-            return verify(set, verificationBaseUrl(field, callerValue, defaultUrl), accountSid, basicToken);
+            return verify(set, verificationBaseUrl(field, callerValue, defaultUrl), accountSid, basicToken, attempt);
         }
         String key = cacheKey(set.name(), "any-host:" + defaultUrl, accountSid, basicToken);
         Outcome cached = cacheGet(key);
         if (cached != null) return cached;
 
-        Outcome result = verify(set, defaultUrl, accountSid, basicToken);
+        Outcome result = verify(set, defaultUrl, accountSid, basicToken, attempt);
         if (result == Outcome.REJECTED) {
             String defaultHost = URI.create(defaultUrl).getHost();
             for (String host : new java.util.TreeSet<>(VERIFICATION_HOSTS)) {
                 if (host.equalsIgnoreCase(defaultHost)) continue;
-                Outcome other = verify(set, "https://" + host, accountSid, basicToken);
+                Outcome other = verify(set, "https://" + host, accountSid, basicToken, attempt);
                 if (other == Outcome.VALID) {
                     result = Outcome.VALID;
                 } else if (other == Outcome.UNAVAILABLE) {
@@ -467,11 +593,16 @@ public class ExotelCredentialVerifier {
         return callerValue == null ? defaultUrl : ExotelHostGuard.requireApiHost(field, callerValue);
     }
 
-    /** Verifies one account. {@code baseUrl} must already be a fixed verification host or operator-set. */
+    /** Test entry point: one account probe, charged to a fresh attempt of client "test". */
     Outcome verify(CredentialSet set, String baseUrl, String accountSid, String basicToken) {
+        return verify(set, baseUrl, accountSid, basicToken, new Attempt("test"));
+    }
+
+    /** Verifies one account. {@code baseUrl} must already be a fixed verification host or operator-set. */
+    private Outcome verify(CredentialSet set, String baseUrl, String accountSid, String basicToken, Attempt attempt) {
         String url = baseUrl.replaceAll("/+$", "") + "/v1/Accounts/" + safeId("account id", accountSid)
                 + "/Calls.json?PageSize=1";
-        return probeProduct(set, url, basic(basicToken));
+        return probeProduct(set, url, basic(basicToken), attempt);
     }
 
     private static String safeId(String field, String value) {

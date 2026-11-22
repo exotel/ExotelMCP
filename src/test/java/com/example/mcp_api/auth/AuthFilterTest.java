@@ -165,7 +165,7 @@ class AuthFilterTest {
                 "{\"voicebot_api_key\":\"made-up\",\"voicebot_api_token\":\"x1\",\"voicebot_account_id\":\"acct1\"}", chain);
         assertEquals(401, response.getStatus());
         assertFalse(passed(chain));
-        assertTrue(body(response).contains("VoiceBot credentials"));
+        assertEquals(ExotelCredentialVerifier.REJECTED_MESSAGE, body(response)); // MSG-2807: set not named
         assertFalse(response.getContentAsString().contains("made-up"));
     }
 
@@ -179,15 +179,15 @@ class AuthFilterTest {
     }
 
     @Test
-    void realCorePlusWrongCallsIs401NamingCallsSet() throws Exception {
+    void realCorePlusWrongCallsIs401WithoutNamingTheSet() throws Exception {
         statusBySubstring.put("api.in.exotel.com", 401);
         statusBySubstring.put("/Accounts/acct9/", 401);
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\"," + CALLS_WRONG + "}", chain);
         assertEquals(401, response.getStatus());
         assertFalse(passed(chain));
-        assertEquals("Calls credentials (calls_api_key, calls_api_token, calls_account_id) were rejected by Exotel. "
-                + "Remove these fields or correct them.", body(response));
+        // MSG-2807: the 401 must not say which set Exotel rejected (no oracle); the set is only logged.
+        assertEquals(ExotelCredentialVerifier.REJECTED_MESSAGE, body(response));
     }
 
     @Test
@@ -249,13 +249,13 @@ class AuthFilterTest {
     }
 
     @Test
-    void cqaWithRejectedCoreIs401NamingCore() throws Exception {
+    void cqaWithRejectedCoreIs401() throws Exception {
         statusBySubstring.put("/Calls.json", 401);
         MockFilterChain chain = new MockFilterChain();
         MockHttpServletResponse response = post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
                 + "\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a1\"}", chain);
         assertEquals(401, response.getStatus());
-        assertTrue(body(response).contains("Core credentials"));
+        assertEquals(ExotelCredentialVerifier.REJECTED_MESSAGE, body(response)); // MSG-2807: set not named
         assertFalse(passed(chain));
     }
 
@@ -287,7 +287,7 @@ class AuthFilterTest {
                 + "\"voicebot_api_key\":\"k\",\"voicebot_api_token\":\"t\",\"voicebot_account_id\":\"acct1\"}", chain);
         assertEquals(503, response.getStatus());
         assertEquals("5", response.getHeader("Retry-After"));
-        assertTrue(body(response).contains("VoiceBot credentials"));
+        assertEquals(ExotelCredentialVerifier.UNAVAILABLE_MESSAGE, body(response)); // MSG-2807: set not named
         assertFalse(passed(chain));
     }
 
