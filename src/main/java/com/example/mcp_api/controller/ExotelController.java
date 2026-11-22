@@ -33,12 +33,6 @@ public class ExotelController {
         
         logger.info("Sending SMS to: {}", toNumber);
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.sendSmsToUserEndpoint(toNumber, message, dltTemplateId, dltEntityId);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -54,12 +48,6 @@ public class ExotelController {
         
         logger.info("Sending voice call to: {}", toNumber);
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.sendVoiceCallToUserEndpoint(toNumber);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -76,12 +64,6 @@ public class ExotelController {
         
         logger.info("Connecting call from: {} to: {}", fromNumber, toNumber);
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.outgoingCallToConnectNumber(fromNumber, toNumber);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -97,12 +79,6 @@ public class ExotelController {
         
         logger.info("Fetching SMS callbacks for: {}", toNumber);
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             Map<String, Object> response = exotelService.getSmsCallbacks(toNumber);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -118,12 +94,6 @@ public class ExotelController {
         
         logger.info("Fetching voice callbacks for: {}", toNumber);
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             Map<String, Object> response = exotelService.getVoiceCallCallbacks(toNumber);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -139,12 +109,6 @@ public class ExotelController {
         
         logger.info("Fetching bulk voice call details...");
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.getBulkCallDetails(fromNumber);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -160,12 +124,6 @@ public class ExotelController {
         
         logger.info("Fetching number metadata...");
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.getNumberMetadata(number);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -181,12 +139,6 @@ public class ExotelController {
         
         logger.info("Sending bulk SMS to: {}", payload.toNumber());
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.sendMessageToBulkNumbers(payload.toNumber(), payload.message());
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -203,12 +155,6 @@ public class ExotelController {
         
         logger.info("Connecting to call flow: {}", appId);
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.connectNumberToCallFlow(appId, fromNumber);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
@@ -236,12 +182,6 @@ public class ExotelController {
         
         logger.info("Sending dynamic bulk SMS with {} messages", payload.message().size());
         try {
-            // Store auth header for this session
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null) {
-                exotelService.setAuthHeaderForSession(authHeader);
-            }
-            
             String response = exotelService.sendDynamicBulkSmsEndpoint(payload.message());
             return ResponseEntity.ok(response);
         } catch (Exception e) {

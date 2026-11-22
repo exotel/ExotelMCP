@@ -133,7 +133,7 @@ class ExotelCredentialVerifierTest {
             ExotelCredentialVerifier v = verifierReturning(status);
             ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(CQA));
             assertEquals(Outcome.REJECTED, r.outcome(), "probe status " + status);
-            assertTrue(r.message().startsWith("CQA credentials (cqa_api_key, cqa_account_id) cannot be used alone"));
+            assertTrue(r.detail().startsWith("CQA credentials (cqa_api_key, cqa_account_id) cannot be used alone"));
             assertEquals(0, calls.get(), "CQA has no probe; nothing is sent anywhere");
         }
     }
@@ -152,9 +152,9 @@ class ExotelCredentialVerifierTest {
                 "{\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"sid1\","
                         + "\"ai_assist_client_id\":\"cid\",\"ai_assist_client_secret\":\"cs\"}"));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().contains("CQA credentials"));
-        assertTrue(r.message().contains("AI Assist credentials"));
-        assertTrue(r.message().contains("cannot be used alone"), r.message());
+        assertTrue(r.detail().contains("CQA credentials"));
+        assertTrue(r.detail().contains("AI Assist credentials"));
+        assertTrue(r.detail().contains("cannot be used alone"), r.detail());
         assertEquals(0, calls.get());
     }
 
@@ -164,7 +164,7 @@ class ExotelCredentialVerifierTest {
         ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(
                 "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"cqa_api_key\":\"k\",\"cqa_account_id\":\"a\"}"));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().startsWith("Core credentials (token, account_sid) were rejected by Exotel"));
+        assertTrue(r.detail().startsWith("Core credentials (token, account_sid) were rejected by Exotel"));
     }
 
     @Test
@@ -180,8 +180,8 @@ class ExotelCredentialVerifierTest {
         ExotelCredentialVerifier v = verifierReturning(401);
         ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(VOICEBOT));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().startsWith("VoiceBot credentials (voicebot_api_key, voicebot_api_token, voicebot_account_id) were rejected by Exotel"));
-        assertFalse(r.message().contains("vk") || r.message().contains("vacct"));
+        assertTrue(r.detail().startsWith("VoiceBot credentials (voicebot_api_key, voicebot_api_token, voicebot_account_id) were rejected by Exotel"));
+        assertFalse(r.detail().contains("vk") || r.detail().contains("vacct"));
         assertEquals("https://voicebot.in.exotel.com/voicebot/api/v2/accounts/vacct/voicebots?limit=1", urls.get(0));
     }
 
@@ -200,8 +200,8 @@ class ExotelCredentialVerifierTest {
                 "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"voicebot_api_key\":\"vk\","
                         + "\"voicebot_api_token\":\"vt\",\"voicebot_account_id\":\"vacct\"}"));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().contains("VoiceBot credentials"));
-        assertFalse(r.message().contains("Core"));
+        assertTrue(r.detail().contains("VoiceBot credentials"));
+        assertFalse(r.detail().contains("Core"));
     }
 
     @Test
@@ -211,7 +211,7 @@ class ExotelCredentialVerifierTest {
                 "{\"token\":\"a2V5OnRvaw==\",\"voicebot_api_key\":\"vk\",\"voicebot_api_token\":\"vt\","
                         + "\"voicebot_account_id\":\"vacct\"}"));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().contains("Core credentials (token, account_sid) are incomplete"));
+        assertTrue(r.detail().contains("Core credentials (token, account_sid) are incomplete"));
         assertEquals(0, calls.get(), "incomplete headers are refused before any probe");
     }
 
@@ -222,7 +222,7 @@ class ExotelCredentialVerifierTest {
                 "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"voicebot_api_key\":\"vk\","
                         + "\"voicebot_api_token\":\"vt\",\"voicebot_account_id\":\"vacct\"}"));
         assertEquals(Outcome.UNAVAILABLE, r.outcome());
-        assertTrue(r.message().contains("VoiceBot credentials"));
+        assertTrue(r.detail().contains("VoiceBot credentials"));
     }
 
     @Test
@@ -250,7 +250,7 @@ class ExotelCredentialVerifierTest {
         ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse(
                 "{\"tools_server_api_key\":\"tk\",\"tools_server_tenant_id\":\"ten1\"}"));
         assertEquals(Outcome.REJECTED, r.outcome(), "404 means unknown tenant");
-        assertTrue(r.message().contains("Tools Server credentials"));
+        assertTrue(r.detail().contains("Tools Server credentials"));
         assertTrue(urls.get(0).startsWith("https://tools-server-prod.mum1.exotel.com/tools/api/v1/tenants/ten1/tools"));
     }
 
@@ -269,7 +269,7 @@ class ExotelCredentialVerifierTest {
         ExotelCredentialVerifier v = verifierReturning(200);
         ExotelCredentialVerifier.Result r = v.verify(AuthCredentials.parse("{\"admin_username\":\"adm\",\"admin_password\":\"pw\"}"));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().contains("Admin credentials"));
+        assertTrue(r.detail().contains("Admin credentials"));
         assertEquals(0, calls.get());
     }
 
@@ -301,8 +301,8 @@ class ExotelCredentialVerifierTest {
                 "{\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"sid1\","
                         + "\"ai_assist_client_id\":\"cid\",\"ai_assist_client_secret\":\"cs\"}"));
         assertEquals(Outcome.REJECTED, r.outcome());
-        assertTrue(r.message().contains("AI Assist credentials"));
-        assertTrue(r.message().contains("cannot be used alone"));
+        assertTrue(r.detail().contains("AI Assist credentials"));
+        assertTrue(r.detail().contains("cannot be used alone"));
         assertEquals(0, calls.get());
     }
 
@@ -339,7 +339,10 @@ class ExotelCredentialVerifierTest {
 
     @Test
     void cacheIsBounded() {
-        ExotelCredentialVerifier v = verifierReturning(200);
+        int many = ExotelCredentialVerifier.MAX_CACHE_ENTRIES * 2;
+        ExotelCredentialVerifier v = new ExotelCredentialVerifier("https://api.exotel.com", "https://api.in.exotel.com",
+                (url, headers) -> { calls.incrementAndGet(); return ProbeResponse.json(200); }, now::get,
+                new ExotelCredentialVerifier.Limits(many, many, many, many, 6));
         for (int i = 0; i < ExotelCredentialVerifier.MAX_CACHE_ENTRIES + 10; i++) {
             v.verify(AuthCredentials.CredentialSet.CORE, "https://api.exotel.com", "acct" + i, "tok");
         }
