@@ -75,7 +75,7 @@ To integrate ExotelMCP with Claude, add the following configuration to your Clau
 
 #### Optional product sets
 
-Add only the products you use; every set you include is checked at login. Each set must be complete, and a wrong or leftover sample value in any set rejects the whole header, so delete the sets you do not need.
+Add only the products you use; every set you include is checked at login (CQA and AI Assist client credentials cannot be checked, so they need a verified set beside them). Each set must be complete, and a wrong or leftover sample value in any set rejects the whole header, so delete the sets you do not need.
 
 ```text
 Core (above):  token, account_sid                      optional: from_number, whatsapp_from, caller_id, dlt_temp, dlt_entity, api_domain, exotel_portal_url
@@ -397,6 +397,7 @@ Exotel [Conversational Intelligence](https://exotel.com/products/conversation-qu
 **Authentication:** CQA tools use two authentication methods:
 - **Setup tools** (login, quality profiles, API keys, assignment rules) use JWT authentication obtained via the login tool -- no pre-configured credentials needed
 - **Ingestion & analysis tools** (ingest, status, results) use your `cqa_api_key` configured in the MCP auth header
+- **Login:** the MCP auth header must also carry a set this server can verify, such as core `token` + `account_sid`; a CQA-only header is refused with a 401 (see Login rules)
 
 **API key**: Generate your API key from the **Conversational Intelligence console** or via the `exotel_cqa_create_api_key` MCP tool, then provide it as `cqa_api_key` in the MCP configuration.
 
@@ -615,8 +616,9 @@ Every request is checked before any tool runs.
 - **Known API bases**: `voicebot_base_url`, `tools_server_base_url`, `ai_assist_base_url` and `ai_assist_context_path` must match one of the Exotel API bases configured by the operator (defaults: `https://voicebot.in.exotel.com/voicebot/api/v2` (and the same base at `/api/v1`, used by Admin), `https://tools-server-prod.mum1.exotel.com`, `https://ai-assist.in.exotel.com/ai-assist/api`). Host case and trailing slash are ignored. This is checked whenever the field is present, even if the header has no credentials for that product; a mismatch is refused with a 400 naming the field (never the value). Leave the field out to use the default. Operators can change the lists with `VERIFY_VOICEBOT_API_BASES`, `VERIFY_ADMIN_API_BASES`, `VERIFY_TOOLS_SERVER_API_BASES` and `VERIFY_AI_ASSIST_API_BASES` (comma-separated). A check only passes if Exotel answers with a JSON body; any other 2xx is treated as unverifiable (503).
 - **Tool parameters in URLs**: phone numbers passed to the number metadata and bulk call details tools must be digits with an optional leading `+` (5 to 20 digits); ids and filter values that go into a URL (tenant id, version, status, dates) are limited to letters, digits and `_ - . : +`.
 - **Sets are verified**: each complete set is checked against Exotel with one read-only call (Core and Calls: list calls; VoiceBot: list bots; Admin: list personas; Tools Server: list tools; AI Assist: list assistants). Results are cached for 5 minutes (30 seconds if rejected).
-- **At least one verified set**: a header is accepted only if at least one set passed its check. AI Assist with only `ai_assist_client_id` / `ai_assist_client_secret` cannot be checked, so it works only next to a verified set.
-- **CQA is accepted without a live check (known, temporary gap)**: a complete CQA set (`cqa_api_key` + `cqa_account_id`) is currently accepted on its shape alone, so a CQA-only header works, because the CQA API has no read-only call that works with the API key. This will be tightened once such a call exists (SL-3868 follow-up). Until then a made-up CQA set passes the login check and reaches every tool, not only the CQA ones: CQA calls made with it are refused by CQA, tools for other products find no credentials of their own (or use the operator's default keys if the host sets any), and tools that read this server's stored status callbacks answer any logged-in caller. If you also include other sets, those are still checked and must pass.
+- **At least one verified set**: a header is accepted only if at least one set passed its live check against Exotel. Sets that cannot be checked never log anyone in on their own; they work only next to a verified set (for example core `token` + `account_sid`):
+  - **CQA** (`cqa_api_key` + `cqa_account_id`): the CQA API has no read-only call that works with the API key yet (CEC-1442), so a CQA set is not checked at login. A CQA-only header is refused with a 401; send CQA together with a verified set. CQA calls are still checked by CQA itself when a tool uses them.
+  - **AI Assist with only `ai_assist_client_id` / `ai_assist_client_secret`**: the bearer comes from an external token endpoint, so it cannot be checked.
 - **Every set you include must pass**: an incomplete set (for example `token` without `account_sid`) or a wrong set rejects the whole header. The error names the set, never a value.
 - **Placeholders and empty values**: a field that is empty or still holds a sample value (`YOUR_...`, `<...>`, `xxx`) is rejected. Placeholder or empty headers never reach any tool.
 

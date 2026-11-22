@@ -143,11 +143,17 @@ class AuthFilterTest {
     }
 
     @Test
-    void knownLimitationMadeUpCqaOnlyHeaderPassesWithoutAnyOutboundCall() throws Exception {
-        MockFilterChain chain = new MockFilterChain();
-        MockHttpServletResponse response = post("{\"cqa_api_key\":\"made-up\",\"cqa_account_id\":\"made-up\"}", chain);
-        assertEquals(200, response.getStatus());
-        assertTrue(passed(chain));
+    void madeUpCqaOnlyHeaderIs401WithoutAnyOutboundCall() throws Exception {
+        // MSG-2805: CQA alone used to pass on shape and reach every path and tool.
+        for (String uri : new String[] {"/mcp", "/send-sms-to-user"}) {
+            MockFilterChain chain = new MockFilterChain();
+            MockHttpServletResponse response = call("POST", uri,
+                    "{\"cqa_api_key\":\"made-up\",\"cqa_account_id\":\"made-up\"}", chain);
+            assertEquals(401, response.getStatus(), uri);
+            assertTrue(body(response).contains("cannot be used alone"), uri);
+            assertFalse(body(response).contains("made-up"), "values must not be echoed");
+            assertFalse(passed(chain), uri);
+        }
         assertEquals(0, probeCalls.get());
     }
 
@@ -283,6 +289,15 @@ class AuthFilterTest {
         assertEquals("5", response.getHeader("Retry-After"));
         assertTrue(body(response).contains("VoiceBot credentials"));
         assertFalse(passed(chain));
+    }
+
+    @Test
+    void aiAssistClientCredentialsWithVerifiedCorePasses() throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        assertEquals(200, post("{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\",\"ai_assist_base_url\":\"https://ai-assist.in.exotel.com\",\"ai_assist_account_sid\":\"a1\","
+                + "\"ai_assist_client_id\":\"k\",\"ai_assist_client_secret\":\"s\"}", chain).getStatus());
+        assertTrue(passed(chain));
+        assertEquals(1, probeCalls.get());
     }
 
     @Test

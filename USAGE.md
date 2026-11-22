@@ -32,7 +32,7 @@ This is the minimal working header (core set only). Replace both `YOUR_...` valu
 
 **Optional product sets**
 
-Add only the products you use; every set you include is checked at login. Each set must be complete, and a wrong or leftover sample value in any set rejects the whole header, so delete the sets you do not need.
+Add only the products you use; every set you include is checked at login (CQA and AI Assist client credentials cannot be checked, so they need a verified set beside them). Each set must be complete, and a wrong or leftover sample value in any set rejects the whole header, so delete the sets you do not need.
 
 ```text
 Core (above):  token, account_sid                      optional: from_number, whatsapp_from, caller_id, dlt_temp, dlt_entity, api_domain, exotel_portal_url
@@ -50,7 +50,7 @@ For example, core plus VoiceBot:
 {'token':'YOUR_EXOTEL_TOKEN','account_sid':'YOUR_ACCOUNT_SID','voicebot_api_key':'YOUR_VOICEBOT_API_KEY','voicebot_api_token':'YOUR_VOICEBOT_API_TOKEN','voicebot_account_id':'YOUR_VOICEBOT_ACCOUNT_ID'}
 ```
 
-See the Login rules in README.md for what is checked.
+CQA and AI Assist client credentials cannot be checked at login, so they work only next to a set that can (for example core `token` + `account_sid`); a header with only those is refused with a 401. See the Login rules in README.md for what is checked.
 
 
 **Claude Desktop / CoWork** — CoWork uses `~/Library/Application Support/Claude/claude_desktop_config.json` (same file as Desktop). Fully quit Claude after editing:
