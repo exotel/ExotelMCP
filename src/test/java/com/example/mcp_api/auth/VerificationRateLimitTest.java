@@ -211,6 +211,21 @@ class VerificationRateLimitTest {
                 "XFF from a public peer is caller-controlled and ignored");
         assertEquals("10.22.1.5", AuthFilter.clientKey(req("10.22.1.5", null)));
         assertEquals("10.22.1.5", AuthFilter.clientKey(req("10.22.1.5", " , ")));
+        assertEquals("198.51.100.7", AuthFilter.clientKey(req("100.64.3.4", "198.51.100.7")), "shared address space");
+        assertEquals("198.51.100.7", AuthFilter.clientKey(req("fd00::1", "198.51.100.7")), "IPv6 unique-local");
+        assertEquals("100.128.0.1", AuthFilter.clientKey(req("100.128.0.1", "198.51.100.7")), "outside 100.64/10");
+    }
+
+    @Test
+    void severalForwardedForLinesAreReadAsOneList() {
+        MockHttpServletRequest request = req("10.22.1.5", "192.0.2.1");
+        request.addHeader("X-Forwarded-For", "192.0.2.2, 198.51.100.7");
+        assertEquals("198.51.100.7", AuthFilter.clientKey(request));
+
+        // The attacker's line first, the ALB's line last: the key is still the ALB's entry.
+        MockHttpServletRequest reversed = req("10.22.1.5", "198.51.100.7, 192.0.2.66");
+        reversed.addHeader("X-Forwarded-For", "203.0.113.9");
+        assertEquals("203.0.113.9", AuthFilter.clientKey(reversed));
     }
 
     private static MockHttpServletRequest req(String remoteAddr, String xff) {

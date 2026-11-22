@@ -903,7 +903,7 @@ public class ExotelService {
                 String key = fieldNames.next();
                 String value = jsonNode.get(key).asText();
                     result.put(key, value);
-                    logger.debug("Parsed key-value: {} = {}", key, "token".equals(key) ? maskTokenForLogging(value) : value);
+                    logger.debug("Parsed key: {}", key); // MSG-2807: never log credential values
             }
             
             // Store the detected auth type
@@ -911,14 +911,6 @@ public class ExotelService {
             logger.debug("Auth type detected: {}", authType);
             
             logger.debug("Successfully parsed {} fields using JSON parser", result.size());
-            
-            // Log all parsed parameters for verification
-            if (!result.isEmpty()) {
-                logger.debug("Parsed parameters:");
-                result.forEach((key, value) -> {
-                    logger.debug("  {} = {}", key, "token".equals(key) ? maskTokenForLogging(value) : value);
-                });
-            }
             
             // If parsing failed, try basic authorization header
             if (result.isEmpty() && authHeader.startsWith("Basic ")) {
@@ -949,7 +941,9 @@ public class ExotelService {
             logger.debug("Final parsed result contains {} keys: {}", result.size(), result.keySet());
             
         } catch (Exception e) {
-            logger.warn("AUTH PARSING ERROR: Failed to parse auth header: {}, using fallback defaults", e.getMessage());
+            // MSG-2807: the parser's message can quote part of the header, so only its type is logged.
+            logger.warn("AUTH PARSING ERROR: Failed to parse auth header ({}), using fallback defaults",
+                    e.getClass().getSimpleName());
             // Fallback: use the header as token
             result.put("token", authHeader != null ? authHeader : "default_token");
             result.put("from_number", "default_from");

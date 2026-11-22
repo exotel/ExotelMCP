@@ -380,7 +380,8 @@ public class ExotelCredentialVerifier {
                 }
             }
         } catch (Throttled t) {
-            logger.warn("Credential check from {} throttled: {}", client, t.getMessage());
+            // DEBUG, not WARN: a flood of throttled requests must not control the log volume.
+            logger.debug("Credential check from {} throttled: {}", client, t.getMessage());
             return new Result(Outcome.THROTTLED, THROTTLED_MESSAGE, t.getMessage(), t.retryAfterSeconds);
         }
         if (unavailable != null) {

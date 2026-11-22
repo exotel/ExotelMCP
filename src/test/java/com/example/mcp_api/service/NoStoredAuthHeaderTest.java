@@ -92,6 +92,36 @@ class NoStoredAuthHeaderTest {
     }
 
     @Test
+    void credentialValuesAreNeverLogged() {
+        String secretHeader = "{\"token\":\"a2V5OnRvaw==\",\"account_sid\":\"acme1\","
+                + "\"calls_api_key\":\"ck\",\"calls_api_token\":\"SECRET-CALLS-TOKEN\",\"calls_account_id\":\"acct9\","
+                + "\"admin_username\":\"adm\",\"admin_password\":\"SECRET-ADMIN-PW\"}";
+        ch.qos.logback.classic.Logger log =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ExotelService.class);
+        ch.qos.logback.classic.Level before = log.getLevel();
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        log.addAppender(appender);
+        log.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            bind(secretHeader, secretHeader);
+            CallToolsTenantIsolationTest.StubbedExotelService service = new CallToolsTenantIsolationTest.StubbedExotelService();
+            service.answers.put(CALLS_A + "/CA1.json", "{\"Call\":{\"Sid\":\"CA1\",\"Status\":\"completed\"}}");
+            service.getCallDetails("CA1");
+            assertFalse(appender.list.isEmpty(), "DEBUG logging should have produced events");
+            for (var event : appender.list) {
+                String line = event.getFormattedMessage();
+                assertFalse(line.contains("SECRET-CALLS-TOKEN") || line.contains("SECRET-ADMIN-PW")
+                        || line.contains("a2V5OnRvaw=="), "credential value logged: " + line);
+            }
+        } finally {
+            log.detachAppender(appender);
+            log.setLevel(before);
+        }
+    }
+
+    @Test
     void anEarlierCallersHeaderIsNeverReused() {
         CallToolsTenantIsolationTest.StubbedExotelService service = new CallToolsTenantIsolationTest.StubbedExotelService();
         service.answers.put(CALLS_A + "/CA1.json", "{\"Call\":{\"Sid\":\"CA1\",\"Status\":\"completed\"}}");

@@ -124,24 +124,37 @@ public class AuthFilter implements Filter {
      * the address it saw to X-Forwarded-For, so only the LAST entry is trusted, and only when the TCP peer is
      * a private or loopback address (the ALB inside the VPC). Earlier entries are whatever the caller sent.
      * A request from a public peer (no ALB in front) is keyed on the peer itself and its X-Forwarded-For is
-     * ignored. Spring's forward-headers-strategy is not used, because it would also rewrite scheme and host
-     * for every controller.
+     * ignored. Several X-Forwarded-For header lines are read as one list, so a caller cannot hide its own
+     * line in front of the ALB's. Spring's forward-headers-strategy is not used, because it would also
+     * rewrite scheme and host for every controller.
      */
     static String clientKey(HttpServletRequest request) {
         String peer = request.getRemoteAddr();
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded == null || !isPrivatePeer(peer)) return peer;
-        String[] hops = forwarded.split(",");
-        String last = hops.length == 0 ? "" : hops[hops.length - 1].trim();
+        if (!isPrivatePeer(peer)) return peer;
+        String last = "";
+        java.util.Enumeration<String> lines = request.getHeaders("X-Forwarded-For");
+        while (lines != null && lines.hasMoreElements()) {
+            String line = lines.nextElement();
+            if (line == null) continue;
+            for (String hop : line.split(",")) {
+                if (!hop.isBlank()) last = hop.trim();
+            }
+        }
         return last.isEmpty() ? peer : last;
     }
 
-    /** Site-local or loopback IP literal. Never resolves a name: the peer address is always a literal. */
+    /**
+     * Private IP literal: RFC 1918 (site-local), loopback, shared address space 100.64.0.0/10 and IPv6
+     * unique-local fc00::/7. Never resolves a name: only IP literals are accepted.
+     */
     private static boolean isPrivatePeer(String peer) {
         if (peer == null || peer.isBlank() || !peer.matches("[0-9a-fA-F:.]+")) return false;
         try {
             InetAddress address = InetAddress.getByName(peer);
-            return address.isSiteLocalAddress() || address.isLoopbackAddress();
+            byte[] b = address.getAddress();
+            boolean sharedSpace = b.length == 4 && (b[0] & 0xff) == 100 && (b[1] & 0xc0) == 64;
+            boolean uniqueLocal = b.length == 16 && (b[0] & 0xfe) == 0xfc;
+            return address.isSiteLocalAddress() || address.isLoopbackAddress() || sharedSpace || uniqueLocal;
         } catch (Exception e) {
             return false;
         }
