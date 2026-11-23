@@ -6,6 +6,8 @@ import com.example.mcp_api.service.EngageService;
 import com.example.mcp_api.service.ExotelService;
 import com.example.mcp_api.service.QuickAudioService;
 import com.example.mcp_api.service.VoiceBotAdminTools;
+import com.example.mcp_api.service.VoiceBotBuilderTools;
+import com.example.mcp_api.service.VoiceBotGuideTools;
 import com.example.mcp_api.service.VoiceBotService;
 import com.example.mcp_api.service.VoiceBotToolsService;
 import com.example.mcp_api.service.WhatsAppService;
@@ -36,7 +38,8 @@ class AiAssistToolsDisabledTest {
 
     private static final List<Class<?>> ENABLED_SERVICES = List.of(ExotelService.class, QuickAudioService.class,
             CqaService.class, VoiceBotService.class, VoiceBotAdminTools.class, SetupTools.class,
-            VoiceBotToolsService.class, EngageService.class, WhatsAppService.class);
+            VoiceBotToolsService.class, EngageService.class, WhatsAppService.class, VoiceBotBuilderTools.class,
+            VoiceBotGuideTools.class);
 
     private StreamableHttpConfig config;
     private AiAssistService aiAssistService;
@@ -53,6 +56,8 @@ class AiAssistToolsDisabledTest {
         ReflectionTestUtils.setField(config, "voiceBotToolsService", mock(VoiceBotToolsService.class));
         ReflectionTestUtils.setField(config, "engageService", mock(EngageService.class));
         ReflectionTestUtils.setField(config, "whatsAppService", mock(WhatsAppService.class));
+        ReflectionTestUtils.setField(config, "voiceBotBuilderTools", mock(VoiceBotBuilderTools.class));
+        ReflectionTestUtils.setField(config, "voiceBotGuideTools", mock(VoiceBotGuideTools.class));
         aiAssistService = mock(AiAssistService.class);
         ReflectionTestUtils.setField(config, "aiAssistService", aiAssistService);
     }
