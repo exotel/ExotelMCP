@@ -167,6 +167,8 @@ public class ExotelCredentialVerifier {
     private final List<String> adminBases;
     private final List<String> toolsServerBases;
     private final List<String> aiAssistBases;
+    /** Tools Extension bases. Empty (the default, since TE has no default stamp) refuses every caller te_base_url. */
+    private volatile List<String> teBases = List.of();
     private final StatusProbe probe;
     private final LongSupplier clock;
     private final Limits limits;
@@ -240,6 +242,11 @@ public class ExotelCredentialVerifier {
                 limits.globalCapacity(), limits.globalRefillPerMinute(), clock);
     }
 
+    @Autowired(required = false)
+    void setTeBases(@Value("${exotel.auth.verify.te.api.bases:${exotel.voicebot.te.base.url:}}") String csv) {
+        this.teBases = parseBases(csv, null);
+    }
+
     /** Splits a comma-separated list of operator-configured bases into normalised https bases. */
     private static List<String> parseBases(String csv, String fallback) {
         String source = csv == null || csv.isBlank() ? fallback : csv;
@@ -274,7 +281,7 @@ public class ExotelCredentialVerifier {
     /**
      * Pins every caller-supplied base URL that is present, whichever credential sets the header carries:
      * api_domain and calls_base_url must be one of {@link #VERIFICATION_HOSTS}; voicebot_base_url,
-     * tools_server_base_url and ai_assist_base_url (+ ai_assist_context_path) must equal a known base of
+     * tools_server_base_url, te_base_url and ai_assist_base_url (+ ai_assist_context_path) must equal a known base of
      * the operator. Runs on every request before any tool, so a field can never reach a request URL
      * unchecked. Throws InvalidCredentialException naming the field (never the value).
      */
@@ -291,6 +298,9 @@ public class ExotelCredentialVerifier {
         if (c.getToolsServerBaseUrl() != null) {
             requireKnownBase("tools_server_base_url", "Tools Server", c.getToolsServerBaseUrl(), toolsServerBases,
                     UnaryOperator.identity());
+        }
+        if (c.getTeBaseUrl() != null) {
+            requireKnownBase("te_base_url", "Tools Extension", c.getTeBaseUrl(), teBases, UnaryOperator.identity());
         }
         if (c.getAiAssistBaseUrl() != null) aiAssistCandidateBase(c);
         else if (c.getAiAssistContextPath() != null) {

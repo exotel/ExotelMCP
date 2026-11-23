@@ -497,6 +497,7 @@ public class AuthCredentials {
     public String getVoicebotApiToken() { return voicebotApiToken; }
     public String getVoicebotAccountId() { return voicebotAccountId; }
     public String getVoicebotBaseUrl() { return voicebotBaseUrl; }
+    public String getTeBaseUrl() { return teBaseUrl; }
     public String getCallsApiKey() { return callsApiKey; }
     public String getCallsApiToken() { return callsApiToken; }
     public String getCallsAccountId() { return callsAccountId; }
