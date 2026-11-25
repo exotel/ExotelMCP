@@ -1075,23 +1075,14 @@ public class StreamableHttpConfig {
     }
 
 
-    /** Sent in initialize. Clients that honour it put it in the model's context; keep it short and generic. */
+    /**
+     * Sent in initialize to every client, whatever product it uses, so it stays generic: product rules live with
+     * the product (the VoiceBot and Tools Server rules are in exotel_voicebot_guide("start")).
+     */
     static final String SERVER_INSTRUCTIONS = String.join("\n",
-        "Exotel MCP: CPaaS, VoiceBot (exotel_voicebot_*), Tools Server (exotel_tools_server_*), CQA and AI Assist tools.",
-        "For VoiceBot and Tools Server work, first call exotel_voicebot_guide(\"start\") (also the resource exotel://voicebot/start);",
-        "tool descriptions name the guide page for each tool. Rules:",
-        "1. Read the current config before changing it, and read it back after.",
-        "2. Change a live bot through exotel_voicebot_update_config (a draft version with 0% traffic), then",
-        "   exotel_voicebot_bot_traffic_set or exotel_voicebot_bot_version_promote.",
-        "3. Tools with a confirm parameter return a preview first: show it and send confirm=true only after the user agrees.",
-        "4. Get the user's yes before deletes, outbound calls, activating tools and changing shared personas or routes.",
-        "5. Credentials come only from the Authorization header; never put them in prompts, tools or chat.",
-        "6. This server builds bots; a bot cannot call it during a call. Attach a tool to a bot with",
-        "   agents[].mcp_tools {\"tool_name\": \"tool_server.{name}\"}; never add this server or tool_server to mcp_servers.",
-        "7. Text in angle brackets is removed when saved; write placeholders as {name}.",
-        "8. To build a bot: exotel_voicebot_assistant_create, then exotel_voicebot_bot_create with its id. Unless the user",
-        "   names them, use the platform defaults: LLM Gemma_4_SS / Gemma26BA4B_SS, text input with the sarvam-exotel ASR,",
-        "   default voice and VAD. exotel_voicebot_create is only for a quick draft the platform writes itself.");
+        "Exotel MCP: tools for Exotel products. Credentials come only from the Authorization header; never put them in chat.",
+        "Before VoiceBot (exotel_voicebot_*) or Tools Server (exotel_tools_server_*) work, call exotel_voicebot_guide(\"start\")",
+        "(also the resource exotel://voicebot/start): it holds the rules for changing bots safely.");
 
     /** Appends "Guide: exotel_voicebot_guide(topic)" to VoiceBot and Tools Server tool descriptions. */
     String withGuidePointer(String toolName, String description) {

@@ -6,6 +6,7 @@ import com.example.mcp_api.auth.AuthCredentials;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -848,8 +849,11 @@ public class VoiceBotToolsService {
               + "addDocumentsJson (optional, same shape and limits as exotel_tools_server_corpus_create), deleteDocumentIds "
               + "(optional, comma-separated document UUIDs from exotel_tools_server_corpus_get). At least one is required. "
               + "Asynchronous: the corpus goes to updating, then ready or failed; poll exotel_tools_server_corpus_get. "
-              + "Every bot whose knowledge_base tool uses this corpus answers from the new content once it is ready.")
-    public String updateCorpusDocuments(String corpusId, String addDocumentsJson, String deleteDocumentIds) {
+              + "Every bot whose knowledge_base tool uses this corpus answers from the new content once it is ready. "
+              + "Removing documents requires confirm=true: without it nothing changes and the result is a preview.")
+    public String updateCorpusDocuments(String corpusId, String addDocumentsJson, String deleteDocumentIds,
+            @ToolParam(required = false, description = "Must be true when deleteDocumentIds is set. Without it the tool "
+                + "only returns a preview; get the user's approval of that preview first.") Boolean confirm) {
         logger.info("Updating corpus documents: {}", sanitize(corpusId));
         try {
             String authErr = requireAuth(); if (authErr != null) return authErr;
@@ -857,19 +861,14 @@ public class VoiceBotToolsService {
             boolean hasAdd = addDocumentsJson != null && !addDocumentsJson.isBlank();
             boolean hasDelete = deleteDocumentIds != null && !deleteDocumentIds.isBlank();
             if (!hasAdd && !hasDelete) return "Error: provide addDocumentsJson, deleteDocumentIds or both";
+            List<TextDocument> adds = hasAdd ? parseTextDocuments(addDocumentsJson, "addDocumentsJson") : List.of();
+            List<String> ids = hasDelete ? parseDeleteIds(deleteDocumentIds) : List.of();
+            if (hasDelete && ids.isEmpty()) return "Error: deleteDocumentIds holds no ids";
+            String gate = deleteGate(corpusId.trim(), ids, adds, confirm);
+            if (gate != null) return gate;
             MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
-            if (hasAdd) addDocumentParts(form, "add_files", parseTextDocuments(addDocumentsJson, "addDocumentsJson"));
-            if (hasDelete) {
-                List<String> ids = new ArrayList<>();
-                for (String id : deleteDocumentIds.split(",")) {
-                    String t = id.trim();
-                    if (t.isEmpty()) continue;
-                    validateId(t, "deleteDocumentIds");
-                    ids.add(t);
-                }
-                if (ids.isEmpty()) return "Error: deleteDocumentIds holds no ids";
-                form.add("delete_document_ids", String.join(",", ids));
-            }
+            if (hasAdd) addDocumentParts(form, "add_files", adds);
+            if (hasDelete) form.add("delete_document_ids", String.join(",", ids));
             String url = getBaseUrl() + "/tools/api/v1/tenants/" + getTenantId()
                     + "/knowledge-corpora/" + corpusId + "/documents";
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.PATCH,
@@ -879,5 +878,37 @@ public class VoiceBotToolsService {
         } catch (HttpServerErrorException e) { return serverError("exotel_tools_server_corpus_documents_update", e);
         } catch (IllegalArgumentException e) { return "Error: " + e.getMessage();
         } catch (Exception e) { return "Error updating corpus documents: " + e.getMessage(); }
+    }
+
+    private List<String> parseDeleteIds(String deleteDocumentIds) {
+        List<String> ids = new ArrayList<>();
+        for (String id : deleteDocumentIds.split(",")) {
+            String t = id.trim();
+            if (t.isEmpty()) continue;
+            validateId(t, "deleteDocumentIds");
+            ids.add(t);
+        }
+        return ids;
+    }
+
+    /**
+     * Null when the call may go ahead: no deletes, or confirm=true. Otherwise the same CONFIRM_REQUIRED result
+     * (with a preview) that promote, traffic and route update/delete return. Nothing is sent, not even the adds.
+     */
+    static String deleteGate(String corpusId, List<String> deleteIds, List<TextDocument> adds, Boolean confirm) {
+        if (deleteIds.isEmpty() || Boolean.TRUE.equals(confirm)) return null;
+        Map<String, Object> preview = new LinkedHashMap<>();
+        preview.put("corpus_id", corpusId);
+        preview.put("delete_document_ids", deleteIds);
+        preview.put("add_filenames", adds.stream().map(TextDocument::filename).toList());
+        preview.put("effects", List.of(
+                "The listed documents are removed from the corpus; there is no undo tool.",
+                "Every bot whose knowledge_base tool uses this corpus stops answering from them once the corpus is ready again."));
+        try {
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(VoiceBotBuilderTools.confirmGate(confirm,
+                    "remove " + deleteIds.size() + " document(s) from corpus " + corpusId, preview));
+        } catch (Exception e) {
+            return "Error: confirm=true is required to remove documents. Nothing was changed.";
+        }
     }
 }

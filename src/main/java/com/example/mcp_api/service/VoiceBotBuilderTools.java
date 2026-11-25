@@ -2,6 +2,7 @@ package com.example.mcp_api.service;
 
 import com.example.mcp_api.auth.AuthContext;
 import com.example.mcp_api.auth.AuthCredentials;
+import com.example.mcp_api.auth.ExotelHostGuard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -172,25 +173,13 @@ public class VoiceBotBuilderTools {
     @Autowired
     private VoiceBotToolsService toolsServerTools;
 
-    @Value("${exotel.voicebot.builder.allowed-host-suffixes:.exotel.com,.exotel.in}")
-    private String allowedHostSuffixesCsv;
-
-    private List<String> allowedHostSuffixes = List.of(".exotel.com", ".exotel.in");
-
     @jakarta.annotation.PostConstruct
     void init() {
         this.restTemplate = createRestTemplate(sslVerify);
-        if (allowedHostSuffixesCsv != null && !allowedHostSuffixesCsv.isBlank()) {
-            List<String> parsed = new ArrayList<>();
-            for (String s : allowedHostSuffixesCsv.split(",")) {
-                String t = s.trim().toLowerCase(Locale.ROOT);
-                if (!t.isEmpty()) parsed.add(t);
-            }
-            if (!parsed.isEmpty()) allowedHostSuffixes = List.copyOf(parsed);
-        }
     }
 
-    private static RestTemplate createRestTemplate(boolean verifySsl) {
+    /** Never follows a redirect: a 3xx becomes an error, as in every other upstream client (UpstreamRedirectGuard). */
+    static RestTemplate createRestTemplate(boolean verifySsl) {
         try {
             var connMgrBuilder = PoolingHttpClientConnectionManagerBuilder.create();
             if (!verifySsl) {
@@ -202,7 +191,10 @@ public class VoiceBotBuilderTools {
                         .setHostnameVerifier(NoopHostnameVerifier.INSTANCE)
                         .build());
             }
-            var httpClient = HttpClients.custom().setConnectionManager(connMgrBuilder.build()).build();
+            var httpClient = HttpClients.custom().setConnectionManager(connMgrBuilder.build())
+                    .disableRedirectHandling()
+                    .addResponseInterceptorFirst(UpstreamRedirectGuard.apacheInterceptor())
+                    .build();
             var factory = new HttpComponentsClientHttpRequestFactory(httpClient);
             factory.setConnectTimeout(10_000);
             factory.setReadTimeout(30_000);
@@ -737,8 +729,9 @@ public class VoiceBotBuilderTools {
             throw new ToolError(error("MISSING_CREDENTIALS",
                     "The Authorization envelope has no voicebot_api_key, voicebot_api_token and voicebot_account_id. "
                   + "These tools use only the caller's own credentials, never server defaults.",
-                    "Add voicebot_api_key, voicebot_api_token and voicebot_account_id to the envelope, plus voicebot_base_url "
-                  + "for a non-prod stamp (e.g. https://<stamp>.exotel.com/voicebot/api/v2).", null, null));
+                    "Add voicebot_api_key, voicebot_api_token and voicebot_account_id to the envelope. Leave out "
+                  + "voicebot_base_url unless it equals a base the server operator configured: any other value rejects "
+                  + "every request in the session.", null, null));
         }
         String account = creds.getVoicebotAccountId().trim();
         if (!ACCOUNT_ID_PATTERN.matcher(account).matches()) {
@@ -747,7 +740,7 @@ public class VoiceBotBuilderTools {
                     "Fix voicebot_account_id in the envelope; it is the case-sensitive account SID.", null, null));
         }
         String base = creds.effectiveVoicebotBaseUrl(defaultBaseUrl);
-        String problem = validateBaseUrl(base, allowedHostSuffixes);
+        String problem = validateBaseUrl(base);
         if (problem != null) {
             throw new ToolError(error("INVALID_BASE_URL", problem + ".",
                     "Set voicebot_base_url to an https Exotel voicebot URL ending in /api/v2, "
@@ -778,6 +771,14 @@ public class VoiceBotBuilderTools {
             status = e.getStatusCode().value();
             text = e.getResponseBodyAsString();
         } catch (ResourceAccessException e) {
+            String cause = String.valueOf(e.getMostSpecificCause().getMessage());
+            if (cause.contains("unexpected redirect")) {
+                logger.warn("voicebot-builder {} {} refused a redirect: {}", method, target.getPath(), cause);
+                throw new ToolError(error("UPSTREAM_REDIRECT",
+                        "The voicebot API at " + target.getHost() + " answered with a redirect, which is never followed ("
+                      + cause + ").",
+                        "Check that voicebot_base_url / te_base_url is the exact API base, then retry.", null, null));
+            }
             logger.warn("voicebot-builder {} {} unreachable: {}", method, target.getPath(), e.getMostSpecificCause().toString());
             throw new ToolError(error("UPSTREAM_UNREACHABLE",
                     "Could not reach the voicebot API at " + target.getHost() + ": " + e.getMostSpecificCause().getMessage(),
@@ -1569,26 +1570,33 @@ public class VoiceBotBuilderTools {
         }
     }
 
-    /** Null when the base URL is acceptable: https, an allowed Exotel host, a path ending in /api/vN. */
-    static String validateBaseUrl(String baseUrl, List<String> allowedHostSuffixes) {
-        if (baseUrl == null || baseUrl.isBlank()) return "voicebot_base_url is empty";
+    /**
+     * Host rule shared with the rest of the server (ExotelHostGuard: https, exotel.com or a subdomain, no
+     * user info, IP or custom port). It also covers the operator's VOICEBOT_BASE_URL / TE_BASE_URL defaults,
+     * which the login check never sees. Null when acceptable, else the reason.
+     */
+    private static String hostProblem(String field, String baseUrl) {
+        if (baseUrl == null || baseUrl.isBlank()) return field + " is empty";
+        try {
+            ExotelHostGuard.requireAllowedBaseUrl(field, baseUrl.trim());
+            return null;
+        } catch (ExotelHostGuard.InvalidCredentialException e) {
+            return e.getMessage();
+        }
+    }
+
+    /** Null when the base URL is acceptable: the shared host rule, no query or fragment, a path ending in /api/vN. */
+    static String validateBaseUrl(String baseUrl) {
+        String problem = hostProblem("voicebot_base_url", baseUrl);
+        if (problem != null) return problem;
         URI uri;
         try {
             uri = new URI(baseUrl.trim());
         } catch (URISyntaxException e) {
             return "voicebot_base_url is not a valid URL";
         }
-        if (!"https".equalsIgnoreCase(uri.getScheme())) return "voicebot_base_url must use https";
-        String host = uri.getHost();
-        if (host == null || host.isBlank()) return "voicebot_base_url has no host";
-        String lowerHost = host.toLowerCase(Locale.ROOT);
-        boolean allowed = allowedHostSuffixes.stream().anyMatch(suffix ->
-                lowerHost.endsWith(suffix) || (suffix.startsWith(".") && lowerHost.equals(suffix.substring(1))));
-        if (!allowed) {
-            return "voicebot_base_url host " + host + " is not an allowed Exotel host (" + allowedHostSuffixes + ")";
-        }
-        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-            return "voicebot_base_url must not carry user info, a query or a fragment";
+        if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            return "voicebot_base_url must not carry a query or a fragment";
         }
         String path = uri.getRawPath() == null ? "" : uri.getRawPath().replaceAll("/+$", "");
         if (!path.matches(".*/api/v\\d+")) {
@@ -1800,36 +1808,34 @@ public class VoiceBotBuilderTools {
         String base = trimToNull(creds.effectiveTeBaseUrl(defaultTeBaseUrl));
         if (base == null) {
             throw new ToolError(error("TE_NOT_CONFIGURED",
-                    "No Tools Extension base URL: the envelope has no te_base_url and the server sets no default.",
-                    "Add te_base_url (https://<tools-extension-host>/voicebot) to the Authorization envelope.", null, null));
+                    "The Tools Extension tools are not enabled on this server: the operator has not set TE_BASE_URL.",
+                    "Ask the server operator to set TE_BASE_URL. Do not add te_base_url to the envelope: the server "
+                  + "accepts it only when it equals a base the operator configured, and any other value rejects "
+                  + "every request in the session.", null, null));
         }
-        String problem = validateTeBaseUrl(base, allowedHostSuffixes);
+        String problem = validateTeBaseUrl(base);
         if (problem != null) {
             throw new ToolError(error("INVALID_BASE_URL", problem + ".",
-                    "Set te_base_url to the https Tools Extension URL ending in /voicebot.", null, null));
+                    "The Tools Extension base must be an https Exotel URL ending in /voicebot; ask the server operator.",
+                    null, null));
         }
         String root = teRoot(base);
         String accountBase = root + "/api/v1/accounts/" + URLEncoder.encode(conn.account(), StandardCharsets.UTF_8);
         return new TeConn(accountBase, accountBase + "/published-routes", conn);
     }
 
-    /** https, an allowed Exotel host, no user info, query or fragment. Any path; /api/vN is stripped later. */
-    static String validateTeBaseUrl(String baseUrl, List<String> allowedHostSuffixes) {
+    /** The shared host rule, no query or fragment. Any path; /api/vN is stripped later. */
+    static String validateTeBaseUrl(String baseUrl) {
+        String problem = hostProblem("te_base_url", baseUrl);
+        if (problem != null) return problem;
         URI uri;
         try {
             uri = new URI(baseUrl.trim());
         } catch (URISyntaxException e) {
             return "te_base_url is not a valid URL";
         }
-        if (!"https".equalsIgnoreCase(uri.getScheme())) return "te_base_url must use https";
-        String host = uri.getHost();
-        if (host == null || host.isBlank()) return "te_base_url has no host";
-        String lowerHost = host.toLowerCase(Locale.ROOT);
-        boolean allowed = allowedHostSuffixes.stream().anyMatch(suffix ->
-                lowerHost.endsWith(suffix) || (suffix.startsWith(".") && lowerHost.equals(suffix.substring(1))));
-        if (!allowed) return "te_base_url host " + host + " is not an allowed Exotel host (" + allowedHostSuffixes + ")";
-        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-            return "te_base_url must not carry user info, a query or a fragment";
+        if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            return "te_base_url must not carry a query or a fragment";
         }
         return null;
     }

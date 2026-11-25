@@ -122,8 +122,10 @@ case. Store keys such as phone numbers in one format.
    `status` is `ready`. Statuses: `pending`, `indexing`, `ready`, `updating`, `failed`.
 3. **Tool:** create a `knowledge_base` tool with that `knowledge_corpus_id`, then test, activate, attach.
 4. **Change documents:** `exotel_tools_server_corpus_documents_update(corpusId, addDocumentsJson,
-   deleteDocumentIds)`. Document ids come from `exotel_tools_server_corpus_get`. The corpus goes to `updating`, then
-   `ready` or `failed`; every bot using it answers from the new content once ready.
+   deleteDocumentIds, confirm)`. Document ids come from `exotel_tools_server_corpus_get`. Removing documents needs
+   `confirm=true`: without it nothing changes and the result is a `CONFIRM_REQUIRED` preview, so show it and get the
+   user's yes first. Adding alone needs no confirm. The corpus goes to `updating`, then `ready` or `failed`; every
+   bot using it answers from the new content once ready.
 5. **Delete:** `exotel_tools_server_corpus_delete` is permanent and does not check whether a bot
    uses the corpus; those knowledge_base tools then return nothing. Confirm with the user first.
 

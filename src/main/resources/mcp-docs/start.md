@@ -30,7 +30,7 @@ account (tenant = account SID, case-sensitive)
 | Several bots can use one assistant at version `stable`. | Promoting a bot version also makes its pinned assistant version that assistant's stable version, so the other bots change too. |
 | Agent tools resolve at call time from the account's Tools Server tenant (tenant id = account SID). | A tool must exist and be `active`. A wrong or inactive tool name is not caught on save; the call fails before the greeting. |
 
-## The 8 core rules
+## The 9 core rules
 
 1. **Read before you change, and read back after.** Use `exotel_voicebot_get_details` (and with `version` for a draft) and `exotel_voicebot_assistant_get_config`. A 2xx answer does not prove a field was stored.
 2. **Change a live bot only through drafts.** `exotel_voicebot_update_config` creates a draft version at 0% traffic. Then `exotel_voicebot_bot_traffic_set` (canary) or `exotel_voicebot_bot_version_promote` (100%).
@@ -40,6 +40,7 @@ account (tenant = account SID, case-sensitive)
 6. **Credentials come only from the Authorization envelope.** Never ask for, print, store or pass keys in chat, prompts, tool definitions, YAML or webhook URLs. See `credentials`.
 7. **No angle-bracket text.** The API silently strips anything shaped like an HTML tag (a `<` followed by a letter, `/`, `!` or `?`) from prompts, greetings, YAML and tool definitions. Write placeholders as `{name}` or `UPPER_CASE`, and write comparisons as `b > a`, not with `<`.
 8. **This MCP server is not a bot tool.** It builds and edits bots; a bot cannot call it during a call. To give a bot a tool, attach a tools-server tool to an agent with `mcp_tools` `[{"tool_name": "tool_server.{name}", "name": "{name}"}]`. Never add this server's URL, or `tool_server`, to `mcp_servers`: the platform connects tools-server itself, and the write tools reject it with `MCP_WIRING_REJECTED`.
+9. **Build in order, on the platform defaults.** `exotel_voicebot_assistant_create`, then `exotel_voicebot_bot_create` with its id. Unless the user names them, use the platform defaults: the LLM row with provider `Gemma_4_SS` and name `Gemma26BA4B_SS` (if it is not in `exotel_voicebot_catalog_llm_models`, ask the user), text input with the `sarvam-exotel` ASR, and the default voice and VAD. `exotel_voicebot_create` is only for a quick draft the platform writes itself.
 
 ## Effect classes
 

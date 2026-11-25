@@ -45,7 +45,7 @@ Classes: R = READ, D = DRAFT, L = LIVE, X = DESTRUCTIVE, C = CALL, E = EXECUTES 
 | `exotel_voicebot_list_phone_numbers` | Account ExoPhones | R | none | Pick `callerId` here. |
 | `exotel_voicebot_conversations_list` | Conversations with filters | R | `botId`, `startDate`, `endDate`, `outcome`, `limit` (20, max 100), `offset`, `fields` | 90 days back. Transcripts ~16 KB per row. |
 
-## Tools Extension routes (need `te_base_url`)
+## Tools Extension routes (need `TE_BASE_URL` set on the server)
 
 | Tool | Does | Class | Key params | Notes |
 |---|---|---|---|---|
@@ -78,7 +78,7 @@ Classes: R = READ, D = DRAFT, L = LIVE, X = DESTRUCTIVE, C = CALL, E = EXECUTES 
 | `exotel_tools_server_table_row_delete` | Delete a row | X | `tableId`, `rowId` | |
 | `exotel_tools_server_corpus_list` / `exotel_tools_server_corpus_get` | Knowledge corpora | R | `limit`, `offset`, `status`, `fromDate`, `toDate` / `corpusId` | |
 | `exotel_tools_server_corpus_create` | Corpus from text docs | D | `name`, `description`, `documentsJson`, `similarityTopK` (1-100, 10) | .txt/.md, 10 files and 1 MB per call. Async. |
-| `exotel_tools_server_corpus_documents_update` | Add or remove documents | L | `corpusId`, `addDocumentsJson`, `deleteDocumentIds` | Changes answers for every bot using it. |
+| `exotel_tools_server_corpus_documents_update` | Add or remove documents | L | `corpusId`, `addDocumentsJson`, `deleteDocumentIds`, `confirm` | Changes answers for every bot using it. Removing needs `confirm=true` (preview first). |
 | `exotel_tools_server_corpus_delete` | Delete corpus | X | `corpusId` | Knowledge tools on it stop working. |
 
 ## Guide

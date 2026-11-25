@@ -73,7 +73,7 @@ If the check is too large to finish, say so and ask the user before writing.
 1. `exotel_tools_server_table_create` with the saved columns, then `exotel_tools_server_table_row_create` with the saved rows (batches). The table id is new.
 2. For each `tabular_data` tool that used it: `exotel_tools_server_tool_version_create` with the same definition and the new `data_table_id`, `exotel_tools_server_tool_version_test`, then `exotel_tools_server_tool_update(status=active, currentVersionId=NEW_VERSION_ID)`. Keep the tool name: names are never reusable, and agents already reference it.
 
-**Corpus documents.** `exotel_tools_server_corpus_documents_update` re-adding the saved documents and removing the new ones. Poll `exotel_tools_server_corpus_get` until `ready`.
+**Corpus documents.** `exotel_tools_server_corpus_documents_update` re-adding the saved documents and removing the new ones (removal: preview, yes, `confirm=true`). Poll `exotel_tools_server_corpus_get` until `ready`.
 
 **Corpus deleted.** Recreate with `exotel_tools_server_corpus_create` from the saved documents, wait for `ready`, then give each `knowledge_base` tool a new version with the new `knowledge_corpus_id`, test it and activate it.
 

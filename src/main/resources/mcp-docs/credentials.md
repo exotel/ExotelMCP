@@ -25,13 +25,15 @@ Authorization: Bearer {"voicebot_account_id":"ACCOUNT_SID","voicebot_api_key":"A
 | `voicebot_account_id` | yes | The account SID. **Case-sensitive**: copy it exactly as the Exotel dashboard shows it. Letters, digits, `_` and `-`, max 64. |
 | `voicebot_api_key` | yes | The account's Exotel API key. |
 | `voicebot_api_token` | yes | The API token for that key. |
-| `voicebot_base_url` | no | Voicebot API base. Must be `https`, an Exotel host, and end in `/api/v2`, with no query or fragment. Default: `https://voicebot.in.exotel.com/voicebot/api/v2`. The v1 base is derived by swapping `/api/v2` for `/api/v1`. |
+| `voicebot_base_url` | no | Leave it out: the server uses the base its operator configured. Send it only if it **equals** a base the operator configured (`https`, ending in `/api/v2`); any other value is refused with HTTP 400 at login, and that refuses every tool in the session, not just the voicebot ones. The v1 base is derived by swapping `/api/v2` for `/api/v1`. |
 
 ### Tools Extension (needed by `exotel_voicebot_te_*`)
 
+The server operator turns these tools on by setting `TE_BASE_URL` on the server. Without it the route tools return `TE_NOT_CONFIGURED` and the user asks the operator; adding a field to the envelope does not help.
+
 | Field | Required | Meaning |
 |---|---|---|
-| `te_base_url` | for route tools, unless the server sets a default | Your Tools Extension base URL: `https`, an Exotel host, ending in `/voicebot`. Without it the route tools return `TE_NOT_CONFIGURED`. Exotel provides this URL. |
+| `te_base_url` | no | Leave it out: the server uses its own Tools Extension base. Send it only if it **equals** a base the operator configured (`TE_BASE_URL` or `VERIFY_TE_API_BASES`); any other value, including any value when the server sets none, is refused with HTTP 400 at login and refuses every tool in the session. |
 
 Route tools also use the voicebot key, token and account SID.
 
@@ -70,8 +72,6 @@ The account SID, API key and API token are in the Exotel dashboard under the acc
   "voicebot_account_id": "ACCOUNT_SID",
   "voicebot_api_key": "API_KEY",
   "voicebot_api_token": "API_TOKEN",
-  "voicebot_base_url": "https://voicebot.in.exotel.com/voicebot/api/v2",
-  "te_base_url": "YOUR_TOOLS_EXTENSION_BASE_URL",
   "calls_base_url": "https://api.in.exotel.com"
 }
 ```
@@ -110,8 +110,9 @@ If the client can expand environment variables in headers, keep the envelope in 
 |---|---|---|
 | `MISSING_CREDENTIALS`, or text starting `Missing VoiceBot credentials` | Key, token or SID absent or blank | The user adds all three fields. |
 | `INVALID_ACCOUNT_ID` | SID has characters outside letters, digits, `_`, `-` | Copy the SID exactly. |
-| `INVALID_BASE_URL` | Base URL not https, not an Exotel host, wrong suffix, or carries a query | Use the default or the URL Exotel gave, ending `/api/v2` (voicebot) or `/voicebot` (route tools). |
-| `TE_NOT_CONFIGURED` | No `te_base_url` | The user adds it. |
+| `INVALID_BASE_URL` | The server's configured base is not https, not an Exotel host, or has the wrong suffix | The server operator fixes `VOICEBOT_BASE_URL` (ending `/api/v2`) or `TE_BASE_URL` (ending `/voicebot`). |
+| HTTP 400 `invalid_credentials` naming a `*_base_url` field | The envelope sends a base URL the operator did not configure | The user removes that field from the envelope. |
+| `TE_NOT_CONFIGURED` | The server sets no `TE_BASE_URL` | The user asks the server operator to set it. Do not add `te_base_url`. |
 | `UNAUTHORIZED` / `Error 401` | Values present but not accepted | See the 401 checklist in `errors`. |
 
 A quick end-to-end check is `exotel_voicebot_list_all` (voicebot fields) and `exotel_tools_server_tool_list` (Tools Server fields).

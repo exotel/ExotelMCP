@@ -12,15 +12,42 @@ import static org.junit.jupiter.api.Assertions.*;
 class VoiceBotTeToolsTest {
 
     private static final ObjectMapper M = new ObjectMapper();
-    private static final List<String> ALLOWED = List.of(".exotel.com", ".exotel.in");
-
     @Test
-    void teBaseUrlMustBeHttpsOnAnExotelHost() {
-        assertNull(VoiceBotBuilderTools.validateTeBaseUrl("https://te.example.exotel.com/voicebot", ALLOWED));
-        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("http://te.example.exotel.com/voicebot", ALLOWED));
-        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://evil.example.org/voicebot", ALLOWED));
-        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://user@te.example.exotel.com/voicebot", ALLOWED));
-        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://te.example.exotel.com/voicebot?x=1", ALLOWED));
+    void teBaseUrlFollowsTheSharedHostRule() {
+        assertNull(VoiceBotBuilderTools.validateTeBaseUrl("https://te.example.exotel.com/voicebot"));
+        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("http://te.example.exotel.com/voicebot"));
+        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://evil.example.org/voicebot"));
+        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://user@te.example.exotel.com/voicebot"));
+        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://te.example.exotel.com/voicebot?x=1"));
+        // the builder-only allowlist (which also allowed .exotel.in) is gone: one rule for every tool
+        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://te.example.exotel.in/voicebot"));
+        assertNotNull(VoiceBotBuilderTools.validateTeBaseUrl("https://te.example.exotel.com:8443/voicebot"));
+    }
+
+    /**
+     * te_base_url is pinned at login: a caller value that is not a configured base gets 400 on every request.
+     * No guide page, setup text or error may tell callers to add it (PR #27 review, blocker 2).
+     */
+    @Test
+    void nothingTellsCallersToAddTeBaseUrl() throws Exception {
+        List<java.nio.file.Path> files = new java.util.ArrayList<>();
+        try (var docs = java.nio.file.Files.walk(java.nio.file.Path.of("src/main/resources/mcp-docs"))) {
+            docs.filter(p -> p.toString().endsWith(".md")).forEach(files::add);
+        }
+        files.add(java.nio.file.Path.of("src/main/java/com/example/mcp_api/service/VoiceBotBuilderTools.java"));
+        files.add(java.nio.file.Path.of("src/main/java/com/example/mcp_api/service/setup/SetupTools.java"));
+        files.add(java.nio.file.Path.of("src/main/resources/application.properties"));
+        // Instructions to the caller, not negated ("Do not add te_base_url" is the fix), plus envelope examples.
+        java.util.regex.Pattern bad = java.util.regex.Pattern.compile(
+                "(?<!not )\\b[Aa]dd te_base_url|callers must send te_base_url|\"te_base_url\"\\s*:");
+        List<String> hits = new java.util.ArrayList<>();
+        for (java.nio.file.Path f : files) {
+            String text = java.nio.file.Files.readString(f);
+            var m = bad.matcher(text);
+            while (m.find()) hits.add(f.getFileName() + ": " + m.group());
+        }
+        assertTrue(hits.isEmpty(), "callers are told to add te_base_url: " + hits);
+        assertTrue(files.size() > 20, "guide pages not found from the working directory");
     }
 
     @Test

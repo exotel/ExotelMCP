@@ -163,6 +163,8 @@ echo -n "your_api_key:your_api_secret" | base64
 
 > **Note**: VoiceBot credentials are only required if you plan to use the VoiceBot tools. The VoiceBot management API (list/create/delete bots) uses `voicebot_*` credentials, while placing actual calls uses `calls_*` credentials.
 
+> **Base URLs**: leave `voicebot_base_url`, `tools_server_base_url` and `te_base_url` out. The server uses the bases its operator configured (`VOICEBOT_BASE_URL`, `TOOLS_SERVER_BASE_URL`, `TE_BASE_URL`), and accepts a caller value only when it equals one of them; any other value is refused with 400 and blocks every tool in the session. The Tools Extension tools stay off until the operator sets `TE_BASE_URL`.
+
 #### **AI Assist Credentials:**
 
 Required for all `exotel_aiassist_*` tools:
@@ -503,6 +505,22 @@ Get the quality analysis for analysis ID a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ### VoiceBot Services
 
 Create and manage AI-powered VoiceBots that handle entire phone conversations autonomously.
+
+For how-tos, rules and use-case playbooks, ask the agent to call `exotel_voicebot_guide` (topic `start`). The same pages are MCP resources at `exotel://voicebot/{topic}`.
+
+#### Changes for existing VoiceBot clients (voicebot builder tools release)
+
+| Change | What to do |
+|---|---|
+| The server lists 96 tools instead of 85: 9 VoiceBot / Tools Server tools removed, 20 added | Removed tools and their replacements are listed in `exotel_voicebot_guide("tools")` |
+| `exotel_voicebot_update_config` now creates a new bot version at 0% traffic instead of editing the bot in place; live calls change only after `exotel_voicebot_bot_version_promote` or `exotel_voicebot_bot_traffic_set` | Promote or split traffic after the update; `markAsStable=true` is refused |
+| `exotel_voicebot_update_config`: `configJson` is renamed `dataJson`; unknown keys are rejected with the allowed list; the result is a JSON envelope (`ok`, ids, version), not the raw upstream body | Rename the argument; read the envelope |
+| `exotel_voicebot_get_details`: `voiceBotId` is renamed `botId`; optional `version`; the result is a JSON envelope with secrets redacted, and agents' `tools` field is left out (`mcp_tools` holds the tools) | Rename the argument |
+| `exotel_voicebot_*` and `exotel_tools_server_*` failures are flagged `isError: true` (text starting `Error`, `Missing ` or `Tool execution failed`, or JSON with `ok: false`) | Clients can rely on `isError` instead of parsing text |
+| A number or boolean sent for a `String` parameter is converted instead of failing (all tools) | None |
+| `initialize` returns short server `instructions`; `resources/list` grows from 19 to 44 entries (25 guide pages) | None |
+| `exotel_tools_server_corpus_documents_update` removes documents only with `confirm=true`; without it the result is a preview | Show the preview, then call again with `confirm=true` |
+| The Tools Extension tools (`exotel_voicebot_te_*`) are on only when the operator sets `TE_BASE_URL`; a caller may send `te_base_url` only when it equals a configured base, or every request is refused with 400 | Operators: set `TE_BASE_URL`. Callers: leave `te_base_url` out |
 
 #### List VoiceBots
 List all VoiceBots on your account with pagination and status filtering.

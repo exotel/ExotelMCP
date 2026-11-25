@@ -233,13 +233,14 @@ class VoiceBotBuilderToolsTest {
 
     @Test
     void baseUrlMustBeHttpsExotelAndV1IsDerivedFromV2() {
-        List<String> allowed = List.of(".exotel.com", ".exotel.in");
-        assertNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot-staging.exotel.com/voicebot/api/v2", allowed));
-        assertNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot.in.exotel.com/voicebot/api/v2/", allowed));
-        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("http://voicebot.in.exotel.com/voicebot/api/v2", allowed));
-        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://evil-exotel.com/voicebot/api/v2", allowed));
-        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://169.254.169.254/latest/api/v2", allowed));
-        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot.in.exotel.com/voicebot", allowed));
+        assertNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot-staging.exotel.com/voicebot/api/v2"));
+        assertNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot.in.exotel.com/voicebot/api/v2/"));
+        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("http://voicebot.in.exotel.com/voicebot/api/v2"));
+        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://evil-exotel.com/voicebot/api/v2"));
+        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://169.254.169.254/latest/api/v2"));
+        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot.in.exotel.com/voicebot"));
+        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot.exotel.in/voicebot/api/v2"));
+        assertNotNull(VoiceBotBuilderTools.validateBaseUrl("https://voicebot.in.exotel.com/voicebot/api/v2?x=1"));
         assertEquals("https://voicebot.in.exotel.com/voicebot/api/v1",
                 VoiceBotBuilderTools.apiBase("https://voicebot.in.exotel.com/voicebot/api/v2/", 1));
         assertEquals("https://voicebot.in.exotel.com/voicebot/api/v2",
