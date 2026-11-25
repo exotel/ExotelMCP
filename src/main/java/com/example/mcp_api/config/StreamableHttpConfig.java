@@ -1091,9 +1091,7 @@ public class StreamableHttpConfig {
         "7. Text in angle brackets is removed when saved; write placeholders as {name}.",
         "8. To build a bot: exotel_voicebot_assistant_create, then exotel_voicebot_bot_create with its id. Unless the user",
         "   names them, use the platform defaults: LLM Gemma_4_SS / Gemma26BA4B_SS, text input with the sarvam-exotel ASR,",
-        "   default voice and VAD. exotel_voicebot_create is only for a quick draft the platform writes itself.",
-        "9. If your client can call these tools from code, batch read-only lookups in one program and return only the",
-        "   fields you need. Writes, deletes and calls still go one at a time, after the user's yes (rules 3 and 4).");
+        "   default voice and VAD. exotel_voicebot_create is only for a quick draft the platform writes itself.");
 
     /** Appends "Guide: exotel_voicebot_guide(topic)" to VoiceBot and Tools Server tool descriptions. */
     String withGuidePointer(String toolName, String description) {
