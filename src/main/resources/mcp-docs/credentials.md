@@ -44,7 +44,7 @@ Route tools also use the voicebot key, token and account SID.
 | `tools_server_api_key` | `voicebot_api_key` | Key for the Tools Server. |
 | `tools_server_api_token` | `voicebot_api_token` | Token for that key. |
 | `tools_server_tenant_id` | `voicebot_account_id` | Tenant id. It must be the account SID, because live calls look tools up by the account SID. |
-| `tools_server_base_url` | set by the server operator | Your Tools Server base URL. Set it only when Exotel gives you one, and keep it in the same environment as `voicebot_base_url`, or tools are created where the bot cannot see them. |
+| `tools_server_base_url` | set by the server operator | Leave it out: the server uses the Tools Server base its operator configured, in the same environment as the voicebot base. Send it only if it **equals** a configured base; any other value is refused with HTTP 400 at login and refuses every tool in the session. |
 
 Leave all four out in the normal case.
 

@@ -512,7 +512,7 @@ For how-tos, rules and use-case playbooks, ask the agent to call `exotel_voicebo
 
 | Change | What to do |
 |---|---|
-| The server lists 96 tools instead of 85: 9 VoiceBot / Tools Server tools removed, 20 added | Removed tools and their replacements are listed in `exotel_voicebot_guide("tools")` |
+| The server lists 96 tools instead of 85: 9 VoiceBot / Tools Server tools removed, 20 added | Use the replacements: `exotel_voicebot_assistant_push_version` and `exotel_voicebot_assistant_update_prompt` → `exotel_voicebot_update_config` with `assistant_config`; `exotel_voicebot_assistant_create_multiagent` → `exotel_voicebot_assistant_create`; `exotel_voicebot_transcript_get` → `exotel_voicebot_conversations_list` with `fields=transcript`; `exotel_voicebot_specialization_list` / `_create` / `_update` and `exotel_tools_server_tenant_spawn` / `_terminate` have no replacement |
 | `exotel_voicebot_update_config` now creates a new bot version at 0% traffic instead of editing the bot in place; live calls change only after `exotel_voicebot_bot_version_promote` or `exotel_voicebot_bot_traffic_set` | Promote or split traffic after the update; `markAsStable=true` is refused |
 | `exotel_voicebot_update_config`: `configJson` is renamed `dataJson`; unknown keys are rejected with the allowed list; the result is a JSON envelope (`ok`, ids, version), not the raw upstream body | Rename the argument; read the envelope |
 | `exotel_voicebot_get_details`: `voiceBotId` is renamed `botId`; optional `version`; the result is a JSON envelope with secrets redacted, and agents' `tools` field is left out (`mcp_tools` holds the tools) | Rename the argument |

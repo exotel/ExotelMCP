@@ -82,7 +82,7 @@ Older tools drop the error body; repeat the read with a builder tool such as `ex
 2. The account SID matches the dashboard exactly, including upper and lower case.
 3. The key and token are a pair, and belong to that account.
 4. The key is still active; if it was regenerated, the user updates the envelope.
-5. `voicebot_base_url` is the environment the key was issued for (default `https://voicebot.in.exotel.com/voicebot/api/v2`).
+5. The key was issued for the environment this server points at. The server's voicebot base is set by its operator; a `voicebot_base_url` in the envelope cannot move it elsewhere (any value other than a configured base is refused with HTTP 400). A key from another environment needs a server configured for that environment.
 6. No stray spaces, quotes or apostrophes in values.
 7. For `place_call`, `call_status`, `list_phone_numbers`: the `calls_*` fields, or their voicebot fallbacks, are valid for `calls_base_url`.
 8. Tools Server tools: remove any wrong `tools_server_*` override so the voicebot values are used.

@@ -29,7 +29,7 @@ class VoiceBotTeToolsTest {
      * No guide page, setup text or error may tell callers to add it (PR #27 review, blocker 2).
      */
     @Test
-    void nothingTellsCallersToAddTeBaseUrl() throws Exception {
+    void nothingTellsCallersToSendAnUnconfiguredBaseUrl() throws Exception {
         List<java.nio.file.Path> files = new java.util.ArrayList<>();
         try (var docs = java.nio.file.Files.walk(java.nio.file.Path.of("src/main/resources/mcp-docs"))) {
             docs.filter(p -> p.toString().endsWith(".md")).forEach(files::add);
@@ -39,7 +39,9 @@ class VoiceBotTeToolsTest {
         files.add(java.nio.file.Path.of("src/main/resources/application.properties"));
         // Instructions to the caller, not negated ("Do not add te_base_url" is the fix), plus envelope examples.
         java.util.regex.Pattern bad = java.util.regex.Pattern.compile(
-                "(?<!not )\\b[Aa]dd te_base_url|callers must send te_base_url|\"te_base_url\"\\s*:");
+                "(?<!not )\\b[Aa]dd (te|voicebot|tools_server)_base_url|callers must send te_base_url"
+              + "|\"(te|voicebot|tools_server)_base_url\"\\s*:|Set it only when Exotel gives you one"
+              + "|is the environment the key was issued for");
         List<String> hits = new java.util.ArrayList<>();
         for (java.nio.file.Path f : files) {
             String text = java.nio.file.Files.readString(f);

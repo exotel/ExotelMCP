@@ -743,8 +743,9 @@ public class VoiceBotBuilderTools {
         String problem = validateBaseUrl(base);
         if (problem != null) {
             throw new ToolError(error("INVALID_BASE_URL", problem + ".",
-                    "Set voicebot_base_url to an https Exotel voicebot URL ending in /api/v2, "
-                  + "e.g. https://voicebot.in.exotel.com/voicebot/api/v2.", null, null));
+                    "The server's voicebot base must be an https Exotel URL ending in /api/v2 "
+                  + "(e.g. https://voicebot.in.exotel.com/voicebot/api/v2); ask the server operator to fix VOICEBOT_BASE_URL.",
+                    null, null));
         }
         return new Conn(apiBase(base, 1), apiBase(base, 2), account, "Basic " + creds.voicebotBasicToken());
     }
@@ -775,9 +776,10 @@ public class VoiceBotBuilderTools {
             if (cause.contains("unexpected redirect")) {
                 logger.warn("voicebot-builder {} {} refused a redirect: {}", method, target.getPath(), cause);
                 throw new ToolError(error("UPSTREAM_REDIRECT",
-                        "The voicebot API at " + target.getHost() + " answered with a redirect, which is never followed ("
-                      + cause + ").",
-                        "Check that voicebot_base_url / te_base_url is the exact API base, then retry.", null, null));
+                        "The API at " + target.getHost() + " answered with a redirect, which is never followed ("
+                      + cause + "). Read the object back before retrying a write.",
+                        "Ask the server operator to check that VOICEBOT_BASE_URL / TE_BASE_URL is the exact API base.",
+                        null, null));
             }
             logger.warn("voicebot-builder {} {} unreachable: {}", method, target.getPath(), e.getMostSpecificCause().toString());
             throw new ToolError(error("UPSTREAM_UNREACHABLE",
