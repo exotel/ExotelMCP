@@ -242,7 +242,11 @@ public class VoiceBotBuilderTools {
               + "Unknown or server-managed top-level keys are rejected before the call, with allowed_keys. "
               + "Required: name, supported_languages, assistant_config {id, version, input {modality, mime_type}, "
               + "output {modality, mime_type}} (no input = Java 500). Text input (ASR cascade) also needs asr_config "
-              + "{provider:{id}, model:{id}}. voice_config uses the v1 shape {provider:{id}, model:{id}, voice:{id}}; "
+              + "{provider:{id}, model:{id}}. Order: exotel_voicebot_assistant_create first, then this tool with its id. "
+              + "Platform defaults to use when the user names none: input and output {modality: text, mime_type: text/plain} "
+              + "with asr_config from the sarvam-exotel provider in exotel_voicebot_catalog_asr_models (a model that supports "
+              + "the bot's languages); leave voice_config and vad_config out. Use audio input only if the user asks for it and "
+              + "the assistant's LLM accepts audio. voice_config uses the v1 shape {provider:{id}, model:{id}, voice:{id}}; "
               + "vad_config is {provider_id, config_id}. Ids come from the exotel_voicebot_catalog_* tools and "
               + "exotel_voicebot_assistant_create. The API strips <tag>-shaped text; the result lists where. "
               + "Counts against the account's bot cap (429 when full).")
@@ -516,8 +520,10 @@ public class VoiceBotBuilderTools {
               + "Checked before the call, because Java either fails with a 500 or commits a half-built assistant that still "
               + "counts against the assistant cap: unknown keys, assistant-level pre_agent_hooks, missing name, description "
               + "or instruction, 1-10 agents, every agent needs a name and an llm_config ({} inherits the assistant LLM), "
-              + "unique agent and MCP server names. Get llm_config.id from exotel_voicebot_catalog_llm_models. The API "
-              + "strips <tag>-shaped text; the result warns where.")
+              + "unique agent and MCP server names. Get llm_config.id from exotel_voicebot_catalog_llm_models. Unless the "
+              + "user names a model, use the platform default: the row with provider Gemma_4_SS and name Gemma26BA4B_SS; if "
+              + "it is not listed, ask the user instead of picking another. Write the instruction for that model (guide "
+              + "topic prompting). The API strips <tag>-shaped text; the result warns where.")
     public String assistantCreate(
             @ToolParam(description = "The assistant as a JSON object (a JSON-encoded string also works), e.g. "
                 + "{\"name\":\"Support assistant\",\"description\":\"...\",\"instruction\":\"...\",\"llm_config\":{\"id\":"
@@ -562,7 +568,8 @@ public class VoiceBotBuilderTools {
           description = "List LLM models usable as an assistant or agent llm_config.id. Calls "
               + "GET {v1}/accounts/{account}/llm/providers?limit=100 (account and default providers; the API pages at 10 "
               + "otherwise), then GET {v1}/accounts/{account}/llm/providers/{providerId}/models per provider. Returns compact "
-              + "rows {id, name, provider, provider_id, model}; use as llm_config {\"id\": id}.")
+              + "rows {id, name, provider, provider_id, model}; use as llm_config {\"id\": id}. Platform default: provider "
+              + "Gemma_4_SS, name Gemma26BA4B_SS. Use it unless the user names another model.")
     public String catalogLlmModels(
             @ToolParam(required = false, description = "Only list this provider's models (provider UUID).") String providerId,
             @ToolParam(required = false, description = "Include the platform default providers (default true).")
@@ -575,7 +582,8 @@ public class VoiceBotBuilderTools {
           description = "List ASR (speech-to-text) models for text-input bots. Calls "
               + "GET {v1}/accounts/{account}/asr/providers?limit=100, then GET {v1}/accounts/{account}/asr/providers/{providerId}/models "
               + "per provider. Returns compact rows {id, name, provider, provider_id, model}; use as bot asr_config "
-              + "{\"provider\":{\"id\": provider_id}, \"model\":{\"id\": id}}. Audio-input bots need no ASR: the LLM transcribes.")
+              + "{\"provider\":{\"id\": provider_id}, \"model\":{\"id\": id}}. Audio-input bots need no ASR: the LLM transcribes. "
+              + "Platform default: provider sarvam-exotel, with a model that supports the bot's languages.")
     public String catalogAsrModels(
             @ToolParam(required = false, description = "Only list this provider's models (provider UUID).") String providerId,
             @ToolParam(required = false, description = "Include the platform default providers (default true).")

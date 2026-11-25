@@ -259,7 +259,11 @@ public class VoiceBotService {
     }
 
     @Tool(name = "exotel_voicebot_create",
-          description = "Creates a new VoiceBot using AI-powered bot generation. Provide a text description of the bot's personality, purpose, and behavior. The bot is generated asynchronously — use exotel_voicebot_creation_status to poll until complete.")
+          description = "Quick draft: the platform generates a VoiceBot from a text description of its personality, purpose and behavior. "
+              + "The bot is generated asynchronously; poll exotel_voicebot_creation_status until complete. The platform picks "
+              + "everything itself (default Gemma model, text input with the default ASR, default voice). Do not use this when "
+              + "the user wants to choose the model, ASR, voice, greeting, webhooks or tools: use exotel_voicebot_assistant_create "
+              + "then exotel_voicebot_bot_create instead.")
     public String createVoiceBot(String textContent) {
         logger.info("Creating VoiceBot — textLength={}", textContent != null ? textContent.length() : 0);
         try {
