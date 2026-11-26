@@ -239,26 +239,8 @@ public class VoiceBotService {
         } catch (Exception e) { return "Error listing VoiceBots: " + e.getMessage(); }
     }
 
-    @Tool(name = "exotel_voicebot_get_details",
-          description = "Gets full details of a single VoiceBot by its ID. Returns name, status, supported_languages, assistant_config, voice_config, asr_config, and version history.")
-    public String getVoiceBot(String voiceBotId) {
-        logger.info("Getting VoiceBot: {}", sanitizeForLog(voiceBotId));
-        try {
-            String authErr = requireVoiceBotCreds();
-            if (authErr != null) return authErr;
-            validateId(voiceBotId, "voiceBotId");
-            String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
-            HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
-            return safeBody(response);
-        } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_get_details", e);
-        } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_get_details", e);
-        } catch (IllegalStateException | IllegalArgumentException e) { return "Error: " + e.getMessage();
-        } catch (Exception e) { return "Error getting VoiceBot: " + e.getMessage(); }
-    }
-
     @Tool(name = "exotel_voicebot_delete",
-          description = "Deletes a VoiceBot permanently by its ID. This action cannot be undone. Always confirm with the user before calling this tool.")
+          description = "Deletes a VoiceBot by its ID (a soft delete: the bot stops taking calls and no tool restores it). Always confirm with the user before calling this tool.")
     public String deleteVoiceBot(String voiceBotId) {
         logger.info("Deleting VoiceBot: {}", sanitizeForLog(voiceBotId));
         try {
@@ -268,7 +250,7 @@ public class VoiceBotService {
             String url = getVoicebotBaseUrl() + "/accounts/" + getAccountId() + "/voicebots/" + voiceBotId;
             HttpEntity<Void> entity = new HttpEntity<>(jsonHeaders());
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class);
-            String body = response.getBody();
+            String body = VoiceBotBuilderTools.redactJsonText(response.getBody());
             return (body != null && !body.isBlank()) ? body : "VoiceBot " + voiceBotId + " deleted successfully.";
         } catch (HttpClientErrorException e) { return errorMsg("exotel_voicebot_delete", e);
         } catch (HttpServerErrorException e) { return serverErrorMsg("exotel_voicebot_delete", e);
@@ -277,7 +259,11 @@ public class VoiceBotService {
     }
 
     @Tool(name = "exotel_voicebot_create",
-          description = "Creates a new VoiceBot using AI-powered bot generation. Provide a text description of the bot's personality, purpose, and behavior. The bot is generated asynchronously — use exotel_voicebot_creation_status to poll until complete.")
+          description = "Quick draft: the platform generates a VoiceBot from a text description of its personality, purpose and behavior. "
+              + "The bot is generated asynchronously; poll exotel_voicebot_creation_status until complete. The platform picks "
+              + "everything itself (default Gemma model, text input with the default ASR, default voice). Do not use this when "
+              + "the user wants to choose the model, ASR, voice, greeting, webhooks or tools: use exotel_voicebot_assistant_create "
+              + "then exotel_voicebot_bot_create instead.")
     public String createVoiceBot(String textContent) {
         logger.info("Creating VoiceBot — textLength={}", textContent != null ? textContent.length() : 0);
         try {
@@ -513,7 +499,7 @@ public class VoiceBotService {
     }
 
     private String safeBody(ResponseEntity<String> response) {
-        String body = response.getBody();
+        String body = VoiceBotBuilderTools.redactJsonText(response.getBody());
         if (body == null) return "{}";
         if (body.length() > MAX_RESPONSE_BYTES) return body.substring(0, MAX_RESPONSE_BYTES);
         return body;

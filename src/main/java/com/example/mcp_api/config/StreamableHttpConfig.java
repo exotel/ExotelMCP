@@ -46,6 +46,9 @@ public class StreamableHttpConfig {
     private com.example.mcp_api.service.VoiceBotAdminTools voiceBotAdminTools;
 
     @Autowired
+    private com.example.mcp_api.service.VoiceBotBuilderTools voiceBotBuilderTools;
+
+    @Autowired
     private com.example.mcp_api.service.setup.SetupTools setupTools;
 
     @Autowired
@@ -60,6 +63,12 @@ public class StreamableHttpConfig {
 
     @Autowired
     private com.example.mcp_api.service.WhatsAppService whatsAppService;
+
+    @Autowired
+    private com.example.mcp_api.service.VoiceBotGuideTools voiceBotGuideTools;
+
+    @Autowired
+    private com.example.mcp_api.docs.McpDocsRegistry docsRegistry;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -183,6 +192,7 @@ public class StreamableHttpConfig {
         
         Map<String, Object> result = Map.of(
             "protocolVersion", "2025-06-18",
+            "instructions", SERVER_INSTRUCTIONS,
             "capabilities", capabilities,
             "serverInfo", Map.of(
                 "name", "exotelmcp-server",
@@ -207,7 +217,7 @@ public class StreamableHttpConfig {
      */
     private Object[] toolServices() {
         return new Object[] {exotelService, quickAudioService, cqaService, voiceBotService, voiceBotAdminTools,
-                setupTools, voiceBotToolsService, engageService, whatsAppService};
+                voiceBotBuilderTools, setupTools, voiceBotToolsService, engageService, whatsAppService, voiceBotGuideTools};
     }
 
     /**
@@ -223,7 +233,7 @@ public class StreamableHttpConfig {
                 if (toolAnnotation != null) {
                     Map<String, Object> toolInfo = new HashMap<>();
                     toolInfo.put("name", toolAnnotation.name());
-                    toolInfo.put("description", toolAnnotation.description());
+                    toolInfo.put("description", withGuidePointer(toolAnnotation.name(), toolAnnotation.description()));
                     
                     // Generate input schema based on method parameters
                     Map<String, Object> inputSchema = new HashMap<>();
@@ -359,6 +369,8 @@ public class StreamableHttpConfig {
                                 } else {
                                     methodArgs[i] = new java.util.HashMap<>();
                                 }
+                            } else if (param.getType() == String.class && !(argValue instanceof String)) {
+                                methodArgs[i] = asStringArg(argValue, objectMapper);
                             } else {
                                 methodArgs[i] = argValue;
                             }
@@ -374,6 +386,8 @@ public class StreamableHttpConfig {
             
             if (toolResult == null) {
                 toolResult = "Unknown tool: " + toolName;
+                isError = true;
+            } else if (isFailureResult(toolName, toolResult.toString())) {
                 isError = true;
             }
             
@@ -1048,6 +1062,60 @@ public class StreamableHttpConfig {
         return createErrorResponse(null, message);
     }
 
+    /**
+     * Models often send a JSON object, number or boolean for a String tool parameter (dataJson, limit,
+     * markAsStable). Pass objects and arrays on as JSON text and scalars as their text form, instead of
+     * failing the whole call with "argument type mismatch".
+     */
+    static String asStringArg(Object value, ObjectMapper mapper) throws com.fasterxml.jackson.core.JsonProcessingException {
+        if (value instanceof Map || value instanceof List) {
+            return mapper.writeValueAsString(value);
+        }
+        return String.valueOf(value);
+    }
+
+
+    /**
+     * Sent in initialize to every client, whatever product it uses, so it stays generic: product rules live with
+     * the product (the VoiceBot and Tools Server rules are in exotel_voicebot_guide("start")).
+     */
+    static final String SERVER_INSTRUCTIONS = String.join("\n",
+        "Exotel MCP: tools for Exotel products. Credentials come only from the Authorization header; never put them in chat.",
+        "Before VoiceBot (exotel_voicebot_*) or Tools Server (exotel_tools_server_*) work, call exotel_voicebot_guide(\"start\")",
+        "(also the resource exotel://voicebot/start): it holds the rules for changing bots safely.");
+
+    /** Appends "Guide: exotel_voicebot_guide(topic)" to VoiceBot and Tools Server tool descriptions. */
+    String withGuidePointer(String toolName, String description) {
+        if (docsRegistry == null || toolName == null || "exotel_voicebot_guide".equals(toolName)) return description;
+        if (!toolName.startsWith("exotel_voicebot_") && !toolName.startsWith("exotel_tools_server_")) return description;
+        String topic = docsRegistry.topicForTool(toolName);
+        if (topic == null) return description;
+        return description + " Guide: exotel_voicebot_guide(\"" + topic + "\").";
+    }
+
+    /**
+     * VoiceBot and Tools Server tools report failures as text ("Error 401: ...", "Missing ... credentials") or as
+     * {"ok": false, ...} JSON instead of throwing. Flag those as isError so MCP clients treat them as failures.
+     */
+    static boolean isFailureResult(String toolName, String text) {
+        if (toolName == null || text == null) return false;
+        if (!toolName.startsWith("exotel_voicebot_") && !toolName.startsWith("exotel_tools_server_")) return false;
+        String t = text.stripLeading();
+        if (t.startsWith("Error") || t.startsWith("Missing ") || t.startsWith("Tool execution failed")) return true;
+        if (t.startsWith("{")) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode n = FAILURE_MAPPER.readTree(t);
+                return n.path("ok").isBoolean() && !n.path("ok").asBoolean();
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper FAILURE_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private static String camelToSnake(String camel) {
         if (camel == null || camel.isBlank()) return camel;
         StringBuilder sb = new StringBuilder();
@@ -1359,6 +1427,11 @@ public class StreamableHttpConfig {
             )
         ));
         
+        for (com.example.mcp_api.docs.McpDocsRegistry.Doc doc : docsRegistry.all()) {
+            resources.add(createResource(doc.uri(), "voicebot-" + doc.topic().replace('/', '-'), doc.title(),
+                doc.description(), "text/markdown", doc.markdown().getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                Map.of("audience", List.of("assistant"), "priority", "start".equals(doc.topic()) ? 1.0 : 0.7)));
+        }
         Map<String, Object> result = Map.of("resources", resources);
         return Map.of(
             "jsonrpc", "2.0",
@@ -1433,6 +1506,12 @@ public class StreamableHttpConfig {
      * This method returns the detailed Exotel API documentation content
      */
     private Map<String, Object> getResourceContent(String uri) {
+        if (uri.startsWith(com.example.mcp_api.docs.McpDocsRegistry.URI_PREFIX)) {
+            return docsRegistry.find(uri)
+                .map(doc -> createTextResourceContent(doc.uri(), "voicebot-" + doc.topic().replace('/', '-'), doc.title(),
+                    "text/markdown", doc.markdown()))
+                .orElse(null);
+        }
         switch (uri) {
             case "exotel://api/voice/overview":
                 return createTextResourceContent(

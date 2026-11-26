@@ -149,6 +149,7 @@ public class ExotelCredentialVerifier {
 
     static final String DEFAULT_VOICEBOT_BASE_URL = "https://voicebot.in.exotel.com/voicebot/api/v2";
     static final String DEFAULT_TOOLS_SERVER_BASE_URL = "https://tools-server-prod.mum1.exotel.com";
+    static final String DEFAULT_TE_BASE_URL = "https://voicebot-te.in.exotel.com/voicebot";
     /** Same default as AiAssistService.CONTEXT_PATH. */
     private static final String DEFAULT_AI_ASSIST_CONTEXT_PATH = "ai-assist/api";
     static final String DEFAULT_AI_ASSIST_BASE_URL = "https://ai-assist.in.exotel.com/" + DEFAULT_AI_ASSIST_CONTEXT_PATH;
@@ -167,6 +168,11 @@ public class ExotelCredentialVerifier {
     private final List<String> adminBases;
     private final List<String> toolsServerBases;
     private final List<String> aiAssistBases;
+    /**
+     * Tools Extension bases (default: TE_BASE_URL, which defaults to the prod India TE stamp). An operator who sets
+     * TE_BASE_URL empty switches the TE tools off; then every caller te_base_url is refused.
+     */
+    private volatile List<String> teBases = List.of();
     private final StatusProbe probe;
     private final LongSupplier clock;
     private final Limits limits;
@@ -240,6 +246,11 @@ public class ExotelCredentialVerifier {
                 limits.globalCapacity(), limits.globalRefillPerMinute(), clock);
     }
 
+    @Autowired(required = false)
+    void setTeBases(@Value("${exotel.auth.verify.te.api.bases:${exotel.voicebot.te.base.url:" + DEFAULT_TE_BASE_URL + "}}") String csv) {
+        this.teBases = parseBases(csv, null);
+    }
+
     /** Splits a comma-separated list of operator-configured bases into normalised https bases. */
     private static List<String> parseBases(String csv, String fallback) {
         String source = csv == null || csv.isBlank() ? fallback : csv;
@@ -274,7 +285,7 @@ public class ExotelCredentialVerifier {
     /**
      * Pins every caller-supplied base URL that is present, whichever credential sets the header carries:
      * api_domain and calls_base_url must be one of {@link #VERIFICATION_HOSTS}; voicebot_base_url,
-     * tools_server_base_url and ai_assist_base_url (+ ai_assist_context_path) must equal a known base of
+     * tools_server_base_url, te_base_url and ai_assist_base_url (+ ai_assist_context_path) must equal a known base of
      * the operator. Runs on every request before any tool, so a field can never reach a request URL
      * unchecked. Throws InvalidCredentialException naming the field (never the value).
      */
@@ -291,6 +302,9 @@ public class ExotelCredentialVerifier {
         if (c.getToolsServerBaseUrl() != null) {
             requireKnownBase("tools_server_base_url", "Tools Server", c.getToolsServerBaseUrl(), toolsServerBases,
                     UnaryOperator.identity());
+        }
+        if (c.getTeBaseUrl() != null) {
+            requireKnownBase("te_base_url", "Tools Extension", c.getTeBaseUrl(), teBases, UnaryOperator.identity());
         }
         if (c.getAiAssistBaseUrl() != null) aiAssistCandidateBase(c);
         else if (c.getAiAssistContextPath() != null) {

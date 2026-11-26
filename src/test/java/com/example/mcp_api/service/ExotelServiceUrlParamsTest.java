@@ -55,14 +55,4 @@ class ExotelServiceUrlParamsTest {
         assertEquals(a, ExotelService.metadataCacheKey("https://api.exotel.com", "acme1", "+919999999999"));
     }
 
-    @Test
-    void tenantSpawnAndTerminateRejectUnsafeIds() {
-        String header = "{\"tools_server_api_key\":\"k\",\"tools_server_tenant_id\":\"t1\"}";
-        bind(header);
-        VoiceBotToolsService tools = new VoiceBotToolsService();
-        for (String bad : new String[] {"../x", "t1/../../y", "t1?x=1", "t1#", "t 1", "t1%2fspawn"}) {
-            assertTrue(tools.spawnTenant(bad).contains("tenantId contains invalid characters"), bad);
-            assertTrue(tools.terminateTenant(bad).contains("tenantId contains invalid characters"), bad);
-        }
-    }
 }

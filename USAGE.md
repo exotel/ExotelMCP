@@ -128,7 +128,8 @@ Every set you include in the header is checked at login, so send only the sets y
 | `voicebot_api_key` | VoiceBot platform admin | VoiceBot tools |
 | `voicebot_api_token` | VoiceBot platform admin | VoiceBot tools |
 | `voicebot_account_id` | VoiceBot platform (account ID) | VoiceBot management API |
-| `voicebot_base_url` | Default: `https://voicebot.in.exotel.com/voicebot/api/v2` | VoiceBot management API |
+| `voicebot_base_url` | Leave out; send only a value equal to the operator's `VOICEBOT_BASE_URL` (any other value is refused with 400 for every tool) | VoiceBot management API |
+| `te_base_url` | Leave out; the Tools Extension tools use the operator's `TE_BASE_URL` (default `https://voicebot-te.in.exotel.com/voicebot`) | `exotel_voicebot_te_*` |
 | `calls_api_key` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
 | `calls_api_token` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
 | `calls_account_id` | Exotel dashboard → Account SID | Outbound calls + Engage SMS campaigns |
@@ -215,6 +216,8 @@ AI: [Ingests into CQA, waits for processing, returns quality scores]
 ---
 
 ## Available Tools
+
+VoiceBot (`exotel_voicebot_*`) and Tools Server (`exotel_tools_server_*`) tools: the agent gets the full list, with parameters and safety rules, from `exotel_voicebot_guide("tools")`. Changes for existing VoiceBot clients (renamed parameters, `update_config` creating versions, `confirm` on document removal) are listed in the README under "Changes for existing VoiceBot clients".
 
 | Tool | Description |
 |------|-------------|
