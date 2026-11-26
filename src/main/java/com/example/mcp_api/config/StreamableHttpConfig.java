@@ -70,6 +70,10 @@ public class StreamableHttpConfig {
     @Autowired
     private com.example.mcp_api.docs.McpDocsRegistry docsRegistry;
 
+    /** Voicebot tools served by the voicebot application's own MCP endpoint (CV-3871). Off by default. */
+    @Autowired(required = false)
+    private com.example.mcp_api.service.RemoteVoicebotTools remoteVoicebotTools;
+
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -288,7 +292,18 @@ public class StreamableHttpConfig {
                 }
             }
         }
-            
+
+        // Remote tools come after the built-in ones; a built-in tool keeps its name.
+        if (remoteVoicebotTools != null) {
+            java.util.Set<Object> localNames = new java.util.HashSet<>();
+            tools.forEach(tool -> localNames.add(tool.get("name")));
+            for (Map<String, Object> remote : remoteVoicebotTools.listTools()) {
+                if (!localNames.contains(remote.get("name"))) {
+                    tools.add(remote);
+                }
+            }
+        }
+
         Map<String, Object> result = Map.of("tools", tools);
         return Map.of(
             "jsonrpc", "2.0",
@@ -384,6 +399,13 @@ public class StreamableHttpConfig {
                 if (toolResult != null) break; // Exit if tool was found and executed
             }
             
+            if (toolResult == null && remoteVoicebotTools != null) {
+                Map<String, Object> remoteResult = remoteVoicebotTools.callTool(toolName, arguments);
+                if (remoteResult != null) {
+                    return Map.of("jsonrpc", "2.0", "id", id, "result", remoteResult);
+                }
+            }
+
             if (toolResult == null) {
                 toolResult = "Unknown tool: " + toolName;
                 isError = true;
