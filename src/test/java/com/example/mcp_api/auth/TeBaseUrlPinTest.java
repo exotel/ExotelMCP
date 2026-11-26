@@ -48,6 +48,20 @@ class TeBaseUrlPinTest {
                 () -> verifier("").requireKnownBaseUrls(creds(KNOWN)));
     }
 
+    /** The prod TE default is declared in three places; they must agree and pass the shared host rule. */
+    @Test
+    void theProdDefaultIsTheSameEverywhereAndPassesTheHostGuard() throws Exception {
+        String d = ExotelCredentialVerifier.DEFAULT_TE_BASE_URL;
+        assertDoesNotThrow(() -> ExotelHostGuard.requireAllowedBaseUrl("te_base_url", d));
+        String props = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/resources/application.properties"));
+        assertTrue(props.contains("exotel.voicebot.te.base.url=${TE_BASE_URL:" + d + "}"), "application.properties default");
+        String builder = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/com/example/mcp_api/service/VoiceBotBuilderTools.java"));
+        assertTrue(builder.contains("@Value(\"${exotel.voicebot.te.base.url:" + d + "}\")"), "VoiceBotBuilderTools default");
+        // the default is accepted when a caller echoes it back, like the voicebot and tools-server defaults
+        assertDoesNotThrow(() -> verifier(d).requireKnownBaseUrls(creds(d)));
+    }
+
     @Test
     void theConfiguredBasePasses() {
         assertDoesNotThrow(() -> verifier(KNOWN).requireKnownBaseUrls(creds(KNOWN + "/")));

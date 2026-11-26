@@ -149,6 +149,7 @@ public class ExotelCredentialVerifier {
 
     static final String DEFAULT_VOICEBOT_BASE_URL = "https://voicebot.in.exotel.com/voicebot/api/v2";
     static final String DEFAULT_TOOLS_SERVER_BASE_URL = "https://tools-server-prod.mum1.exotel.com";
+    static final String DEFAULT_TE_BASE_URL = "https://voicebot-te.in.exotel.com/voicebot";
     /** Same default as AiAssistService.CONTEXT_PATH. */
     private static final String DEFAULT_AI_ASSIST_CONTEXT_PATH = "ai-assist/api";
     static final String DEFAULT_AI_ASSIST_BASE_URL = "https://ai-assist.in.exotel.com/" + DEFAULT_AI_ASSIST_CONTEXT_PATH;
@@ -167,7 +168,10 @@ public class ExotelCredentialVerifier {
     private final List<String> adminBases;
     private final List<String> toolsServerBases;
     private final List<String> aiAssistBases;
-    /** Tools Extension bases. Empty (the default, since TE has no default stamp) refuses every caller te_base_url. */
+    /**
+     * Tools Extension bases (default: TE_BASE_URL, which defaults to the prod India TE stamp). An operator who sets
+     * TE_BASE_URL empty switches the TE tools off; then every caller te_base_url is refused.
+     */
     private volatile List<String> teBases = List.of();
     private final StatusProbe probe;
     private final LongSupplier clock;
@@ -243,7 +247,7 @@ public class ExotelCredentialVerifier {
     }
 
     @Autowired(required = false)
-    void setTeBases(@Value("${exotel.auth.verify.te.api.bases:${exotel.voicebot.te.base.url:}}") String csv) {
+    void setTeBases(@Value("${exotel.auth.verify.te.api.bases:${exotel.voicebot.te.base.url:" + DEFAULT_TE_BASE_URL + "}}") String csv) {
         this.teBases = parseBases(csv, null);
     }
 

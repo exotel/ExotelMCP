@@ -45,7 +45,7 @@ Classes: R = READ, D = DRAFT, L = LIVE, X = DESTRUCTIVE, C = CALL, E = EXECUTES 
 | `exotel_voicebot_list_phone_numbers` | Account ExoPhones | R | none | Pick `callerId` here. |
 | `exotel_voicebot_conversations_list` | Conversations with filters | R | `botId`, `startDate`, `endDate`, `outcome`, `limit` (20, max 100), `offset`, `fields` | 90 days back. Transcripts ~16 KB per row. |
 
-## Tools Extension routes (need `TE_BASE_URL` set on the server)
+## Tools Extension routes (use the server's Tools Extension base)
 
 | Tool | Does | Class | Key params | Notes |
 |---|---|---|---|---|

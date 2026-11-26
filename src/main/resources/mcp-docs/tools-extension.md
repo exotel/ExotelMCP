@@ -13,7 +13,7 @@ A **route** is a small HTTP flow written as Apache Camel YAML. Once created it i
 {te_base}/api/v1/accounts/{ACCOUNT_SID}/published-routes/{path_suffix}
 ```
 
-`{te_base}` is your Tools Extension base URL (`te_base_url` in the connection). A bot never calls
+`{te_base}` is the server's Tools Extension base URL, set by its operator (`TE_BASE_URL`). A bot never calls
 a route directly: the route is wrapped as a tools-server openapi tool, and the agent calls that tool.
 
 ## Route or plain openapi tool?

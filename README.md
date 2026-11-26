@@ -163,7 +163,7 @@ echo -n "your_api_key:your_api_secret" | base64
 
 > **Note**: VoiceBot credentials are only required if you plan to use the VoiceBot tools. The VoiceBot management API (list/create/delete bots) uses `voicebot_*` credentials, while placing actual calls uses `calls_*` credentials.
 
-> **Base URLs**: leave `voicebot_base_url`, `tools_server_base_url` and `te_base_url` out. The server uses the bases its operator configured (`VOICEBOT_BASE_URL`, `TOOLS_SERVER_BASE_URL`, `TE_BASE_URL`), and accepts a caller value only when it equals one of them; any other value is refused with 400 and blocks every tool in the session. The Tools Extension tools stay off until the operator sets `TE_BASE_URL`.
+> **Base URLs**: leave `voicebot_base_url`, `tools_server_base_url` and `te_base_url` out. The server uses the bases its operator configured (`VOICEBOT_BASE_URL`, `TOOLS_SERVER_BASE_URL`, `TE_BASE_URL`), and accepts a caller value only when it equals one of them; any other value is refused with 400 and blocks every tool in the session. All three default to the production India stamps; an operator running a non-prod server sets all three to the same environment (`TE_BASE_URL` empty switches the Tools Extension tools off).
 
 #### **AI Assist Credentials:**
 
@@ -520,7 +520,7 @@ For how-tos, rules and use-case playbooks, ask the agent to call `exotel_voicebo
 | A number or boolean sent for a `String` parameter is converted instead of failing (all tools) | None |
 | `initialize` returns short server `instructions`; `resources/list` grows from 19 to 44 entries (25 guide pages) | None |
 | `exotel_tools_server_corpus_documents_update` removes documents only with `confirm=true`; without it the result is a preview | Show the preview, then call again with `confirm=true` |
-| The Tools Extension tools (`exotel_voicebot_te_*`) are on only when the operator sets `TE_BASE_URL`; a caller may send `te_base_url` only when it equals a configured base, or every request is refused with 400 | Operators: set `TE_BASE_URL`. Callers: leave `te_base_url` out |
+| New Tools Extension tools (`exotel_voicebot_te_*`) use `TE_BASE_URL` (default `https://voicebot-te.in.exotel.com/voicebot`); a caller may send `te_base_url` only when it equals a configured base, or every request is refused with 400 | Operators of a non-prod server: set `TE_BASE_URL` with `VOICEBOT_BASE_URL`. Callers: leave `te_base_url` out |
 
 #### List VoiceBots
 List all VoiceBots on your account with pagination and status filtering.

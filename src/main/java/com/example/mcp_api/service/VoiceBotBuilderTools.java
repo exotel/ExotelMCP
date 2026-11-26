@@ -167,7 +167,7 @@ public class VoiceBotBuilderTools {
     @Value("${exotel.voicebot.base.url:https://voicebot.in.exotel.com/voicebot/api/v2}")
     private String defaultBaseUrl;
 
-    @Value("${exotel.voicebot.te.base.url:}")
+    @Value("${exotel.voicebot.te.base.url:https://voicebot-te.in.exotel.com/voicebot}")
     private String defaultTeBaseUrl;
 
     @Autowired
@@ -1810,7 +1810,7 @@ public class VoiceBotBuilderTools {
         String base = trimToNull(creds.effectiveTeBaseUrl(defaultTeBaseUrl));
         if (base == null) {
             throw new ToolError(error("TE_NOT_CONFIGURED",
-                    "The Tools Extension tools are not enabled on this server: the operator has not set TE_BASE_URL.",
+                    "The Tools Extension tools are switched off on this server: its operator set TE_BASE_URL empty.",
                     "Ask the server operator to set TE_BASE_URL. Do not add te_base_url to the envelope: the server "
                   + "accepts it only when it equals a base the operator configured, and any other value rejects "
                   + "every request in the session.", null, null));
@@ -1882,7 +1882,7 @@ public class VoiceBotBuilderTools {
     @Tool(name = "exotel_voicebot_te_route_list",
           description = "List the account's Tools Extension routes (custom HTTP flows written as Camel YAML): "
               + "GET {te}/routes. Each route has id, name, http_method, path_suffix, status and current_version. "
-              + "Needs te_base_url in the envelope unless the server sets one.")
+              + "Uses the server's Tools Extension base (TE_BASE_URL); do not send te_base_url.")
     public String teRouteList(
             @ToolParam(required = false, description = "Offset, default 0.") Integer offset,
             @ToolParam(required = false, description = "Page size, 1-100, default 20.") Integer limit) {

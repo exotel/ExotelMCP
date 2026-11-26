@@ -29,11 +29,11 @@ Authorization: Bearer {"voicebot_account_id":"ACCOUNT_SID","voicebot_api_key":"A
 
 ### Tools Extension (needed by `exotel_voicebot_te_*`)
 
-The server operator turns these tools on by setting `TE_BASE_URL` on the server. Without it the route tools return `TE_NOT_CONFIGURED` and the user asks the operator; adding a field to the envelope does not help.
+The server's Tools Extension base comes from its operator (`TE_BASE_URL`, default the production India stamp). If the operator switched the tools off, they return `TE_NOT_CONFIGURED` and the user asks the operator; adding a field to the envelope does not help.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `te_base_url` | no | Leave it out: the server uses its own Tools Extension base. Send it only if it **equals** a base the operator configured (`TE_BASE_URL` or `VERIFY_TE_API_BASES`); any other value, including any value when the server sets none, is refused with HTTP 400 at login and refuses every tool in the session. |
+| `te_base_url` | no | Leave it out: the server uses its own Tools Extension base. Send it only if it **equals** a base the operator configured (`TE_BASE_URL` or `VERIFY_TE_API_BASES`); any other value, including any value when the operator switched the tools off, is refused with HTTP 400 at login and refuses every tool in the session. |
 
 Route tools also use the voicebot key, token and account SID.
 
@@ -112,7 +112,7 @@ If the client can expand environment variables in headers, keep the envelope in 
 | `INVALID_ACCOUNT_ID` | SID has characters outside letters, digits, `_`, `-` | Copy the SID exactly. |
 | `INVALID_BASE_URL` | The server's configured base is not https, not an Exotel host, or has the wrong suffix | The server operator fixes `VOICEBOT_BASE_URL` (ending `/api/v2`) or `TE_BASE_URL` (ending `/voicebot`). |
 | HTTP 400 `invalid_credentials` naming a `*_base_url` field | The envelope sends a base URL the operator did not configure | The user removes that field from the envelope. |
-| `TE_NOT_CONFIGURED` | The server sets no `TE_BASE_URL` | The user asks the server operator to set it. Do not add `te_base_url`. |
+| `TE_NOT_CONFIGURED` | The server's operator set `TE_BASE_URL` empty (Tools Extension switched off) | The user asks the server operator to set it. Do not add `te_base_url`. |
 | `UNAUTHORIZED` / `Error 401` | Values present but not accepted | See the 401 checklist in `errors`. |
 
 A quick end-to-end check is `exotel_voicebot_list_all` (voicebot fields) and `exotel_tools_server_tool_list` (Tools Server fields).

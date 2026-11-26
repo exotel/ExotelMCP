@@ -41,7 +41,7 @@ class VoiceBotTeToolsTest {
         java.util.regex.Pattern bad = java.util.regex.Pattern.compile(
                 "(?<!not )\\b[Aa]dd (te|voicebot|tools_server)_base_url|callers must send te_base_url"
               + "|\"(te|voicebot|tools_server)_base_url\"\\s*:|Set it only when Exotel gives you one"
-              + "|is the environment the key was issued for");
+              + "|is the environment the key was issued for|[Nn]eeds te_base_url|te_base_url in the envelope unless");
         List<String> hits = new java.util.ArrayList<>();
         for (java.nio.file.Path f : files) {
             String text = java.nio.file.Files.readString(f);

@@ -129,7 +129,7 @@ Every set you include in the header is checked at login, so send only the sets y
 | `voicebot_api_token` | VoiceBot platform admin | VoiceBot tools |
 | `voicebot_account_id` | VoiceBot platform (account ID) | VoiceBot management API |
 | `voicebot_base_url` | Leave out; send only a value equal to the operator's `VOICEBOT_BASE_URL` (any other value is refused with 400 for every tool) | VoiceBot management API |
-| `te_base_url` | Leave out; the Tools Extension tools use the operator's `TE_BASE_URL` and are off without it | `exotel_voicebot_te_*` |
+| `te_base_url` | Leave out; the Tools Extension tools use the operator's `TE_BASE_URL` (default `https://voicebot-te.in.exotel.com/voicebot`) | `exotel_voicebot_te_*` |
 | `calls_api_key` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
 | `calls_api_token` | Exotel dashboard → API credentials | Outbound calls + Engage SMS campaigns |
 | `calls_account_id` | Exotel dashboard → Account SID | Outbound calls + Engage SMS campaigns |
