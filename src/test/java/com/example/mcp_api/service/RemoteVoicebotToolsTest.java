@@ -74,6 +74,14 @@ class RemoteVoicebotToolsTest {
         remote.refreshSeconds = 60;
         remote.sslVerify = true;
         remote.defaultBaseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/voicebot/api/v2";
+        remote.tePrefix = "exotel_voicebot_te_";
+        remote.teAllowTools = "";
+        remote.teDenyTools = "";
+        remote.teDefaultBaseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/te/voicebot";
+        remote.toolsServerPrefix = "exotel_tools_server_";
+        remote.toolsServerAllowTools = "";
+        remote.toolsServerDenyTools = "";
+        remote.toolsServerDefaultBaseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/ts";
         remote.init();
 
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -105,6 +113,26 @@ class RemoteVoicebotToolsTest {
         remote.denyTools = "list_voicebots";
 
         assertEquals(List.of("exotel_voicebot_create_persona"), offeredNames());
+    }
+
+    @Test
+    void eachSourceHasItsOwnEndpointPrefixAndAllowList() {
+        remote.teEnabled = true;
+        remote.toolsServerEnabled = true;
+        remote.toolsServerAllowTools = "create_persona";
+
+        assertEquals(List.of("exotel_voicebot_list_voicebots", "exotel_voicebot_te_list_voicebots",
+                "exotel_tools_server_list_voicebots", "exotel_tools_server_create_persona"), offeredNames());
+        assertEquals(List.of("/voicebot/api/v1/accounts/acme/mcp", "/te/voicebot/api/v1/accounts/acme/mcp",
+                "/ts/tools/api/v1/tenants/acme/mcp"), paths);
+
+        String callersKey = "Basic " + Base64.getEncoder().encodeToString("key1:tok1".getBytes(StandardCharsets.UTF_8));
+        assertEquals(List.of(callersKey, callersKey, callersKey), authHeaders, "every source gets the caller's key");
+
+        remote.callTool("exotel_voicebot_te_list_voicebots", Map.of());
+        assertEquals("/te/voicebot/api/v1/accounts/acme/mcp", paths.get(paths.size() - 1));
+        assertEquals("list_voicebots", calls.get(0).path("name").asText());
+        assertNull(remote.callTool("exotel_voicebot_te_create_persona", Map.of()), "allowed for tools-server only");
     }
 
     @Test
