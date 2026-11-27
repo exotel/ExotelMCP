@@ -28,17 +28,13 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Voicebot tools that are not built into this server: they are listed and run by the MCP endpoints of the
- * services that own the APIs, called with the caller's own VoiceBot key (CV-3871 spike). Three sources:
- * <ul>
- *   <li>voicebot: {@code {voicebot base}/api/v1/accounts/{account}/mcp}</li>
- *   <li>te (Tools Extension stamp): {@code {te base}/api/v1/accounts/{account}/mcp}</li>
- *   <li>tools-server: {@code {tools server base}/tools/api/v1/tenants/{tenant}/mcp}</li>
- * </ul>
+ * Voicebot tools that are not built into this server: they are listed and run by the MCP endpoint of the
+ * voicebot application ({@code {voicebot base}/api/v1/accounts/{account}/mcp}), called with the caller's
+ * own VoiceBot key (CV-3871 spike).
  *
- * This server decides which of their tools it offers: by default only tools the endpoint marks read-only,
- * plus the names in that source's {@code allow.tools}, minus its {@code deny.tools}. A built-in tool with
- * the same name always wins. A source that fails is skipped; the others and the built-in tools still work.
+ * This server decides which of them it offers: by default only tools the endpoint marks read-only, plus
+ * the names in {@code exotel.remote.voicebot.allow.tools}, minus {@code exotel.remote.voicebot.deny.tools}.
+ * A built-in tool with the same name always wins.
  */
 @Service
 public class RemoteVoicebotTools {
@@ -68,36 +64,6 @@ public class RemoteVoicebotTools {
     @Value("${exotel.remote.voicebot.refresh-seconds:60}")
     long refreshSeconds;
 
-    @Value("${exotel.remote.te.enabled:false}")
-    boolean teEnabled;
-
-    @Value("${exotel.remote.te.prefix:exotel_voicebot_te_}")
-    String tePrefix;
-
-    @Value("${exotel.remote.te.allow.tools:}")
-    String teAllowTools;
-
-    @Value("${exotel.remote.te.deny.tools:}")
-    String teDenyTools;
-
-    @Value("${exotel.voicebot.te.base.url:https://voicebot-te.in.exotel.com/voicebot}")
-    String teDefaultBaseUrl;
-
-    @Value("${exotel.remote.tools-server.enabled:false}")
-    boolean toolsServerEnabled;
-
-    @Value("${exotel.remote.tools-server.prefix:exotel_tools_server_}")
-    String toolsServerPrefix;
-
-    @Value("${exotel.remote.tools-server.allow.tools:}")
-    String toolsServerAllowTools;
-
-    @Value("${exotel.remote.tools-server.deny.tools:}")
-    String toolsServerDenyTools;
-
-    @Value("${exotel.tools.server.base.url:https://tools-server-prod.mum1.exotel.com}")
-    String toolsServerDefaultBaseUrl;
-
     @Value("${exotel.voicebot.base.url:https://voicebot.in.exotel.com/voicebot/api/v2}")
     String defaultBaseUrl;
 
@@ -110,75 +76,19 @@ public class RemoteVoicebotTools {
     private record CachedList(List<Map<String, Object>> tools, long expiresAtMillis) {
     }
 
-    /** One service that serves tools: where its endpoint is for this caller and what this server offers of it. */
-    private record Source(String key, String prefix, String allowTools, String denyTools,
-                          java.util.function.Supplier<String> endpoint, java.util.function.Supplier<String> basicToken) {
-    }
-
-    /** The sources that are switched on, in listing order. */
-    private List<Source> sources() {
-        List<Source> sources = new ArrayList<>();
-        AuthCredentials creds = AuthContext.current();
-        if (enabled && creds.hasVoicebotCredentials()) {
-            sources.add(new Source("voicebot", prefix, allowTools, denyTools,
-                    () -> accountEndpoint(creds.effectiveVoicebotBaseUrl(defaultBaseUrl)
-                            .replaceFirst("/api/v\\d+/?$", ""), creds.getVoicebotAccountId()),
-                    creds::voicebotBasicToken));
-        }
-        if (teEnabled && creds.hasVoicebotCredentials() && teDefaultBaseUrl != null && !teDefaultBaseUrl.isBlank()) {
-            sources.add(new Source("te", tePrefix, teAllowTools, teDenyTools,
-                    () -> accountEndpoint(creds.effectiveTeBaseUrl(teDefaultBaseUrl).replaceAll("/+$", ""),
-                            creds.getVoicebotAccountId()),
-                    creds::voicebotBasicToken));
-        }
-        if (toolsServerEnabled && (creds.hasVoicebotCredentials() || creds.hasToolsServerCredentials())) {
-            sources.add(new Source("tools-server", toolsServerPrefix, toolsServerAllowTools, toolsServerDenyTools,
-                    () -> {
-                        String tenant = creds.getToolsServerTenantId() != null
-                                ? creds.getToolsServerTenantId() : creds.getVoicebotAccountId();
-                        return creds.effectiveToolsServerBaseUrl(toolsServerDefaultBaseUrl).replaceAll("/+$", "")
-                                + "/tools/api/v1/tenants/" + safeId(tenant) + "/mcp";
-                    },
-                    () -> {
-                        // Same rule as the built-in Tools Server tools: tools_server_* fields, else the VoiceBot key.
-                        String key = creds.getToolsServerApiKey() != null ? creds.getToolsServerApiKey() : creds.getVoicebotApiKey();
-                        String token = creds.getToolsServerApiToken() != null ? creds.getToolsServerApiToken() : creds.getVoicebotApiToken();
-                        return java.util.Base64.getEncoder().encodeToString(
-                                (key + ":" + (token == null ? "" : token)).getBytes(StandardCharsets.UTF_8));
-                    }));
-        }
-        return sources;
-    }
-
-    private static String accountEndpoint(String root, String account) {
-        return root + "/api/v1/accounts/" + safeId(account) + "/mcp";
-    }
-
-    private static String safeId(String id) {
-        if (id == null || !ACCOUNT_ID.matcher(id).matches()) {
-            throw new IllegalArgumentException("account id is not valid");
-        }
-        return URLEncoder.encode(id, StandardCharsets.UTF_8);
-    }
-
     @jakarta.annotation.PostConstruct
     void init() {
         this.restTemplate = VoiceBotBuilderTools.createRestTemplate(sslVerify);
     }
 
-    /** The remote tools this caller may use, named with their source's prefix. A failing source adds nothing. */
+    /** The remote tools this caller may use, named with the prefix. Empty when off or on any upstream failure. */
     public List<Map<String, Object>> listTools() {
-        List<Map<String, Object>> all = new ArrayList<>();
-        for (Source source : sources()) {
-            all.addAll(listTools(source));
+        if (!enabled || !AuthContext.current().hasVoicebotCredentials()) {
+            return List.of();
         }
-        return all;
-    }
-
-    private List<Map<String, Object>> listTools(Source source) {
         String endpoint;
         try {
-            endpoint = source.endpoint().get();
+            endpoint = endpoint();
         } catch (IllegalArgumentException e) {
             return List.of();
         }
@@ -188,12 +98,12 @@ public class RemoteVoicebotTools {
             return cached.tools();
         }
         try {
-            Map<String, Object> result = rpc(endpoint, source.basicToken().get(), "tools/list", Map.of());
-            List<Map<String, Object>> offered = filterAndPrefix(source, result.get("tools"));
+            Map<String, Object> result = rpc(endpoint, "tools/list", Map.of());
+            List<Map<String, Object>> offered = filterAndPrefix(result.get("tools"));
             cache.put(endpoint, new CachedList(offered, now + refreshSeconds * 1000));
             return offered;
         } catch (Exception e) {
-            logger.warn("Remote {} tools/list failed: {}", source.key(), describe(e));
+            logger.warn("Remote voicebot tools/list failed: {}", describe(e));
             cache.put(endpoint, new CachedList(List.of(), now + FAILURE_CACHE_MILLIS));
             return List.of();
         }
@@ -205,33 +115,30 @@ public class RemoteVoicebotTools {
      * {@code isError}).
      */
     public Map<String, Object> callTool(String prefixedName, Map<String, Object> arguments) {
-        if (prefixedName == null) {
+        if (prefixedName == null || !prefixedName.startsWith(prefix)) {
             return null;
         }
-        for (Source source : sources()) {
-            if (!prefixedName.startsWith(source.prefix())
-                    || listTools(source).stream().noneMatch(tool -> prefixedName.equals(tool.get("name")))) {
-                continue;
-            }
-            String remoteName = prefixedName.substring(source.prefix().length());
-            try {
-                Map<String, Object> params = new LinkedHashMap<>();
-                params.put("name", remoteName);
-                params.put("arguments", arguments == null ? Map.of() : arguments);
-                return rpc(source.endpoint().get(), source.basicToken().get(), "tools/call", params);
-            } catch (Exception e) {
-                logger.warn("Remote {} tool {} failed: {}", source.key(), remoteName, describe(e));
-                return Map.of(
-                        "content", List.of(Map.of("type", "text", "text", prefixedName + " failed: " + describe(e))),
-                        "isError", true);
-            }
+        boolean offered = listTools().stream().anyMatch(tool -> prefixedName.equals(tool.get("name")));
+        if (!offered) {
+            return null;
         }
-        return null;
+        String remoteName = prefixedName.substring(prefix.length());
+        try {
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("name", remoteName);
+            params.put("arguments", arguments == null ? Map.of() : arguments);
+            return rpc(endpoint(), "tools/call", params);
+        } catch (Exception e) {
+            logger.warn("Remote voicebot tool {} failed: {}", remoteName, describe(e));
+            return Map.of(
+                    "content", List.of(Map.of("type", "text", "text", prefixedName + " failed: " + describe(e))),
+                    "isError", true);
+        }
     }
 
-    private List<Map<String, Object>> filterAndPrefix(Source source, Object remoteTools) {
-        Set<String> allowed = names(source.allowTools());
-        Set<String> denied = names(source.denyTools());
+    private List<Map<String, Object>> filterAndPrefix(Object remoteTools) {
+        Set<String> allowed = names(allowTools);
+        Set<String> denied = names(denyTools);
         List<Map<String, Object>> offered = new ArrayList<>();
         if (!(remoteTools instanceof List<?> list)) {
             return offered;
@@ -249,7 +156,7 @@ public class RemoteVoicebotTools {
             }
             Map<String, Object> tool = new LinkedHashMap<>();
             remote.forEach((key, value) -> tool.put(String.valueOf(key), value));
-            tool.put("name", source.prefix() + name);
+            tool.put("name", prefix + name);
             offered.add(tool);
         }
         return List.copyOf(offered);
@@ -266,12 +173,23 @@ public class RemoteVoicebotTools {
                 .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
     }
 
+    /** {voicebot base}/api/v1/accounts/{account}/mcp for the caller. */
+    private String endpoint() {
+        AuthCredentials creds = AuthContext.current();
+        String account = creds.getVoicebotAccountId();
+        if (account == null || !ACCOUNT_ID.matcher(account).matches()) {
+            throw new IllegalArgumentException("voicebot_account_id is not valid");
+        }
+        String v1 = creds.effectiveVoicebotBaseUrl(defaultBaseUrl).replaceFirst("/api/v\\d+/?$", "/api/v1");
+        return v1 + "/accounts/" + URLEncoder.encode(account, StandardCharsets.UTF_8) + "/mcp";
+    }
+
     @SuppressWarnings("unchecked")
-    private Map<String, Object> rpc(String endpoint, String basicToken, String method, Map<String, Object> params) {
+    private Map<String, Object> rpc(String endpoint, String method, Map<String, Object> params) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-        headers.set(HttpHeaders.AUTHORIZATION, "Basic " + basicToken);
+        headers.set(HttpHeaders.AUTHORIZATION, "Basic " + AuthContext.current().voicebotBasicToken());
 
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("jsonrpc", "2.0");
